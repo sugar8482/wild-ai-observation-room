@@ -12,6 +12,7 @@ import {
   ProviderConfigError,
 } from "./lib/providers.mjs";
 import { createStateStore } from "./lib/state-store.mjs";
+import { createRoomScheduler } from "./lib/scheduled-chat.mjs";
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
 const publicRoot = resolve(projectRoot, "public");
@@ -449,7 +450,24 @@ if (isMainModule) {
     secret: dataSecret,
   });
   const server = createAppServer({ accessCode, stateStore });
+  const schedulerOrigin = `http://127.0.0.1:${port}`;
+  const scheduler = createRoomScheduler({
+    stateStore,
+    chat: async (payload) => {
+      const response = await fetch(`${schedulerOrigin}/api/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || `定时聊天请求失败（${response.status}）`);
+      if (!result.text) throw new Error("接口没有返回文字");
+      return result;
+    },
+  });
+  server.on("close", () => scheduler.stop());
   server.listen(port, host, () => {
+    scheduler.start();
     console.log(`野生 AI 观察室已启动：http://127.0.0.1:${port}`);
     for (const address of lanAddresses()) console.log(`iPad 地址：http://${address}:${port}`);
     console.log(`局域网访问码：${accessCode}`);

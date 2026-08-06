@@ -49,9 +49,10 @@ test("房间氛围与个人设定在发言前按 Depth 0 顺序再次注入", as
 });
 
 test("房间长期记忆独立于聊天消息并注入最近原文之前", async () => {
-  const [html, script] = await Promise.all([
+  const [html, script, memoryPrompt] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/memory-prompt.js", import.meta.url), "utf8"),
   ]);
   assert.match(html, /id="summarizer-dialog"/);
   assert.match(html, /id="room-memory-summary"/);
@@ -61,13 +62,31 @@ test("房间长期记忆独立于聊天消息并注入最近原文之前", async
   assert.match(script, /recentMessages: Math\.min\(80, Math\.max\(10,/);
   assert.match(script, /longTermMemoryForPrompt\(room\)/);
   assert.match(html, /留空使用默认的“记事、不定性”规则/);
-  assert.match(script, /不是人物评委或角色编剧/);
-  assert.match(script, /属于可记录的关系事实，不是人物标签/);
-  assert.match(script, /【本房间的额外记忆重点】/);
+  assert.match(memoryPrompt, /不是人物评委或角色编剧/);
+  assert.match(memoryPrompt, /属于可记录的关系事实，不是人物标签/);
+  assert.match(memoryPrompt, /【本房间的额外记忆重点】/);
   assert.match(script, /focus: String\(memory\?\.focus \|\| ""\)/);
-  assert.match(script, /旧总结只是待修订的草稿/);
+  assert.match(memoryPrompt, /旧总结只是待修订的草稿/);
   assert.match(script, /聊天原文会完整保留，只替换当前总结/);
-  assert.doesNotMatch(script, /人物自我介绍与稳定偏好/);
+  assert.doesNotMatch(memoryPrompt, /人物自我介绍与稳定偏好/);
+});
+
+test("每个房间可以配置后台定时抢麦", async () => {
+  const [html, script] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+  ]);
+  for (const id of [
+    "room-schedule-enabled",
+    "room-schedule-interval",
+    "room-schedule-max-turns",
+    "room-schedule-daily-limit",
+    "room-schedule-quiet-enabled",
+    "room-schedule-status",
+  ]) assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(html, /全员弃权立即收场/);
+  assert.match(script, /function hydrateRoomSchedule\(schedule\)/);
+  assert.match(script, /function syncBackgroundUpdates\(\)/);
 });
 
 test("自由聊可以选择轮流接话或并行评分抢麦", async () => {

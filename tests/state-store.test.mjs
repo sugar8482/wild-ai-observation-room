@@ -160,3 +160,49 @@ test("记忆整理员 Key 加密保存且房间长期记忆可迁移", async (co
   assert.equal((await store.credentials("memory-summarizer")).apiKey, "summary-secret-key");
   assert.doesNotMatch(await readFile(filePath, "utf8"), /summary-secret-key/);
 });
+
+test("后台定时发言不会被滞后的浏览器保存覆盖", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({
+    filePath: join(directory, "state.json"),
+    secret: "scheduled-room-secret",
+  });
+  const stale = await store.save({
+    agents: [{ id: "guest-one", name: "GPT", format: "openai", authType: "none" }],
+    activeRoomId: "room-timer",
+    rooms: [{
+      id: "room-timer",
+      name: "定时房间",
+      participantIds: ["guest-one"],
+      messages: [{ id: "message-user", kind: "user", author: "晨曦", text: "稍后见" }],
+      schedule: {
+        enabled: true,
+        intervalMinutes: 30,
+        maxTurns: 3,
+        dailyLimit: 8,
+      },
+    }],
+  });
+
+  await store.completeScheduledRun("room-timer", {
+    at: Date.now(),
+    result: "新增 1 条定时发言",
+    messages: [{
+      id: "message-scheduled",
+      kind: "agent",
+      author: "GPT",
+      text: "没人发话，但我突然想到一件事。",
+      agentId: "guest-one",
+      timestamp: Date.now(),
+    }],
+  });
+
+  const merged = await store.save(stale);
+  assert.equal(merged.rooms[0].messages.some((message) => message.id === "message-scheduled"), true);
+  assert.equal(merged.rooms[0].schedule.dailyCount, 1);
+
+  merged.rooms[0].messages = merged.rooms[0].messages.filter((message) => message.id !== "message-scheduled");
+  const deleted = await store.save(merged);
+  assert.equal(deleted.rooms[0].messages.some((message) => message.id === "message-scheduled"), false);
+});

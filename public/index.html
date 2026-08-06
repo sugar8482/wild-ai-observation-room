@@ -246,6 +246,52 @@
             <button class="button button-quiet" id="memory-rebuild" type="button">重新生成</button>
           </div>
         </details>
+        <details class="room-schedule-field">
+          <summary>后台定时聊天</summary>
+          <label class="memory-toggle" for="room-schedule-enabled">
+            <input id="room-schedule-enabled" name="scheduleEnabled" type="checkbox" />
+            <span>iPad 关闭后也定时唤醒</span>
+          </label>
+          <div class="schedule-grid">
+            <div class="field">
+              <label for="room-schedule-interval">唤醒间隔</label>
+              <select id="room-schedule-interval" name="scheduleInterval">
+                <option value="30">30 分钟</option>
+                <option value="60" selected>1 小时</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="room-schedule-max-turns">每次最多发言</label>
+              <div class="suffix-input">
+                <input id="room-schedule-max-turns" name="scheduleMaxTurns" type="number" min="1" max="6" step="1" value="3" />
+                <span>条</span>
+              </div>
+            </div>
+            <div class="field">
+              <label for="room-schedule-daily-limit">每日最多唤醒</label>
+              <div class="suffix-input">
+                <input id="room-schedule-daily-limit" name="scheduleDailyLimit" type="number" min="1" max="48" step="1" value="8" />
+                <span>次</span>
+              </div>
+            </div>
+          </div>
+          <label class="memory-toggle schedule-quiet-toggle" for="room-schedule-quiet-enabled">
+            <input id="room-schedule-quiet-enabled" name="scheduleQuietEnabled" type="checkbox" />
+            <span>开启免打扰时段</span>
+          </label>
+          <div class="schedule-quiet-grid">
+            <div class="field">
+              <label for="room-schedule-quiet-start">开始</label>
+              <input id="room-schedule-quiet-start" name="scheduleQuietStart" type="time" value="23:00" />
+            </div>
+            <div class="field">
+              <label for="room-schedule-quiet-end">结束</label>
+              <input id="room-schedule-quiet-end" name="scheduleQuietEnd" type="time" value="08:00" />
+            </div>
+          </div>
+          <p class="field-help">每次先进行抢麦；全员弃权立即收场，有人开口才继续下一轮。电脑和观察室服务需要保持运行，电脑休眠时不会唤醒。</p>
+          <p class="memory-status" id="room-schedule-status">后台定时未开启。</p>
+        </details>
         <fieldset class="participant-picker">
           <legend>邀请哪些 AI</legend>
           <p class="field-help">以后也可以在嘉宾席直接开关。</p>

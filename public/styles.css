@@ -1000,7 +1000,8 @@ input[type="range"] {
   line-height: 1.6;
 }
 
-.room-memory-field {
+.room-memory-field,
+.room-schedule-field {
   margin-top: 18px;
   padding: 14px;
   border: 1px solid var(--soft-line);
@@ -1008,13 +1009,15 @@ input[type="range"] {
   background: #fcfcf9;
 }
 
-.room-memory-field > summary {
+.room-memory-field > summary,
+.room-schedule-field > summary {
   cursor: pointer;
   font-size: 12px;
   font-weight: 800;
 }
 
-.room-memory-field[open] > summary {
+.room-memory-field[open] > summary,
+.room-schedule-field[open] > summary {
   margin-bottom: 14px;
 }
 
@@ -1068,6 +1071,30 @@ input[type="range"] {
   min-height: 34px;
   padding: 7px 10px;
   font-size: 11px;
+}
+
+.schedule-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.schedule-quiet-toggle {
+  margin-top: 14px;
+}
+
+.schedule-quiet-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+@media (max-width: 720px) {
+  .schedule-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .dialog-intro {

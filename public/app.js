@@ -1,4 +1,5 @@
 import { DEFAULT_MIC_OPTIONS, parseWillingnessScore, pickMicWinner } from "./mic-grab.js";
+import { buildSummaryMessages } from "./memory-prompt.js";
 
 const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
 const LEGACY_MESSAGE_KEY = "wild-ai-observation-room.messages.v1";
@@ -96,6 +97,7 @@ const summarizerDialog = byId("summarizer-dialog");
 const summarizerForm = byId("summarizer-form");
 const summarizerConnectionResult = byId("summarizer-connection-result");
 const roomMemoryStatus = byId("room-memory-status");
+const roomScheduleStatus = byId("room-schedule-status");
 
 let toastTimer;
 let saveChain = Promise.resolve();
@@ -194,12 +196,31 @@ function hydrateRoomMemory(memory) {
   };
 }
 
+function hydrateRoomSchedule(schedule) {
+  return {
+    enabled: schedule?.enabled === true,
+    intervalMinutes: Number(schedule?.intervalMinutes) === 30 ? 30 : 60,
+    maxTurns: Math.min(6, Math.max(1, Number(schedule?.maxTurns) || 3)),
+    dailyLimit: Math.min(48, Math.max(1, Number(schedule?.dailyLimit) || 8)),
+    quietEnabled: schedule?.quietEnabled === true,
+    quietStart: /^\d{2}:\d{2}$/.test(String(schedule?.quietStart || "")) ? String(schedule.quietStart) : "23:00",
+    quietEnd: /^\d{2}:\d{2}$/.test(String(schedule?.quietEnd || "")) ? String(schedule.quietEnd) : "08:00",
+    nextWakeAt: Number(schedule?.nextWakeAt) || null,
+    lastWakeAt: Number(schedule?.lastWakeAt) || null,
+    lastResult: String(schedule?.lastResult || ""),
+    dayKey: String(schedule?.dayKey || ""),
+    dailyCount: Math.max(0, Number(schedule?.dailyCount) || 0),
+    revision: Math.max(0, Number(schedule?.revision) || 0),
+  };
+}
+
 function hydrateRoom(room, fallbackParticipants = []) {
   return {
     id: room?.id || newId("room"),
     name: String(room?.name || "未命名观察间"),
     roomPrompt: String(room?.roomPrompt || ""),
     memory: hydrateRoomMemory(room?.memory),
+    schedule: hydrateRoomSchedule(room?.schedule),
     participantIds: Array.isArray(room?.participantIds) ? [...new Set(room.participantIds)] : fallbackParticipants,
     messages: Array.isArray(room?.messages) ? room.messages : [],
     createdAt: Number(room?.createdAt || Date.now()),
@@ -311,6 +332,30 @@ function stateSnapshot() {
   };
 }
 
+function mergeServerRoomUpdates(serverRooms = []) {
+  const remoteById = new Map(serverRooms.map((room) => [room.id, room]));
+  let addedMessages = 0;
+  for (const room of state.rooms) {
+    const remote = remoteById.get(room.id);
+    if (!remote) continue;
+    const localIds = new Set(room.messages.map((message) => message.id));
+    const scheduledMessages = (remote.messages || [])
+      .filter((message) => message.source === "scheduled" && !localIds.has(message.id));
+    if (scheduledMessages.length) {
+      room.messages = [...room.messages, ...scheduledMessages]
+        .sort((left, right) => left.timestamp - right.timestamp)
+        .slice(-500);
+      addedMessages += scheduledMessages.length;
+    }
+    room.schedule = hydrateRoomSchedule(remote.schedule);
+    if (Number(remote.memory?.updatedAt) > Number(room.memory?.updatedAt)) {
+      room.memory = hydrateRoomMemory(remote.memory);
+    }
+    room.updatedAt = Math.max(Number(room.updatedAt) || 0, Number(remote.updatedAt) || 0);
+  }
+  return addedMessages;
+}
+
 function applySavedCredentialFlags(serverAgents, serverSummarizer) {
   const flags = new Map(serverAgents.map((agent) => [agent.id, agent]));
   for (const agent of state.agents) {
@@ -348,7 +393,9 @@ function queuePersist() {
     }
     if (!response.ok) throw new Error(payload.error || "保存失败");
     applySavedCredentialFlags(payload.agents || [], payload.summarizer);
+    mergeServerRoomUpdates(payload.rooms || []);
     renderAgents();
+    renderRooms();
     renderSummarizerStatus();
     return payload;
   };
@@ -369,7 +416,7 @@ function renderRooms() {
       createElement(
         "span",
         "",
-        `${room.participantIds.length} 位嘉宾 · ${room.messages.length} 条记录${room.roomPrompt.trim() ? " · 有氛围" : ""}${room.memory.summary.trim() ? " · 有记忆" : ""}`,
+        `${room.participantIds.length} 位嘉宾 · ${room.messages.length} 条记录${room.roomPrompt.trim() ? " · 有氛围" : ""}${room.memory.summary.trim() ? " · 有记忆" : ""}${room.schedule.enabled ? ` · 定时 ${room.schedule.intervalMinutes}m` : ""}`,
       ),
     );
     main.addEventListener("click", () => switchRoom(room.id));
@@ -906,8 +953,22 @@ function updateRoomMemoryStatus(room) {
   byId("memory-rebuild").disabled = busy || !isSavedRoom || !room.messages.length;
 }
 
+function updateRoomScheduleStatus(room) {
+  const schedule = hydrateRoomSchedule(room?.schedule);
+  if (!schedule.enabled) {
+    roomScheduleStatus.textContent = "后台定时未开启。";
+    return;
+  }
+  const next = schedule.nextWakeAt
+    ? new Date(schedule.nextWakeAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    : "保存后开始计时";
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const used = schedule.dayKey === todayKey ? schedule.dailyCount : 0;
+  roomScheduleStatus.textContent = `下次约 ${next} · 今日 ${used}/${schedule.dailyLimit} 次${schedule.lastResult ? ` · ${schedule.lastResult}` : ""}`;
+}
+
 async function requestSummaryChunk(room, previousSummary, messages) {
-  const transcript = messages.map((message) => `${message.author}：${message.text}`).join("\n\n");
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -915,28 +976,7 @@ async function requestSummaryChunk(room, previousSummary, messages) {
       agent: state.summarizer,
       temperature: 0.2,
       maxTokens: 4096,
-      messages: [
-        {
-          role: "system",
-          content: [
-            "你是群聊的长期记录员，不是人物评委或角色编剧。你的工作是更新一份简洁、可靠、可继续滚动维护的中文记录，让后续对话能接住已发生的内容，但不把一次行为固化成成员人格。",
-            "只保留：1. 用户明确设定的房间规则、已做出的决定和重要事实；2. 具体事件与观点，用“X 在某话题中提出……”“X 回应或反驳了 Y 的某个观点”这类客观措辞；3. 尚未回应的问题和可继续的话题；4. 在本批新增聊天中再次出现、仍在被使用的共同梗或引用。",
-            "成员明确建立的关系状态、彼此使用的称呼、做出的承诺、共同经历，以及亲口表达且仍影响后续的感受，属于可记录的关系事实，不是人物标签。只按原文含义记录，不得延伸推断。",
-            "绝对不要写成员档案、人格画像或能力排名；不要写“X 是……的人”“X 喜欢、擅长、不擅长、总是、习惯……”这类标签；不要把互评中的人物判断当作事实延续；不要根据单次行为预测成员以后会怎样表达。",
-            "旧总结只是待修订的草稿，不是权威事实。如果其中有人物标签、互评判词、未在本批新增聊天中继续出现的旧梗，在新总结中删除。",
-            "区分事实、玩笑、成员当时的观点和不确定猜测；不要脑补任何人的感情、动机或固定性格。合并重复内容，删除已经失效的细节。",
-            "可以使用“重要事实与决定”“已发生的讨论”“仍活跃的梗”“待继续”等标题，但不得列“成员档案”或“性格”标题。目标约 600 至 1000 个中文字，信息较少时不要凑字数。",
-            room.memory.focus.trim()
-              ? `【本房间的额外记忆重点】\n${room.memory.focus.trim()}\n这些要求只决定优先保留什么，不得覆盖上述“不编造、不把推断当事实”的原则。`
-              : "",
-            "只输出更新后的长期总结正文，不解释过程，不提及你是整理员。",
-          ].filter(Boolean).join("\n"),
-        },
-        {
-          role: "user",
-          content: `房间名称：${room.name}\n\n现有长期总结：\n${previousSummary.trim() || "（暂无，这是第一次整理）"}\n\n本批新增聊天原文：\n${transcript}`,
-        },
-      ],
+      messages: buildSummaryMessages(room, previousSummary, messages),
     }),
   });
   const payload = await response.json().catch(() => ({}));
@@ -1225,6 +1265,7 @@ function populateRoomParticipants(selectedIds) {
 function openRoomDialog(roomId = null) {
   const room = state.rooms.find((item) => item.id === roomId);
   const memory = room?.memory || hydrateRoomMemory();
+  const schedule = room?.schedule || hydrateRoomSchedule();
   byId("room-dialog-title").textContent = room ? `设置 ${room.name}` : "新建聊天室";
   roomForm.elements.namedItem("id").value = room?.id || "";
   roomForm.elements.namedItem("name").value = room?.name || "";
@@ -1233,11 +1274,19 @@ function openRoomDialog(roomId = null) {
   roomForm.elements.namedItem("memoryInterval").value = memory.interval;
   roomForm.elements.namedItem("memoryFocus").value = memory.focus;
   roomForm.elements.namedItem("memorySummary").value = memory.summary;
+  roomForm.elements.namedItem("scheduleEnabled").checked = schedule.enabled;
+  roomForm.elements.namedItem("scheduleInterval").value = String(schedule.intervalMinutes);
+  roomForm.elements.namedItem("scheduleMaxTurns").value = String(schedule.maxTurns);
+  roomForm.elements.namedItem("scheduleDailyLimit").value = String(schedule.dailyLimit);
+  roomForm.elements.namedItem("scheduleQuietEnabled").checked = schedule.quietEnabled;
+  roomForm.elements.namedItem("scheduleQuietStart").value = schedule.quietStart;
+  roomForm.elements.namedItem("scheduleQuietEnd").value = schedule.quietEnd;
   populateRoomParticipants(room?.participantIds || activeRoom()?.participantIds || state.agents.map((agent) => agent.id));
   deleteRoomButton.classList.toggle("is-hidden", !room || state.rooms.length <= 1);
   byId("memory-summarize-now").disabled = !room;
   byId("memory-rebuild").disabled = !room || !room.messages.length;
   updateRoomMemoryStatus(room || { messages: [], memory });
+  updateRoomScheduleStatus(room || { schedule });
   roomDialog.showModal();
 }
 
@@ -1398,6 +1447,15 @@ roomForm.addEventListener("submit", (event) => {
   const memoryInterval = Math.min(100, Math.max(5, Number(data.get("memoryInterval")) || 20));
   const memoryFocus = String(data.get("memoryFocus") || "").trim();
   const memorySummary = String(data.get("memorySummary") || "").trim();
+  const scheduleConfig = {
+    enabled: data.get("scheduleEnabled") === "on",
+    intervalMinutes: Number(data.get("scheduleInterval")) === 30 ? 30 : 60,
+    maxTurns: Math.min(6, Math.max(1, Number(data.get("scheduleMaxTurns")) || 3)),
+    dailyLimit: Math.min(48, Math.max(1, Number(data.get("scheduleDailyLimit")) || 8)),
+    quietEnabled: data.get("scheduleQuietEnabled") === "on",
+    quietStart: String(data.get("scheduleQuietStart") || "23:00"),
+    quietEnd: String(data.get("scheduleQuietEnd") || "08:00"),
+  };
   const participantIds = data.getAll("participantIds").map(String);
   if (!name) {
     showToast("先给聊天室起个名字");
@@ -1420,6 +1478,7 @@ roomForm.addEventListener("submit", (event) => {
     room.memory.interval = memoryInterval;
     room.memory.focus = memoryFocus;
     room.memory.summary = memorySummary;
+    room.schedule = { ...room.schedule, ...scheduleConfig };
     if (clearedSummary) {
       room.memory.summarizedThroughId = "";
       room.memory.summarizedMessageCount = 0;
@@ -1437,6 +1496,7 @@ roomForm.addEventListener("submit", (event) => {
       participantIds,
       messages: [],
       memory: { enabled: memoryEnabled, interval: memoryInterval, focus: memoryFocus, summary: memorySummary },
+      schedule: scheduleConfig,
     });
     state.rooms.push(created);
     state.activeRoomId = created.id;
@@ -1656,6 +1716,31 @@ async function loadServerState() {
   return loadPromise;
 }
 
+async function syncBackgroundUpdates() {
+  if (!state.ready || state.running) return;
+  try {
+    await saveChain;
+    const response = await fetch("/api/state", { cache: "no-store" });
+    if (!response.ok) return;
+    const payload = await response.json();
+    const addedMessages = mergeServerRoomUpdates(payload.rooms || []);
+    renderRooms();
+    if (addedMessages) {
+      renderMessages();
+      showToast(`后台定时聊天新增了 ${addedMessages} 条发言`);
+    }
+    if (roomDialog.open) {
+      const room = state.rooms.find((item) => item.id === roomForm.elements.namedItem("id").value);
+      if (room) {
+        updateRoomScheduleStatus(room);
+        updateRoomMemoryStatus(room);
+      }
+    }
+  } catch {
+    // Background refresh is best-effort; the next refresh or page open will retry.
+  }
+}
+
 async function checkAccess() {
   try {
     const response = await fetch("/api/access", { cache: "no-store" });
@@ -1712,3 +1797,7 @@ tokensInput.value = String(
 );
 renderAll();
 checkAccess();
+setInterval(() => void syncBackgroundUpdates(), 15_000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") void syncBackgroundUpdates();
+});
