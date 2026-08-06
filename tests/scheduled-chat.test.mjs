@@ -7,6 +7,7 @@ function roomFixture(maxTurns = 3) {
     id: "room-timer",
     name: "竹马群",
     roomPrompt: "像熟人群聊一样自然接话。",
+    bubbleSplit: false,
     participantIds: ["guest-a", "guest-b"],
     messages: [{
       id: "message-user",
@@ -82,4 +83,22 @@ test("第一轮全员弃权时不会生成硬凑的聊天", async () => {
   assert.equal(replyCalls, 0);
   assert.deepEqual(outcome.messages, []);
   assert.match(outcome.result, /全员弃权/);
+});
+
+test("定时聊天也会按房间设置保存连续气泡", async () => {
+  const room = roomFixture(1);
+  room.bubbleSplit = true;
+  const outcome = await runScheduledRoom({
+    room,
+    agents,
+    random: () => 0,
+    chat: async (payload) => {
+      if (payload.requestMode === "willingness-score") return { text: payload.agent.id === "guest-a" ? "9" : "0" };
+      assert.match(payload.messages[0].content, /聊天软件式的连续气泡/);
+      return { text: "你们人呢？〔分条〕算了，我先写作业。" };
+    },
+  });
+  assert.equal(outcome.messages.length, 1);
+  assert.equal(outcome.messages[0].text, "你们人呢？\n算了，我先写作业。");
+  assert.deepEqual(outcome.messages[0].segments, ["你们人呢？", "算了，我先写作业。"]);
 });

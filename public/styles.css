@@ -582,6 +582,22 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.message-bubble-stack {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}
+
+.message-bubble-stack .message-body {
+  width: fit-content;
+  max-width: 100%;
+  min-width: 72px;
+}
+
+.message-body.has-actions {
+  padding-right: 82px;
+}
+
 .message.is-user .message-body {
   background: var(--paper);
   border: 1px solid var(--line);
@@ -998,6 +1014,16 @@ input[type="range"] {
   resize: vertical;
   background: #fbfbf8;
   line-height: 1.6;
+}
+
+.room-bubble-field {
+  padding: 13px 14px;
+  border: 1px solid var(--soft-line);
+  background: var(--wash);
+}
+
+.room-bubble-field .field-help {
+  margin: 7px 0 0 24px;
 }
 
 .room-memory-field,

@@ -205,6 +205,13 @@
           ></textarea>
           <p class="field-help">本房间里的所有 AI 在每次发言前都会看到；不会影响其他聊天室。</p>
         </div>
+        <div class="room-bubble-field">
+          <label class="memory-toggle" for="room-bubble-split">
+            <input id="room-bubble-split" name="bubbleSplit" type="checkbox" />
+            <span>开启聊天软件式连发气泡</span>
+          </label>
+          <p class="field-help">AI 一次回复可以显示成 1～3 个连续小气泡，不会增加 API 调用；只影响以后新生成的回复。</p>
+        </div>
         <details class="room-memory-field" open>
           <summary>房间长期记忆</summary>
           <label class="memory-toggle" for="room-memory-enabled">

@@ -1,5 +1,6 @@
 import { DEFAULT_MIC_OPTIONS, parseWillingnessScore, pickMicWinner } from "./mic-grab.js";
 import { buildSummaryMessages } from "./memory-prompt.js";
+import { bubbleSplitInstruction, formatChatBubbleReply } from "./chat-bubbles.js";
 
 const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
 const LEGACY_MESSAGE_KEY = "wild-ai-observation-room.messages.v1";
@@ -219,6 +220,7 @@ function hydrateRoom(room, fallbackParticipants = []) {
     id: room?.id || newId("room"),
     name: String(room?.name || "未命名观察间"),
     roomPrompt: String(room?.roomPrompt || ""),
+    bubbleSplit: room?.bubbleSplit === true,
     memory: hydrateRoomMemory(room?.memory),
     schedule: hydrateRoomSchedule(room?.schedule),
     participantIds: Array.isArray(room?.participantIds) ? [...new Set(room.participantIds)] : fallbackParticipants,
@@ -416,7 +418,7 @@ function renderRooms() {
       createElement(
         "span",
         "",
-        `${room.participantIds.length} 位嘉宾 · ${room.messages.length} 条记录${room.roomPrompt.trim() ? " · 有氛围" : ""}${room.memory.summary.trim() ? " · 有记忆" : ""}${room.schedule.enabled ? ` · 定时 ${room.schedule.intervalMinutes}m` : ""}`,
+        `${room.participantIds.length} 位嘉宾 · ${room.messages.length} 条记录${room.roomPrompt.trim() ? " · 有氛围" : ""}${room.bubbleSplit ? " · 连发气泡" : ""}${room.memory.summary.trim() ? " · 有记忆" : ""}${room.schedule.enabled ? ` · 定时 ${room.schedule.intervalMinutes}m` : ""}`,
       ),
     );
     main.addEventListener("click", () => switchRoom(room.id));
@@ -511,13 +513,23 @@ function renderMessages({ scroll = false } = {}) {
       createElement("span", "message-author", message.author),
       createElement("time", "message-time", formatTime(message.timestamp)),
     );
-    const body = createElement("div", "message-body");
-    body.append(createElement("span", "message-text", message.text));
+    const segments = Array.isArray(message.segments) && message.segments.length > 1
+      ? message.segments
+      : [message.text];
+    const stack = createElement("div", segments.length > 1 ? "message-bubble-stack" : "message-bubble-single");
+    const bodies = segments.map((segment) => {
+      const body = createElement("div", "message-body");
+      body.append(createElement("span", "message-text", segment));
+      stack.append(body);
+      return body;
+    });
+    const body = bodies.at(-1);
+    body.classList.add("has-actions");
     const actions = createElement("div", "message-actions");
     if (message.kind !== "error") {
       const copyButton = createElement("button", "copy-message", "复制");
       copyButton.type = "button";
-      copyButton.setAttribute("aria-label", `复制 ${message.author} 的这条消息`);
+      copyButton.setAttribute("aria-label", `复制 ${message.author} 的${segments.length > 1 ? "这组" : "这条"}消息`);
       copyButton.addEventListener("click", async () => {
         try {
           await navigator.clipboard.writeText(message.text);
@@ -530,11 +542,11 @@ function renderMessages({ scroll = false } = {}) {
     }
     const deleteButton = createElement("button", "delete-message", "删除");
     deleteButton.type = "button";
-    deleteButton.setAttribute("aria-label", `删除 ${message.author} 的这条消息`);
+    deleteButton.setAttribute("aria-label", `删除 ${message.author} 的${segments.length > 1 ? "整组" : "这条"}消息`);
     deleteButton.addEventListener("click", () => deleteMessage(message.id));
     actions.append(deleteButton);
     body.append(actions);
-    article.append(meta, body);
+    article.append(meta, stack);
     messageFeed.append(article);
   }
   if (scroll) requestAnimationFrame(() => messageFeed.scrollTo({ top: messageFeed.scrollHeight }));
@@ -585,11 +597,13 @@ function renderAll(options = {}) {
 function addMessage({ kind, author, text, agentId = null }) {
   const room = activeRoom();
   if (!room) return;
+  const formatted = formatChatBubbleReply(text, room.bubbleSplit && kind === "agent");
   room.messages.push({
     id: newId("message"),
     kind,
     author,
-    text: String(text).trim(),
+    text: formatted.text,
+    ...(formatted.segments.length ? { segments: formatted.segments } : {}),
     agentId,
     timestamp: Date.now(),
   });
@@ -678,6 +692,7 @@ function buildSystemPrompt(agent, activeAgents, room, visibleTokenTarget) {
     persona,
     "只代表自己发言，不要代替其他嘉宾或用户说话。可以回应、赞同、质疑或追问刚才的内容。",
     `这是群聊中的一次简短发言。最终正文尽量控制在约 ${visibleTokenTarget} tokens 以内；先说最想说的，保持句子完整，不要为了凑长度展开成小论文。`,
+    bubbleSplitInstruction(room?.bubbleSplit),
     "直接输出你在群聊里要说的话，不加姓名前缀，不复述规则。使用群聊主要语言，自然交流。",
   ].join("\n\n");
 }
@@ -691,7 +706,8 @@ function buildImmediatePrompt(agent, room, visibleTokenTarget) {
     "个人设定应在房间共同氛围内发挥；两者冲突时，以房间共同氛围为准。",
     `【房间共同氛围｜所有嘉宾】\n${roomAtmosphere}`,
     `【你的个人设定｜${agent.name}】\n${persona}`,
-  ].join("\n\n");
+    bubbleSplitInstruction(room?.bubbleSplit),
+  ].filter(Boolean).join("\n\n");
 }
 
 function transcriptForPrompt(room) {
@@ -1270,6 +1286,7 @@ function openRoomDialog(roomId = null) {
   roomForm.elements.namedItem("id").value = room?.id || "";
   roomForm.elements.namedItem("name").value = room?.name || "";
   roomForm.elements.namedItem("roomPrompt").value = room?.roomPrompt || "";
+  roomForm.elements.namedItem("bubbleSplit").checked = room?.bubbleSplit === true;
   roomForm.elements.namedItem("memoryEnabled").checked = memory.enabled;
   roomForm.elements.namedItem("memoryInterval").value = memory.interval;
   roomForm.elements.namedItem("memoryFocus").value = memory.focus;
@@ -1443,6 +1460,7 @@ roomForm.addEventListener("submit", (event) => {
   const data = new FormData(roomForm);
   const name = String(data.get("name") || "").trim();
   const roomPrompt = String(data.get("roomPrompt") || "").trim();
+  const bubbleSplit = data.get("bubbleSplit") === "on";
   const memoryEnabled = data.get("memoryEnabled") === "on";
   const memoryInterval = Math.min(100, Math.max(5, Number(data.get("memoryInterval")) || 20));
   const memoryFocus = String(data.get("memoryFocus") || "").trim();
@@ -1471,6 +1489,7 @@ roomForm.addEventListener("submit", (event) => {
   if (room) {
     room.name = name;
     room.roomPrompt = roomPrompt;
+    room.bubbleSplit = bubbleSplit;
     const previousSummary = room.memory.summary;
     const clearedSummary = previousSummary.trim() && !memorySummary;
     memoryFocusNeedsRebuild = room.memory.focus !== memoryFocus && Boolean(previousSummary.trim());
@@ -1493,6 +1512,7 @@ roomForm.addEventListener("submit", (event) => {
     const created = hydrateRoom({
       name,
       roomPrompt,
+      bubbleSplit,
       participantIds,
       messages: [],
       memory: { enabled: memoryEnabled, interval: memoryInterval, focus: memoryFocus, summary: memorySummary },

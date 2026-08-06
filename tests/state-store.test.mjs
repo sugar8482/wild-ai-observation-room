@@ -110,11 +110,42 @@ test("给旧房间增加氛围提示时保留原聊天记录", async (context) =
   const upgraded = await store.save(original);
 
   assert.equal(upgraded.rooms[0].roomPrompt, "像朋友一样自然接话。");
+  assert.equal(upgraded.rooms[0].bubbleSplit, false);
   assert.equal(upgraded.rooms[0].memory.focus, "");
   assert.deepEqual(
     upgraded.rooms[0].messages.map((message) => message.text),
     ["第一条", "第二条"],
   );
+});
+
+test("房间连发设置与气泡分段可以持久化", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({
+    filePath: join(directory, "state.json"),
+    secret: "bubble-room-secret",
+  });
+  const saved = await store.save({
+    agents: [{ id: "guest-one", name: "GPT", format: "openai", authType: "none" }],
+    activeRoomId: "room-bubbles",
+    rooms: [{
+      id: "room-bubbles",
+      name: "竹马群",
+      bubbleSplit: true,
+      participantIds: ["guest-one"],
+      messages: [{
+        id: "message-bubbles",
+        kind: "agent",
+        author: "GPT",
+        text: "旧的原始文本不会作为准本",
+        segments: ["你先走。", "等等，我也去。"],
+      }],
+    }],
+  });
+
+  assert.equal(saved.rooms[0].bubbleSplit, true);
+  assert.equal(saved.rooms[0].messages[0].text, "你先走。\n等等，我也去。");
+  assert.deepEqual(saved.rooms[0].messages[0].segments, ["你先走。", "等等，我也去。"]);
 });
 
 test("记忆整理员 Key 加密保存且房间长期记忆可迁移", async (context) => {

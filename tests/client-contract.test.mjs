@@ -89,6 +89,22 @@ test("每个房间可以配置后台定时抢麦", async () => {
   assert.match(script, /function syncBackgroundUpdates\(\)/);
 });
 
+test("每个房间可以用一次模型回复显示连续气泡", async () => {
+  const [html, script, styles, bubbles] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../public/chat-bubbles.js", import.meta.url), "utf8"),
+  ]);
+  assert.match(html, /id="room-bubble-split"/);
+  assert.match(html, /不会增加 API 调用/);
+  assert.match(script, /formatChatBubbleReply\(text, room\.bubbleSplit/);
+  assert.match(script, /message-bubble-stack/);
+  assert.match(styles, /\.message-bubble-stack/);
+  assert.match(bubbles, /〔分条〕/);
+  assert.match(bubbles, /MAX_CHAT_BUBBLES = 3/);
+});
+
 test("自由聊可以选择轮流接话或并行评分抢麦", async () => {
   const [html, script] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
