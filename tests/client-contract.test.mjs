@@ -60,3 +60,15 @@ test("房间长期记忆独立于聊天消息并注入最近原文之前", async
   assert.match(script, /recentMessages: Math\.min\(80, Math\.max\(10,/);
   assert.match(script, /longTermMemoryForPrompt\(room\)/);
 });
+
+test("自由聊可以选择轮流接话或并行评分抢麦", async () => {
+  const [html, script] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+  ]);
+  assert.match(html, /data-free-strategy="round-robin"/);
+  assert.match(html, /data-free-strategy="mic-grab"/);
+  assert.match(script, /Promise\.allSettled/);
+  assert.match(script, /requestMode: "willingness-score"/);
+  assert.match(script, /runMicGrabConversation/);
+});

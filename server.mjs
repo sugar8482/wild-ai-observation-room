@@ -94,6 +94,24 @@ function isOfficialDeepSeekV4(agent) {
   }
 }
 
+export function chatRequestPolicy(agent, payload = {}) {
+  const isWillingnessScore = payload.requestMode === "willingness-score";
+  const minimumTokens = isWillingnessScore ? 1 : 64;
+  const maximumTokens = isWillingnessScore ? 64 : 4096;
+  const visibleTokenTarget = Number.isFinite(Number(payload.maxTokens))
+    ? Math.min(maximumTokens, Math.max(minimumTokens, Math.round(Number(payload.maxTokens))))
+    : isWillingnessScore ? 8 : 300;
+  const officialDeepSeek = isOfficialDeepSeekV4(agent);
+  const usesDeepSeekThinking = officialDeepSeek && !isWillingnessScore;
+  return {
+    isWillingnessScore,
+    visibleTokenTarget,
+    upstreamMaxTokens: usesDeepSeekThinking ? Math.max(8192, visibleTokenTarget) : visibleTokenTarget,
+    thinkingMode: officialDeepSeek ? (usesDeepSeekThinking ? "enabled" : "disabled") : undefined,
+    timeoutMs: isWillingnessScore ? 30_000 : usesDeepSeekThinking ? 180_000 : 120_000,
+  };
+}
+
 function emptyResponseMessage(finishReason) {
   if (finishReason === "length") {
     return "上游把本次输出额度用完了，正文还没来得及生成";
@@ -121,7 +139,7 @@ function transportErrorMessage(error) {
 async function handleChat(request, response, stateStore) {
   try {
     const payload = await readJson(request);
-    const { agent: incomingAgent, messages, temperature, maxTokens } = payload || {};
+    const { agent: incomingAgent, messages, temperature } = payload || {};
     if (!incomingAgent || typeof incomingAgent !== "object") {
       throw new ProviderConfigError("缺少 AI 嘉宾配置");
     }
@@ -136,20 +154,18 @@ async function handleChat(request, response, stateStore) {
       };
     }
 
-    const usesDeepSeekThinking = isOfficialDeepSeekV4(agent);
-    const visibleTokenTarget = Number.isFinite(Number(maxTokens))
-      ? Math.min(4096, Math.max(64, Math.round(Number(maxTokens))))
-      : 300;
+    const policy = chatRequestPolicy(agent, payload);
     const upstream = buildUpstreamRequest(agent, messages, {
       temperature,
       // DeepSeek counts hidden reasoning and visible content against one output
       // budget. Keep the director's number as a visible-answer target and give
       // the official V4 endpoint a separate ceiling for its reasoning.
-      maxTokens: usesDeepSeekThinking ? Math.max(8192, visibleTokenTarget) : visibleTokenTarget,
-      thinkingMode: usesDeepSeekThinking ? "enabled" : undefined,
+      maxTokens: policy.upstreamMaxTokens,
+      thinkingMode: policy.thinkingMode,
+      compactOutput: policy.isWillingnessScore,
     });
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), usesDeepSeekThinking ? 180_000 : 120_000);
+    const timeout = setTimeout(() => controller.abort(), policy.timeoutMs);
     request.once("aborted", () => controller.abort());
 
     let upstreamResponse;

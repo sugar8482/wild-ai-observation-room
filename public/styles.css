@@ -783,6 +783,24 @@ h2 {
   color: var(--paper);
 }
 
+.free-strategy-switch {
+  grid-template-columns: repeat(2, 1fr);
+  margin-top: 9px;
+}
+
+#free-strategy-control > .control-label {
+  display: block;
+  margin-bottom: 9px;
+}
+
+.mic-status {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-left: 2px solid var(--ink);
+  background: var(--wash);
+  color: var(--ink);
+}
+
 select,
 input,
 textarea {

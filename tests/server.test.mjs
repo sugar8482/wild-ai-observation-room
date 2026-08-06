@@ -1,7 +1,26 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import test from "node:test";
-import { createAppServer } from "../server.mjs";
+import { chatRequestPolicy, createAppServer } from "../server.mjs";
+
+test("抢麦评分使用短输出并关闭 DeepSeek 隐藏思考", () => {
+  const agent = {
+    format: "openai",
+    baseUrl: "https://api.deepseek.com/v1",
+    model: "deepseek-v4-flash",
+  };
+  const replyPolicy = chatRequestPolicy(agent, { maxTokens: 300 });
+  assert.equal(replyPolicy.upstreamMaxTokens, 8192);
+  assert.equal(replyPolicy.thinkingMode, "enabled");
+
+  const scorePolicy = chatRequestPolicy(agent, {
+    requestMode: "willingness-score",
+    maxTokens: 8,
+  });
+  assert.equal(scorePolicy.upstreamMaxTokens, 8);
+  assert.equal(scorePolicy.thinkingMode, "disabled");
+  assert.equal(scorePolicy.timeoutMs, 30_000);
+});
 
 test("本地服务提供健康检查和主页面", async (context) => {
   const server = createAppServer();

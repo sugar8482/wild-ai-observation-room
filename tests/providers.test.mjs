@@ -91,6 +91,22 @@ test("可为支持的 OpenAI 兼容接口显式开启思考并留出独立余量
   assert.deepEqual(request.body.thinking, { type: "enabled" });
 });
 
+test("短评分请求可以显式关闭思考", () => {
+  const request = buildUpstreamRequest(
+    {
+      format: "openai",
+      baseUrl: "https://api.deepseek.com/v1",
+      model: "deepseek-v4-flash",
+      authType: "bearer",
+      apiKey: "secret-value",
+    },
+    [{ role: "user", content: "只输出一个数字" }],
+    { maxTokens: 8, thinkingMode: "disabled", compactOutput: true },
+  );
+  assert.equal(request.body.max_tokens, 8);
+  assert.deepEqual(request.body.thinking, { type: "disabled" });
+});
+
 test("统一读取三类接口的截断原因", () => {
   assert.equal(providerFinishReason("openai", { choices: [{ finish_reason: "length" }] }), "length");
   assert.equal(providerFinishReason("anthropic", { stop_reason: "max_tokens" }), "length");

@@ -1,3 +1,5 @@
+import { DEFAULT_MIC_OPTIONS, parseWillingnessScore, pickMicWinner } from "./mic-grab.js";
+
 const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
 const LEGACY_MESSAGE_KEY = "wild-ai-observation-room.messages.v1";
 const GUEST_CATALOG_KEY = "wild-ai-observation-room.guest-catalog.v2";
@@ -68,6 +70,11 @@ const speakerSelect = byId("speaker-select");
 const roundsControl = byId("rounds-control");
 const roundsInput = byId("rounds-input");
 const roundsOutput = byId("rounds-output");
+const roundsLabel = byId("rounds-label");
+const roundsHelp = byId("rounds-help");
+const freeStrategyControl = byId("free-strategy-control");
+const freeStrategyHelp = byId("free-strategy-help");
+const micStatus = byId("mic-status");
 const temperatureInput = byId("temperature-input");
 const temperatureOutput = byId("temperature-output");
 const tokensInput = byId("tokens-input");
@@ -110,6 +117,13 @@ function safeWrite(key, value) {
   } catch {
     // The computer remains authoritative; this marker is only used for migration.
   }
+}
+
+function updateDirectorPrefs(patch) {
+  safeWrite(DIRECTOR_PREFS_KEY, {
+    ...safeRead(DIRECTOR_PREFS_KEY, {}),
+    ...patch,
+  });
 }
 
 function newId(prefix) {
@@ -218,6 +232,7 @@ const state = {
   ...initial,
   summarizer: initial.summarizer || hydrateSummarizer(),
   mode: "roundtable",
+  freeStrategy: "round-robin",
   running: false,
   abortController: null,
   ready: false,
@@ -485,12 +500,28 @@ function renderMode() {
   document.querySelectorAll("[data-mode]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.mode === state.mode);
   });
+  document.querySelectorAll("[data-free-strategy]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.freeStrategy === state.freeStrategy);
+  });
   const meta = MODE_META[state.mode];
-  roomModeLabel.textContent = meta.label;
+  const isFree = state.mode === "free";
+  const isMicGrab = isFree && state.freeStrategy === "mic-grab";
+  roomModeLabel.textContent = isMicGrab ? "自由聊 · 抢麦" : meta.label;
   sendButton.textContent = meta.action;
-  modeHelp.textContent = meta.help;
+  modeHelp.textContent = isMicGrab
+    ? "每轮先让所有嘉宾暗中报一个接话意愿分，再由最想说的一位发言。"
+    : meta.help;
   speakerControl.classList.toggle("is-hidden", state.mode !== "point");
-  roundsControl.classList.toggle("is-hidden", state.mode !== "free");
+  freeStrategyControl.classList.toggle("is-hidden", !isFree);
+  roundsControl.classList.toggle("is-hidden", !isFree);
+  micStatus.classList.toggle("is-hidden", !isMicGrab);
+  freeStrategyHelp.textContent = isMicGrab
+    ? "每轮会增加一次所有嘉宾的短评分调用；切回轮流接话就没有额外费用。"
+    : "按嘉宾席顺序轮流发言，不会增加额外调用。";
+  roundsLabel.textContent = isMicGrab ? "抢麦轮数" : "讨论轮数";
+  roundsHelp.textContent = isMicGrab
+    ? "一轮只产生一位赢家的正式发言；连续两轮全员弃权会自然收场。"
+    : "一轮 = 每位启用的嘉宾发言一次。设了上限，不会无限烧额度。";
 }
 
 function renderAll(options = {}) {
@@ -569,7 +600,7 @@ function toggleRoomParticipant(agentId, shouldJoin) {
   queuePersist();
 }
 
-function setRunning(running, speaker = "") {
+function setRunning(running, speaker = "", phase = "reply") {
   state.running = running;
   sendButton.disabled = running;
   byId("add-agent-button").disabled = running;
@@ -577,8 +608,8 @@ function setRunning(running, speaker = "") {
   stopButton.classList.toggle("is-hidden", !running);
   speakingIndicator.classList.toggle("is-hidden", !running);
   if (running) {
-    speakingText.textContent = `${speaker} 正在组织语言`;
-    setRuntimeStatus("busy", `正在等 ${speaker}`);
+    speakingText.textContent = phase === "score" ? "嘉宾们正在暗中抢麦" : `${speaker} 正在组织语言`;
+    setRuntimeStatus("busy", phase === "score" ? "正在等待抢麦分数" : `正在等 ${speaker}`);
   } else {
     setRuntimeStatus("ready", "观察室已就绪");
   }
@@ -661,6 +692,179 @@ async function callAgent(agent, activeAgents, room, signal) {
   if (!response.ok) throw new Error(payload.error || `请求失败（${response.status}）`);
   if (!payload.text) throw new Error("接口没有返回文字");
   return payload;
+}
+
+function micScoringTranscript(room) {
+  return room.messages
+    .filter((message) => message.kind !== "error")
+    .slice(-8)
+    .map((message) => {
+      const compactText = message.text.length > 1_200 ? `…${message.text.slice(-1_200)}` : message.text;
+      return `${message.author}：${compactText}`;
+    })
+    .join("\n\n");
+}
+
+function buildMicScoringMessages(agent, activeAgents, room) {
+  const others = activeAgents.filter((item) => item.id !== agent.id).map((item) => item.name);
+  const atmosphere = room.roomPrompt.trim().slice(0, 2_000) || "没有额外房间氛围设定。";
+  const persona = agent.persona.trim().slice(0, 2_000)
+    || "没有额外个人设定；按你自然、未预设的表达倾向判断。";
+  return [
+    {
+      role: "system",
+      content: [
+        `你是群聊嘉宾“${agent.name}”。${others.length ? `同桌还有：${others.join("、")}。` : ""}`,
+        `【房间共同氛围】\n${atmosphere}`,
+        `【你的个人设定】\n${persona}`,
+        "你现在只决定要不要争取下一次发言机会，不要生成正式回复。",
+        "只输出一个 0 到 10 的整数：0=完全不想接话，4=勉强有话可说，7=很想接，10=必须现在说。",
+        "不要解释，不要加标点或其他文字。",
+      ].filter(Boolean).join("\n\n"),
+    },
+    {
+      role: "user",
+      content: `【最近群聊】\n${micScoringTranscript(room)}\n\n你现在有多想接话？只输出 0-10 的整数。`,
+    },
+  ];
+}
+
+async function scoreWillingness(agent, activeAgents, room, conversationSignal) {
+  const controller = new AbortController();
+  const stopWithConversation = () => controller.abort();
+  if (conversationSignal.aborted) controller.abort();
+  else conversationSignal.addEventListener("abort", stopWithConversation, { once: true });
+  const timeout = setTimeout(() => controller.abort(), 25_000);
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent,
+        temperature: 0.2,
+        maxTokens: 8,
+        requestMode: "willingness-score",
+        messages: buildMicScoringMessages(agent, activeAgents, room),
+      }),
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `评分请求失败（${response.status}）`);
+    const score = parseWillingnessScore(payload.text);
+    if (score === null) throw new Error("没有返回可识别的意愿分");
+    return score;
+  } finally {
+    clearTimeout(timeout);
+    conversationSignal.removeEventListener("abort", stopWithConversation);
+  }
+}
+
+async function scoreMicRound(activeAgents, room, signal) {
+  const settled = await Promise.allSettled(
+    activeAgents.map((agent) => scoreWillingness(agent, activeAgents, room, signal)),
+  );
+  return activeAgents.map((agent, index) => ({
+    id: agent.id,
+    name: agent.name,
+    score: settled[index].status === "fulfilled" ? settled[index].value : null,
+    failed: settled[index].status === "rejected",
+  }));
+}
+
+function micSnapshotText(scores, winner = null, roundNumber = 1) {
+  const parts = scores.map((entry) => {
+    if (entry.score === null) return `${entry.name} 未接通`;
+    if (entry.score < DEFAULT_MIC_OPTIONS.threshold) return `${entry.name} ${entry.score}（弃权）`;
+    return `${entry.name} ${entry.score}`;
+  });
+  if (winner) return `第 ${roundNumber} 轮｜${parts.join(" · ")} → ${winner.name} 抢到`;
+  return `第 ${roundNumber} 轮｜${parts.join(" · ")} → 没人接话`;
+}
+
+async function deliverAgentTurn(speaker, activeAgents, room, controller) {
+  if (controller.signal.aborted) return false;
+  setRunning(true, speaker.name);
+  try {
+    const reply = await callAgent(speaker, activeAgents, room, controller.signal);
+    addMessage({ kind: "agent", author: speaker.name, text: reply.text, agentId: speaker.id });
+    if (reply.finishReason === "length") {
+      addMessage({
+        kind: "error",
+        author: "内容截断",
+        text: `${speaker.name} 达到了单次回复上限；上面这句不是完整发言。`,
+        agentId: speaker.id,
+      });
+    } else if (reply.finishReason === "insufficient_system_resource") {
+      addMessage({
+        kind: "error",
+        author: "上游繁忙",
+        text: `${speaker.name} 的推理资源不足；本次回复可能不完整。`,
+        agentId: speaker.id,
+      });
+    }
+    return true;
+  } catch (error) {
+    if (error?.name === "AbortError") return false;
+    addMessage({
+      kind: "error",
+      author: "传话失败",
+      text: `${speaker.name} 没有接通：${error.message}`,
+      agentId: speaker.id,
+    });
+    return false;
+  }
+}
+
+async function runMicGrabConversation(activeAgents, room, controller, rounds) {
+  const missedTurns = {};
+  let consecutivePasses = 0;
+  let lastSpeakerId = room.messages.filter((message) => message.kind === "agent").at(-1)?.agentId || "";
+
+  for (let round = 1; round <= rounds; round += 1) {
+    if (controller.signal.aborted) break;
+    if (activeAgents.length === 1) {
+      const onlyAgent = activeAgents[0];
+      micStatus.textContent = `第 ${round} 轮｜只有 ${onlyAgent.name} 一位嘉宾，直接交麦。`;
+      await deliverAgentTurn(onlyAgent, activeAgents, room, controller);
+      lastSpeakerId = onlyAgent.id;
+      continue;
+    }
+
+    setRunning(true, "", "score");
+    const scores = await scoreMicRound(activeAgents, room, controller.signal);
+    if (controller.signal.aborted) break;
+    if (scores.every((entry) => entry.score === null)) {
+      micStatus.textContent = `第 ${round} 轮｜所有抢麦评分都没有接通，讨论已停止。`;
+      showToast("抢麦评分都没有接通，已经停止本次自由聊");
+      break;
+    }
+
+    const winner = pickMicWinner(scores, {
+      ...DEFAULT_MIC_OPTIONS,
+      missedTurns,
+      lastSpeakerId,
+    });
+    if (!winner) {
+      consecutivePasses += 1;
+      micStatus.textContent = micSnapshotText(scores, null, round);
+      if (consecutivePasses >= 2) {
+        showToast("连续两轮没人想接话，这次自由聊自然收场啦");
+        break;
+      }
+      continue;
+    }
+
+    consecutivePasses = 0;
+    for (const entry of scores) {
+      if (entry.score === null || entry.score < DEFAULT_MIC_OPTIONS.threshold) continue;
+      missedTurns[entry.id] = entry.id === winner.id ? 0 : (missedTurns[entry.id] || 0) + 1;
+    }
+    const speaker = activeAgents.find((agent) => agent.id === winner.id);
+    micStatus.textContent = micSnapshotText(scores, speaker, round);
+    if (!speaker) break;
+    await deliverAgentTurn(speaker, activeAgents, room, controller);
+    lastSpeakerId = speaker.id;
+  }
 }
 
 function memoryMessages(room) {
@@ -811,7 +1015,8 @@ async function startConversation() {
     return;
   }
 
-  let speakers;
+  let speakers = [];
+  let micGrabRounds = 0;
   if (state.mode === "point") {
     const target = participants.find((agent) => agent.id === speakerSelect.value);
     if (!target || !isConfigured(target)) {
@@ -821,7 +1026,8 @@ async function startConversation() {
     speakers = [target];
   } else if (state.mode === "free") {
     const rounds = Math.min(6, Math.max(1, Number(roundsInput.value) || 2));
-    speakers = Array.from({ length: rounds }, () => configuredAgents).flat();
+    if (state.freeStrategy === "mic-grab") micGrabRounds = rounds;
+    else speakers = Array.from({ length: rounds }, () => configuredAgents).flat();
   } else {
     speakers = configuredAgents;
   }
@@ -841,35 +1047,12 @@ async function startConversation() {
   const controller = new AbortController();
   state.abortController = controller;
   try {
-    for (const speaker of speakers) {
-      if (controller.signal.aborted) break;
-      setRunning(true, speaker.name);
-      try {
-        const reply = await callAgent(speaker, configuredAgents, room, controller.signal);
-        addMessage({ kind: "agent", author: speaker.name, text: reply.text, agentId: speaker.id });
-        if (reply.finishReason === "length") {
-          addMessage({
-            kind: "error",
-            author: "内容截断",
-            text: `${speaker.name} 达到了单次回复上限；上面这句不是完整发言。`,
-            agentId: speaker.id,
-          });
-        } else if (reply.finishReason === "insufficient_system_resource") {
-          addMessage({
-            kind: "error",
-            author: "上游繁忙",
-            text: `${speaker.name} 的推理资源不足；本次回复可能不完整。`,
-            agentId: speaker.id,
-          });
-        }
-      } catch (error) {
-        if (error?.name === "AbortError") break;
-        addMessage({
-          kind: "error",
-          author: "传话失败",
-          text: `${speaker.name} 没有接通：${error.message}`,
-          agentId: speaker.id,
-        });
+    if (micGrabRounds) {
+      await runMicGrabConversation(configuredAgents, room, controller, micGrabRounds);
+    } else {
+      for (const speaker of speakers) {
+        if (controller.signal.aborted) break;
+        await deliverAgentTurn(speaker, configuredAgents, room, controller);
       }
     }
   } finally {
@@ -1319,6 +1502,16 @@ document.querySelectorAll("[data-mode]").forEach((button) => {
     renderMode();
   });
 });
+document.querySelectorAll("[data-free-strategy]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.freeStrategy = button.dataset.freeStrategy === "mic-grab" ? "mic-grab" : "round-robin";
+    updateDirectorPrefs({ freeStrategy: state.freeStrategy });
+    if (state.freeStrategy === "mic-grab") {
+      micStatus.textContent = "抢麦结果会显示在这里，不会写进聊天记录。";
+    }
+    renderMode();
+  });
+});
 roundsInput.addEventListener("input", () => {
   roundsOutput.textContent = `${roundsInput.value} 轮`;
 });
@@ -1327,7 +1520,7 @@ temperatureInput.addEventListener("input", () => {
 });
 tokensInput.addEventListener("input", () => {
   const value = Math.min(4096, Math.max(64, Number(tokensInput.value) || 300));
-  safeWrite(DIRECTOR_PREFS_KEY, { visibleTokenTarget: value });
+  updateDirectorPrefs({ visibleTokenTarget: value });
 });
 messageFeed.addEventListener("click", (event) => {
   if (event.target.closest(".message-actions")) return;
@@ -1498,6 +1691,7 @@ accessForm.addEventListener("submit", async (event) => {
 });
 
 const directorPrefs = safeRead(DIRECTOR_PREFS_KEY, {});
+state.freeStrategy = directorPrefs.freeStrategy === "mic-grab" ? "mic-grab" : "round-robin";
 tokensInput.value = String(
   Math.min(4096, Math.max(64, Number(directorPrefs.visibleTokenTarget) || 300)),
 );

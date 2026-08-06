@@ -11,7 +11,7 @@
     <title>野生 AI 观察室</title>
     <link rel="icon" href="/favicon.svg" />
     <link rel="stylesheet" href="/styles.css" />
-    <script src="/app.js" defer></script>
+    <script type="module" src="/app.js"></script>
   </head>
   <body>
     <header class="topbar">
@@ -129,13 +129,23 @@
           <select id="speaker-select"></select>
         </div>
 
+        <div class="control-group is-hidden" id="free-strategy-control">
+          <span class="control-label">自由聊方式</span>
+          <div class="mode-switch free-strategy-switch" id="free-strategy-switch">
+            <button type="button" data-free-strategy="round-robin" class="is-active">轮流接话</button>
+            <button type="button" data-free-strategy="mic-grab">抢麦</button>
+          </div>
+          <p class="field-help" id="free-strategy-help">按嘉宾席顺序轮流发言，不会增加额外调用。</p>
+          <p class="mic-status is-hidden" id="mic-status" aria-live="polite">抢麦结果会显示在这里，不会写进聊天记录。</p>
+        </div>
+
         <div class="control-group is-hidden" id="rounds-control">
           <div class="label-row">
-            <label for="rounds-input">讨论轮数</label>
+            <label for="rounds-input" id="rounds-label">讨论轮数</label>
             <output id="rounds-output">2 轮</output>
           </div>
           <input id="rounds-input" type="range" min="1" max="6" value="2" />
-          <p class="field-help">一轮 = 每位启用的嘉宾发言一次。设了上限，不会无限烧额度。</p>
+          <p class="field-help" id="rounds-help">一轮 = 每位启用的嘉宾发言一次。设了上限，不会无限烧额度。</p>
         </div>
 
         <div class="control-group">
