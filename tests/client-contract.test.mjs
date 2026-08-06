@@ -57,10 +57,15 @@ test("房间长期记忆独立于聊天消息并注入最近原文之前", async
   assert.match(html, /id="summarizer-dialog"/);
   assert.match(html, /id="room-memory-summary"/);
   assert.match(html, /id="room-memory-focus"/);
+  assert.match(html, /id="memory-cancel"/);
   assert.match(script, /function longTermMemoryForPrompt\(room\)/);
   assert.match(script, /function summarizeRoom\(room,/);
   assert.match(script, /recentMessages: Math\.min\(80, Math\.max\(10,/);
   assert.match(script, /longTermMemoryForPrompt\(room\)/);
+  assert.match(script, /requestMode: "memory-summary"/);
+  assert.match(script, /summaryNotices\.set/);
+  assert.match(script, /\.controller\.abort\(\)/);
+  assert.match(script, /\[502, 503\]\.includes/);
   assert.match(html, /留空使用默认的“记事、不定性”规则/);
   assert.match(memoryPrompt, /不是人物评委或角色编剧/);
   assert.match(memoryPrompt, /属于可记录的关系事实，不是人物标签/);

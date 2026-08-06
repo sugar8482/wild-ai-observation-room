@@ -97,6 +97,7 @@ function isOfficialDeepSeekV4(agent) {
 
 export function chatRequestPolicy(agent, payload = {}) {
   const isWillingnessScore = payload.requestMode === "willingness-score";
+  const isMemorySummary = payload.requestMode === "memory-summary";
   const minimumTokens = isWillingnessScore ? 1 : 64;
   const maximumTokens = isWillingnessScore ? 64 : 4096;
   const visibleTokenTarget = Number.isFinite(Number(payload.maxTokens))
@@ -106,10 +107,11 @@ export function chatRequestPolicy(agent, payload = {}) {
   const usesDeepSeekThinking = officialDeepSeek && !isWillingnessScore;
   return {
     isWillingnessScore,
+    isMemorySummary,
     visibleTokenTarget,
     upstreamMaxTokens: usesDeepSeekThinking ? Math.max(8192, visibleTokenTarget) : visibleTokenTarget,
     thinkingMode: officialDeepSeek ? (usesDeepSeekThinking ? "enabled" : "disabled") : undefined,
-    timeoutMs: isWillingnessScore ? 30_000 : usesDeepSeekThinking ? 180_000 : 120_000,
+    timeoutMs: isWillingnessScore ? 30_000 : isMemorySummary ? 300_000 : usesDeepSeekThinking ? 180_000 : 120_000,
   };
 }
 

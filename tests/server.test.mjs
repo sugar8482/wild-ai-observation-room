@@ -20,6 +20,14 @@ test("抢麦评分使用短输出并关闭 DeepSeek 隐藏思考", () => {
   assert.equal(scorePolicy.upstreamMaxTokens, 8);
   assert.equal(scorePolicy.thinkingMode, "disabled");
   assert.equal(scorePolicy.timeoutMs, 30_000);
+
+  const summaryPolicy = chatRequestPolicy(agent, {
+    requestMode: "memory-summary",
+    maxTokens: 1800,
+  });
+  assert.equal(summaryPolicy.isMemorySummary, true);
+  assert.equal(summaryPolicy.timeoutMs, 300_000);
+  assert.equal(summaryPolicy.upstreamMaxTokens, 8192);
 });
 
 test("本地服务提供健康检查和主页面", async (context) => {

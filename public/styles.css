@@ -1105,6 +1105,10 @@ input[type="range"] {
   color: var(--error);
 }
 
+.memory-status.is-error {
+  color: var(--error);
+}
+
 .memory-actions {
   display: flex;
   justify-content: flex-end;
