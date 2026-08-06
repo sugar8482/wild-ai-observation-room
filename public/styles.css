@@ -1031,8 +1031,14 @@ input[type="range"] {
 }
 
 .memory-interval-field,
+.memory-focus-field,
 .memory-summary-field {
   margin-top: 14px;
+}
+
+.memory-focus-field textarea {
+  min-height: 108px;
+  background: var(--paper);
 }
 
 .memory-summary-field textarea {

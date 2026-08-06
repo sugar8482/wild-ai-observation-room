@@ -185,6 +185,7 @@ function hydrateRoomMemory(memory) {
     enabled: memory?.enabled !== false,
     interval: Math.min(100, Math.max(5, Number(memory?.interval) || 20)),
     recentMessages: Math.min(80, Math.max(10, Number(memory?.recentMessages) || 30)),
+    focus: String(memory?.focus || ""),
     summary: String(memory?.summary || ""),
     summarizedThroughId: String(memory?.summarizedThroughId || ""),
     summarizedMessageCount: Math.max(0, Number(memory?.summarizedMessageCount) || 0),
@@ -920,12 +921,16 @@ async function requestSummaryChunk(room, previousSummary, messages) {
           content: [
             "你是群聊的长期记录员，不是人物评委或角色编剧。你的工作是更新一份简洁、可靠、可继续滚动维护的中文记录，让后续对话能接住已发生的内容，但不把一次行为固化成成员人格。",
             "只保留：1. 用户明确设定的房间规则、已做出的决定和重要事实；2. 具体事件与观点，用“X 在某话题中提出……”“X 回应或反驳了 Y 的某个观点”这类客观措辞；3. 尚未回应的问题和可继续的话题；4. 在本批新增聊天中再次出现、仍在被使用的共同梗或引用。",
+            "成员明确建立的关系状态、彼此使用的称呼、做出的承诺、共同经历，以及亲口表达且仍影响后续的感受，属于可记录的关系事实，不是人物标签。只按原文含义记录，不得延伸推断。",
             "绝对不要写成员档案、人格画像或能力排名；不要写“X 是……的人”“X 喜欢、擅长、不擅长、总是、习惯……”这类标签；不要把互评中的人物判断当作事实延续；不要根据单次行为预测成员以后会怎样表达。",
             "旧总结只是待修订的草稿，不是权威事实。如果其中有人物标签、互评判词、未在本批新增聊天中继续出现的旧梗，在新总结中删除。",
             "区分事实、玩笑、成员当时的观点和不确定猜测；不要脑补任何人的感情、动机或固定性格。合并重复内容，删除已经失效的细节。",
             "可以使用“重要事实与决定”“已发生的讨论”“仍活跃的梗”“待继续”等标题，但不得列“成员档案”或“性格”标题。目标约 600 至 1000 个中文字，信息较少时不要凑字数。",
+            room.memory.focus.trim()
+              ? `【本房间的额外记忆重点】\n${room.memory.focus.trim()}\n这些要求只决定优先保留什么，不得覆盖上述“不编造、不把推断当事实”的原则。`
+              : "",
             "只输出更新后的长期总结正文，不解释过程，不提及你是整理员。",
-          ].join("\n"),
+          ].filter(Boolean).join("\n"),
         },
         {
           role: "user",
@@ -1226,6 +1231,7 @@ function openRoomDialog(roomId = null) {
   roomForm.elements.namedItem("roomPrompt").value = room?.roomPrompt || "";
   roomForm.elements.namedItem("memoryEnabled").checked = memory.enabled;
   roomForm.elements.namedItem("memoryInterval").value = memory.interval;
+  roomForm.elements.namedItem("memoryFocus").value = memory.focus;
   roomForm.elements.namedItem("memorySummary").value = memory.summary;
   populateRoomParticipants(room?.participantIds || activeRoom()?.participantIds || state.agents.map((agent) => agent.id));
   deleteRoomButton.classList.toggle("is-hidden", !room || state.rooms.length <= 1);
@@ -1390,6 +1396,7 @@ roomForm.addEventListener("submit", (event) => {
   const roomPrompt = String(data.get("roomPrompt") || "").trim();
   const memoryEnabled = data.get("memoryEnabled") === "on";
   const memoryInterval = Math.min(100, Math.max(5, Number(data.get("memoryInterval")) || 20));
+  const memoryFocus = String(data.get("memoryFocus") || "").trim();
   const memorySummary = String(data.get("memorySummary") || "").trim();
   const participantIds = data.getAll("participantIds").map(String);
   if (!name) {
@@ -1402,13 +1409,16 @@ roomForm.addEventListener("submit", (event) => {
   }
   const id = String(data.get("id") || "");
   const room = state.rooms.find((item) => item.id === id);
+  let memoryFocusNeedsRebuild = false;
   if (room) {
     room.name = name;
     room.roomPrompt = roomPrompt;
     const previousSummary = room.memory.summary;
     const clearedSummary = previousSummary.trim() && !memorySummary;
+    memoryFocusNeedsRebuild = room.memory.focus !== memoryFocus && Boolean(previousSummary.trim());
     room.memory.enabled = memoryEnabled;
     room.memory.interval = memoryInterval;
+    room.memory.focus = memoryFocus;
     room.memory.summary = memorySummary;
     if (clearedSummary) {
       room.memory.summarizedThroughId = "";
@@ -1426,7 +1436,7 @@ roomForm.addEventListener("submit", (event) => {
       roomPrompt,
       participantIds,
       messages: [],
-      memory: { enabled: memoryEnabled, interval: memoryInterval, summary: memorySummary },
+      memory: { enabled: memoryEnabled, interval: memoryInterval, focus: memoryFocus, summary: memorySummary },
     });
     state.rooms.push(created);
     state.activeRoomId = created.id;
@@ -1434,7 +1444,9 @@ roomForm.addEventListener("submit", (event) => {
   renderAll();
   queuePersist();
   roomDialog.close();
-  showToast(`${name} 已准备好`);
+  showToast(memoryFocusNeedsRebuild
+    ? "记忆重点已保存；点“重新生成”后会应用到旧摘要"
+    : `${name} 已准备好`);
 });
 
 byId("memory-summarize-now").addEventListener("click", () => {

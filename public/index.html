@@ -219,6 +219,17 @@
             </div>
             <p class="field-help">AI 仍会直接看到最近 30 条原文；更早的内容由长期总结接住。</p>
           </div>
+          <div class="field memory-focus-field">
+            <label for="room-memory-focus">本房间的记忆重点 <span>可留空</span></label>
+            <textarea
+              id="room-memory-focus"
+              name="memoryFocus"
+              rows="4"
+              maxlength="20000"
+              placeholder="例如：重点保留双方明确建立的关系、称呼、承诺、共同经历、当前矛盾以及亲口表达的情感变化；不要凭空推断未说出口的感情。"
+            ></textarea>
+            <p class="field-help">留空使用默认的“记事、不定性”规则；只影响这间房，不会直接交给聊天嘉宾当人设。</p>
+          </div>
           <div class="field memory-summary-field">
             <label for="room-memory-summary">当前长期总结 <span>可以手动修正</span></label>
             <textarea
@@ -227,7 +238,7 @@
               rows="8"
               placeholder="还没有整理。配置好记忆整理员后，可以立即生成，也可以等消息达到数量后自动整理。"
             ></textarea>
-            <p class="field-help">整理员只记具体事件、观点、决定、仍活跃的梗和待继续话题，不给嘉宾写性格档案。</p>
+            <p class="field-help">摘要始终以已发生的原文为准；记忆重点只决定优先保留什么。</p>
           </div>
           <p class="memory-status" id="room-memory-status">还没有长期总结。</p>
           <div class="memory-actions">

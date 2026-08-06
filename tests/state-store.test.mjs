@@ -110,6 +110,7 @@ test("给旧房间增加氛围提示时保留原聊天记录", async (context) =
   const upgraded = await store.save(original);
 
   assert.equal(upgraded.rooms[0].roomPrompt, "像朋友一样自然接话。");
+  assert.equal(upgraded.rooms[0].memory.focus, "");
   assert.deepEqual(
     upgraded.rooms[0].messages.map((message) => message.text),
     ["第一条", "第二条"],
@@ -142,6 +143,7 @@ test("记忆整理员 Key 加密保存且房间长期记忆可迁移", async (co
         enabled: true,
         interval: 20,
         recentMessages: 30,
+        focus: "优先保留双方明确做出的承诺。",
         summary: "晨曦希望大家记住这件事。",
         summarizedThroughId: "message-one",
         summarizedMessageCount: 1,
@@ -153,6 +155,7 @@ test("记忆整理员 Key 加密保存且房间长期记忆可迁移", async (co
   assert.equal(saved.version, 3);
   assert.equal(saved.summarizer.apiKey, "");
   assert.equal(saved.summarizer.hasApiKey, true);
+  assert.equal(saved.rooms[0].memory.focus, "优先保留双方明确做出的承诺。");
   assert.equal(saved.rooms[0].memory.summary, "晨曦希望大家记住这件事。");
   assert.equal((await store.credentials("memory-summarizer")).apiKey, "summary-secret-key");
   assert.doesNotMatch(await readFile(filePath, "utf8"), /summary-secret-key/);
