@@ -105,6 +105,28 @@ test("每个房间可以用一次模型回复显示连续气泡", async () => {
   assert.match(bubbles, /MAX_CHAT_BUBBLES = 3/);
 });
 
+test("iPad 顶部可以切换房间并温和提示新消息", async () => {
+  const [html, script, styles] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
+  ]);
+  for (const id of [
+    "mobile-room-switcher",
+    "mobile-room-current",
+    "mobile-room-menu",
+    "mobile-room-name",
+    "mobile-room-meta",
+    "new-message-jump",
+  ]) assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(script, /function renderMobileRoomSwitcher\(\)/);
+  assert.match(script, /function scrollToLatest\(/);
+  assert.match(script, /composer\.scrollIntoView/);
+  assert.match(script, /unseenMessageCount \+= activeAddedMessages/);
+  assert.match(styles, /\.mobile-room-switcher \{[\s\S]*position: sticky/);
+  assert.match(styles, /\.new-message-jump/);
+});
+
 test("自由聊可以选择轮流接话或并行评分抢麦", async () => {
   const [html, script] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),

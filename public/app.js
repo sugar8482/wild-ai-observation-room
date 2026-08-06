@@ -56,6 +56,12 @@ const byId = (id) => document.getElementById(id);
 const agentList = byId("agent-list");
 const roomList = byId("room-list");
 const messageFeed = byId("message-feed");
+const mobileRoomSwitcher = byId("mobile-room-switcher");
+const mobileRoomCurrent = byId("mobile-room-current");
+const mobileRoomMenu = byId("mobile-room-menu");
+const mobileRoomName = byId("mobile-room-name");
+const mobileRoomMeta = byId("mobile-room-meta");
+const newMessageJump = byId("new-message-jump");
 const emptyState = byId("empty-state");
 const composer = byId("composer");
 const messageInput = byId("message-input");
@@ -103,6 +109,7 @@ const roomScheduleStatus = byId("room-schedule-status");
 let toastTimer;
 let saveChain = Promise.resolve();
 let loadPromise = null;
+let unseenMessageCount = 0;
 const summarizingRoomIds = new Set();
 
 function safeRead(key, fallback) {
@@ -428,6 +435,61 @@ function renderRooms() {
     card.append(main, edit);
     roomList.append(card);
   }
+  renderMobileRoomSwitcher();
+}
+
+function compactModeLabel() {
+  if (state.mode === "free" && state.freeStrategy === "mic-grab") return "抢麦";
+  if (state.mode === "free") return "自由聊";
+  if (state.mode === "point") return "点名";
+  return "圆桌";
+}
+
+function closeMobileRoomMenu() {
+  mobileRoomSwitcher.classList.remove("is-open");
+  mobileRoomCurrent.setAttribute("aria-expanded", "false");
+}
+
+function renderMobileRoomSwitcher() {
+  const current = activeRoom();
+  mobileRoomName.textContent = current?.name || "选择聊天室";
+  mobileRoomMeta.textContent = current
+    ? `${current.messages.length} 条 · ${compactModeLabel()}`
+    : "还没有房间";
+  mobileRoomMenu.replaceChildren();
+
+  for (const room of state.rooms) {
+    const row = createElement("div", `mobile-room-option${room.id === state.activeRoomId ? " is-active" : ""}`);
+    const open = createElement("button", "mobile-room-option-main");
+    open.type = "button";
+    if (room.id === state.activeRoomId) open.setAttribute("aria-current", "page");
+    open.append(
+      createElement("strong", "", room.name),
+      createElement("span", "", `${room.messages.length} 条记录 · ${room.participantIds.length} 位嘉宾`),
+    );
+    open.addEventListener("click", () => {
+      closeMobileRoomMenu();
+      if (room.id === state.activeRoomId) scrollToLatest({ revealOnSmallScreen: true, behavior: "smooth" });
+      else switchRoom(room.id);
+    });
+    const edit = createElement("button", "mobile-room-option-edit", "设置");
+    edit.type = "button";
+    edit.setAttribute("aria-label", `设置 ${room.name}`);
+    edit.addEventListener("click", () => {
+      closeMobileRoomMenu();
+      openRoomDialog(room.id);
+    });
+    row.append(open, edit);
+    mobileRoomMenu.append(row);
+  }
+
+  const add = createElement("button", "mobile-room-add", "＋ 新建聊天室");
+  add.type = "button";
+  add.addEventListener("click", () => {
+    closeMobileRoomMenu();
+    openRoomDialog();
+  });
+  mobileRoomMenu.append(add);
 }
 
 function renderSummarizerStatus() {
@@ -500,6 +562,7 @@ function formatTime(timestamp) {
 }
 
 function renderMessages({ scroll = false } = {}) {
+  const previousScrollTop = messageFeed.scrollTop;
   for (const element of [...messageFeed.querySelectorAll(".message")]) element.remove();
   const messages = currentMessages();
   emptyState.classList.toggle("is-hidden", messages.length > 0);
@@ -549,7 +612,38 @@ function renderMessages({ scroll = false } = {}) {
     article.append(meta, stack);
     messageFeed.append(article);
   }
-  if (scroll) requestAnimationFrame(() => messageFeed.scrollTo({ top: messageFeed.scrollHeight }));
+  if (scroll) scrollToLatest({ revealOnSmallScreen: true });
+  else requestAnimationFrame(() => { messageFeed.scrollTop = previousScrollTop; });
+}
+
+function isSmallRoomLayout() {
+  return globalThis.matchMedia?.("(max-width: 840px)").matches === true;
+}
+
+function isViewingLatest() {
+  if (isSmallRoomLayout()) {
+    const composerRect = composer.getBoundingClientRect();
+    return composerRect.top <= window.innerHeight + 140 && composerRect.bottom >= -140;
+  }
+  return messageFeed.scrollHeight - messageFeed.scrollTop - messageFeed.clientHeight < 120;
+}
+
+function updateNewMessageJump() {
+  newMessageJump.classList.toggle("is-hidden", unseenMessageCount <= 0);
+  newMessageJump.textContent = unseenMessageCount > 1
+    ? `↓ ${unseenMessageCount} 条新消息`
+    : "↓ 1 条新消息";
+}
+
+function scrollToLatest({ revealOnSmallScreen = false, behavior = "auto" } = {}) {
+  requestAnimationFrame(() => {
+    messageFeed.scrollTo({ top: messageFeed.scrollHeight, behavior });
+    if (revealOnSmallScreen && isSmallRoomLayout() && currentMessages().length) {
+      composer.scrollIntoView({ block: "end", behavior });
+    }
+    unseenMessageCount = 0;
+    updateNewMessageJump();
+  });
 }
 
 function renderRoomHeader() {
@@ -582,6 +676,8 @@ function renderMode() {
   roundsHelp.textContent = isMicGrab
     ? "一轮只产生一位赢家的正式发言；连续两轮全员弃权会自然收场。"
     : "一轮 = 每位启用的嘉宾发言一次。设了上限，不会无限烧额度。";
+  const room = activeRoom();
+  mobileRoomMeta.textContent = room ? `${room.messages.length} 条 · ${compactModeLabel()}` : "还没有房间";
 }
 
 function renderAll(options = {}) {
@@ -646,7 +742,9 @@ function switchRoom(roomId) {
     return;
   }
   state.activeRoomId = roomId;
-  renderAll();
+  unseenMessageCount = 0;
+  closeMobileRoomMenu();
+  renderAll({ scroll: true });
   queuePersist();
 }
 
@@ -1590,6 +1688,12 @@ byId("close-summarizer-dialog").addEventListener("click", () => summarizerDialog
 byId("add-agent-button").addEventListener("click", () => openAgentDialog());
 byId("add-room-button").addEventListener("click", () => openRoomDialog());
 byId("open-summarizer-button").addEventListener("click", openSummarizerDialog);
+mobileRoomCurrent.addEventListener("click", () => {
+  const opening = !mobileRoomSwitcher.classList.contains("is-open");
+  mobileRoomSwitcher.classList.toggle("is-open", opening);
+  mobileRoomCurrent.setAttribute("aria-expanded", String(opening));
+});
+newMessageJump.addEventListener("click", () => scrollToLatest({ revealOnSmallScreen: true, behavior: "smooth" }));
 
 document.querySelectorAll("[data-mode]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -1627,11 +1731,23 @@ messageFeed.addEventListener("click", (event) => {
   if (selected && !wasVisible) selected.classList.add("is-actions-visible");
 });
 document.addEventListener("click", (event) => {
+  if (!mobileRoomSwitcher.contains(event.target)) closeMobileRoomMenu();
   if (messageFeed.contains(event.target)) return;
   for (const message of messageFeed.querySelectorAll(".message.is-actions-visible")) {
     message.classList.remove("is-actions-visible");
   }
 });
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeMobileRoomMenu();
+});
+const clearNewMessageNoticeAtLatest = () => {
+  if (unseenMessageCount > 0 && isViewingLatest()) {
+    unseenMessageCount = 0;
+    updateNewMessageJump();
+  }
+};
+window.addEventListener("scroll", clearNewMessageNoticeAtLatest, { passive: true });
+messageFeed.addEventListener("scroll", clearNewMessageNoticeAtLatest, { passive: true });
 composer.addEventListener("submit", (event) => {
   event.preventDefault();
   startConversation();
@@ -1727,7 +1843,7 @@ async function loadServerState() {
       await queuePersist();
     }
     state.ready = true;
-    renderAll();
+    renderAll({ scroll: true });
   })().catch((error) => {
     state.ready = true;
     renderAll();
@@ -1743,10 +1859,18 @@ async function syncBackgroundUpdates() {
     const response = await fetch("/api/state", { cache: "no-store" });
     if (!response.ok) return;
     const payload = await response.json();
+    const wasViewingLatest = isViewingLatest();
+    const beforeActiveCount = activeRoom()?.messages.length || 0;
     const addedMessages = mergeServerRoomUpdates(payload.rooms || []);
+    const activeAddedMessages = Math.max(0, (activeRoom()?.messages.length || 0) - beforeActiveCount);
     renderRooms();
     if (addedMessages) {
-      renderMessages();
+      if (activeAddedMessages && wasViewingLatest) renderMessages({ scroll: true });
+      else if (activeAddedMessages) {
+        renderMessages();
+        unseenMessageCount += activeAddedMessages;
+        updateNewMessageJump();
+      }
       showToast(`后台定时聊天新增了 ${addedMessages} 条发言`);
     }
     if (roomDialog.open) {

@@ -65,6 +65,25 @@
       </aside>
 
       <main class="chat-panel" aria-labelledby="room-title">
+        <nav class="mobile-room-switcher" id="mobile-room-switcher" aria-label="切换聊天室">
+          <button
+            class="mobile-room-current"
+            id="mobile-room-current"
+            type="button"
+            aria-expanded="false"
+            aria-controls="mobile-room-menu"
+          >
+            <span class="mobile-room-current-copy">
+              <span class="section-kicker">CURRENT ROOM</span>
+              <strong id="mobile-room-name">一号观察间</strong>
+            </span>
+            <span class="mobile-room-current-side">
+              <span id="mobile-room-meta">0 条</span>
+              <span class="mobile-room-caret" aria-hidden="true">⌄</span>
+            </span>
+          </button>
+          <div class="mobile-room-menu" id="mobile-room-menu"></div>
+        </nav>
         <div class="chat-heading">
           <div>
             <p class="section-kicker">LIVE ROOM</p>
@@ -82,6 +101,8 @@
             </p>
           </div>
         </section>
+
+        <button class="new-message-jump is-hidden" id="new-message-jump" type="button">↓ 新消息</button>
 
         <div class="speaking-indicator is-hidden" id="speaking-indicator" aria-live="polite">
           <span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
