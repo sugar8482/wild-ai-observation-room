@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      name="description"
+      content="让不同公司的 AI 在同一张桌上聊天。本机优先，支持第三方兼容接口与可选人设。"
+    />
+    <title>野生 AI 观察室</title>
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand-block">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <p class="eyebrow">MULTI-MODEL CHAT LAB</p>
+          <h1>野生 AI 观察室</h1>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <div class="runtime-status" aria-live="polite">
+          <span class="status-dot" id="status-dot"></span>
+          <span id="status-text">本地代理就绪</span>
+        </div>
+        <button class="button button-quiet" id="export-button" type="button">导出记录</button>
+        <button class="button button-quiet" id="new-chat-button" type="button">清空本房</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="panel guest-panel" aria-labelledby="guest-title">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">ROOMS</p>
+            <h2>聊天室</h2>
+          </div>
+          <button class="icon-button" id="add-room-button" type="button" aria-label="新建聊天室">＋</button>
+        </div>
+        <p class="panel-note">每个房间有自己的嘉宾阵容和聊天记录。</p>
+        <div class="room-list" id="room-list"></div>
+
+        <div class="panel-divider"></div>
+
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">GUESTS</p>
+            <h2 id="guest-title">嘉宾席</h2>
+          </div>
+          <button class="icon-button" id="add-agent-button" type="button" aria-label="添加 AI 嘉宾">＋</button>
+        </div>
+        <p class="panel-note">开关决定谁参加当前房间。点击“编辑”填写接口与人设。</p>
+        <div class="agent-list" id="agent-list"></div>
+        <div class="privacy-note">
+          <span class="privacy-icon" aria-hidden="true">⌁</span>
+          <div>
+            <strong>配置已保存</strong>
+            <p>API Key 加密保存在这台电脑上，刷新和换聊天室都不会丢。</p>
+          </div>
+        </div>
+      </aside>
+
+      <main class="chat-panel" aria-labelledby="room-title">
+        <div class="chat-heading">
+          <div>
+            <p class="section-kicker">LIVE ROOM</p>
+            <h2 id="room-title">一号观察间</h2>
+          </div>
+          <span class="mode-badge" id="room-mode-label">圆桌 · 每人一轮</span>
+        </div>
+
+        <section class="message-feed" id="message-feed" aria-live="polite" aria-label="聊天记录">
+          <div class="empty-state" id="empty-state">
+            <p class="empty-index">OBSERVATION 001</p>
+            <h3>把不同的脑回路，请到同一张桌上。</h3>
+            <p>
+              先在左边填好 API，再抛一个话题。人设可以空着——那样看到的就是各家的“原厂味”。
+            </p>
+          </div>
+        </section>
+
+        <div class="speaking-indicator is-hidden" id="speaking-indicator" aria-live="polite">
+          <span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span id="speaking-text">正在思考</span>
+        </div>
+
+        <form class="composer" id="composer">
+          <label class="sr-only" for="message-input">输入想说的话</label>
+          <textarea
+            id="message-input"
+            name="message"
+            rows="3"
+            placeholder="抛个话题，或者什么都不写，让他们沿着上一句继续……"
+          ></textarea>
+          <div class="composer-footer">
+            <p>Enter 发送 · Shift + Enter 换行</p>
+            <div class="composer-actions">
+              <button class="button button-quiet is-hidden" id="stop-button" type="button">停止</button>
+              <button class="button button-primary" id="send-button" type="submit">开始圆桌</button>
+            </div>
+          </div>
+        </form>
+      </main>
+
+      <aside class="panel director-panel" aria-labelledby="director-title">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">DIRECTOR</p>
+            <h2 id="director-title">导演台</h2>
+          </div>
+        </div>
+
+        <fieldset class="control-group">
+          <legend>发言方式</legend>
+          <div class="mode-switch" id="mode-switch">
+            <button type="button" data-mode="point">点名</button>
+            <button type="button" data-mode="roundtable" class="is-active">圆桌</button>
+            <button type="button" data-mode="free">自由聊</button>
+          </div>
+          <p class="field-help" id="mode-help">启用的嘉宾依次回答一轮，后面的人能看到前面的发言。</p>
+        </fieldset>
+
+        <div class="control-group is-hidden" id="speaker-control">
+          <label for="speaker-select">下一位发言</label>
+          <select id="speaker-select"></select>
+        </div>
+
+        <div class="control-group is-hidden" id="rounds-control">
+          <div class="label-row">
+            <label for="rounds-input">讨论轮数</label>
+            <output id="rounds-output">2 轮</output>
+          </div>
+          <input id="rounds-input" type="range" min="1" max="6" value="2" />
+          <p class="field-help">一轮 = 每位启用的嘉宾发言一次。设了上限，不会无限烧额度。</p>
+        </div>
+
+        <div class="control-group">
+          <div class="label-row">
+            <label for="temperature-input">表达自由度</label>
+            <output id="temperature-output">0.8</output>
+          </div>
+          <input id="temperature-input" type="range" min="0" max="1.5" value="0.8" step="0.1" />
+          <div class="range-labels"><span>克制</span><span>放飞</span></div>
+        </div>
+
+        <div class="control-group">
+          <label for="tokens-input">正文长度目标</label>
+          <div class="suffix-input">
+            <input id="tokens-input" type="number" min="64" max="4096" step="1" value="300" />
+            <span>tokens</span>
+          </div>
+          <p class="field-help">只管最终说出来的篇幅；思考模型会另留后台余量，优先保证句子完整。</p>
+        </div>
+
+        <div class="control-group memory-director-control">
+          <div class="label-row">
+            <span class="control-label">房间长期记忆</span>
+            <button class="text-button" id="open-summarizer-button" type="button">配置整理员</button>
+          </div>
+          <p class="field-help" id="summarizer-status">尚未配置记忆整理员。</p>
+        </div>
+
+        <div class="director-tip">
+          <p class="tip-number">导演提示 01</p>
+          <p>想磕 CP 时，给两位嘉宾各写一份人设，再选“自由聊”。你负责递话题，他们负责发展剧情。</p>
+        </div>
+      </aside>
+    </div>
+
+    <dialog class="room-dialog" id="room-dialog">
+      <form id="room-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="section-kicker">ROOM PROFILE</p>
+            <h2 id="room-dialog-title">新建聊天室</h2>
+          </div>
+          <button class="icon-button" id="close-room-dialog" type="button" aria-label="关闭">×</button>
+        </div>
+        <input type="hidden" name="id" />
+        <div class="field room-name-field">
+          <label for="room-name">聊天室名称</label>
+          <input id="room-name" name="name" required maxlength="60" placeholder="例如：五人恋综观察间" />
+        </div>
+        <div class="field room-prompt-field">
+          <label for="room-prompt">房间氛围提示词 <span>可留空</span></label>
+          <textarea
+            id="room-prompt"
+            name="roomPrompt"
+            rows="6"
+            placeholder="例如：这是私人朋友群聊，不是工作或答题场景。可以接梗、吐槽、跑题和表达不同意见，不用总结升华。"
+          ></textarea>
+          <p class="field-help">本房间里的所有 AI 在每次发言前都会看到；不会影响其他聊天室。</p>
+        </div>
+        <details class="room-memory-field" open>
+          <summary>房间长期记忆</summary>
+          <label class="memory-toggle" for="room-memory-enabled">
+            <input id="room-memory-enabled" name="memoryEnabled" type="checkbox" checked />
+            <span>自动整理这个房间</span>
+          </label>
+          <div class="field memory-interval-field">
+            <label for="room-memory-interval">每新增多少条整理一次</label>
+            <div class="suffix-input">
+              <input id="room-memory-interval" name="memoryInterval" type="number" min="5" max="100" step="1" value="20" />
+              <span>条</span>
+            </div>
+            <p class="field-help">AI 仍会直接看到最近 30 条原文；更早的内容由长期总结接住。</p>
+          </div>
+          <div class="field memory-summary-field">
+            <label for="room-memory-summary">当前长期总结 <span>可以手动修正</span></label>
+            <textarea
+              id="room-memory-summary"
+              name="memorySummary"
+              rows="8"
+              placeholder="还没有整理。配置好记忆整理员后，可以立即生成，也可以等消息达到数量后自动整理。"
+            ></textarea>
+          </div>
+          <p class="memory-status" id="room-memory-status">还没有长期总结。</p>
+          <div class="memory-actions">
+            <button class="button button-quiet" id="memory-summarize-now" type="button">立即整理</button>
+            <button class="button button-quiet" id="memory-rebuild" type="button">重新生成</button>
+          </div>
+        </details>
+        <fieldset class="participant-picker">
+          <legend>邀请哪些 AI</legend>
+          <p class="field-help">以后也可以在嘉宾席直接开关。</p>
+          <div id="room-participant-list"></div>
+        </fieldset>
+        <div class="dialog-footer">
+          <button class="button button-danger is-hidden" id="delete-room-button" type="button">删除房间</button>
+          <div class="dialog-footer-right">
+            <button class="button button-primary" type="submit">保存房间</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="agent-dialog summarizer-dialog" id="summarizer-dialog">
+      <form id="summarizer-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="section-kicker">MEMORY EDITOR</p>
+            <h2>记忆整理员</h2>
+          </div>
+          <button class="icon-button" id="close-summarizer-dialog" type="button" aria-label="关闭">×</button>
+        </div>
+        <p class="dialog-intro">它只负责把旧聊天整理成房间长期记忆，不会出现在嘉宾席，也不会参与聊天。</p>
+        <div class="form-grid">
+          <div class="field">
+            <label for="summarizer-format">接口格式</label>
+            <select id="summarizer-format" name="format">
+              <option value="openai">OpenAI 兼容</option>
+              <option value="anthropic">Anthropic Messages</option>
+              <option value="gemini">Gemini GenerateContent</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="summarizer-auth">鉴权方式</label>
+            <select id="summarizer-auth" name="authType">
+              <option value="bearer">Authorization: Bearer</option>
+              <option value="x-api-key">x-api-key</option>
+              <option value="x-goog-api-key">x-goog-api-key</option>
+              <option value="custom">自定义请求头</option>
+              <option value="none">无需鉴权</option>
+            </select>
+          </div>
+          <div class="field field-wide">
+            <label for="summarizer-base-url">Base URL 或完整接口地址</label>
+            <input id="summarizer-base-url" name="baseUrl" type="url" placeholder="https://api.example.com/v1" autocomplete="off" />
+            <p class="field-help" id="summarizer-endpoint-help">填到 /v1 即可；也可以直接填完整的 /chat/completions 地址。</p>
+          </div>
+          <div class="field field-wide">
+            <label for="summarizer-model">模型名</label>
+            <input id="summarizer-model" name="model" placeholder="选择一个便宜、擅长中文总结的模型即可" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="summarizer-api-key">API Key</label>
+            <div class="password-field">
+              <input id="summarizer-api-key" name="apiKey" type="password" autocomplete="off" placeholder="保存到这台电脑" />
+              <button id="summarizer-toggle-key" type="button">显示</button>
+            </div>
+            <div class="saved-key-row is-hidden" id="summarizer-saved-key-row">
+              <span>已保存；留空不会覆盖</span>
+              <button id="summarizer-clear-key" type="button">清除已保存 Key</button>
+            </div>
+            <input type="hidden" id="summarizer-clear-api-key" name="clearApiKey" value="false" />
+          </div>
+          <div class="field field-wide is-hidden" id="summarizer-custom-header-field">
+            <label for="summarizer-custom-header">自定义鉴权请求头名称</label>
+            <input id="summarizer-custom-header" name="customHeader" placeholder="例如：X-Token" autocomplete="off" />
+          </div>
+          <details class="advanced-field field-wide">
+            <summary>额外请求头（可选）</summary>
+            <div class="field">
+              <label for="summarizer-extra-headers">JSON 对象</label>
+              <textarea id="summarizer-extra-headers" name="extraHeaders" rows="3" spellcheck="false" placeholder='{"X-App-Id":"your-app"}'></textarea>
+              <p class="field-help">会与 API Key 一起加密保存。</p>
+            </div>
+          </details>
+        </div>
+        <div class="connection-result is-hidden" id="summarizer-connection-result" aria-live="polite"></div>
+        <div class="dialog-footer">
+          <div class="dialog-footer-right">
+            <button class="button button-quiet" id="test-summarizer-button" type="button">测试连接</button>
+            <button class="button button-primary" type="submit">保存整理员</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="agent-dialog" id="agent-dialog">
+      <form id="agent-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="section-kicker">GUEST PROFILE</p>
+            <h2 id="dialog-title">添加 AI 嘉宾</h2>
+          </div>
+          <button class="icon-button" id="close-dialog-button" type="button" aria-label="关闭">×</button>
+        </div>
+
+        <input type="hidden" name="id" />
+        <div class="form-grid">
+          <div class="field">
+            <label for="agent-name">显示名称</label>
+            <input id="agent-name" name="name" required maxlength="28" placeholder="例如：GPT" />
+          </div>
+          <div class="field">
+            <label for="agent-format">接口格式</label>
+            <select id="agent-format" name="format">
+              <option value="openai">OpenAI 兼容</option>
+              <option value="anthropic">Anthropic Messages</option>
+              <option value="gemini">Gemini GenerateContent</option>
+            </select>
+          </div>
+          <div class="field field-wide">
+            <label for="agent-base-url">Base URL 或完整接口地址</label>
+            <input
+              id="agent-base-url"
+              name="baseUrl"
+              type="url"
+              placeholder="https://api.example.com/v1"
+              autocomplete="off"
+            />
+            <p class="field-help" id="endpoint-help">填到 /v1 即可；也可以直接填完整的 /chat/completions 地址。</p>
+          </div>
+          <div class="field field-wide">
+            <label for="agent-model">模型名</label>
+            <input id="agent-model" name="model" placeholder="例如：gpt-5.2 / claude-sonnet / gemini-2.5-pro" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="agent-auth">鉴权方式</label>
+            <select id="agent-auth" name="authType">
+              <option value="bearer">Authorization: Bearer</option>
+              <option value="x-api-key">x-api-key</option>
+              <option value="x-goog-api-key">x-goog-api-key</option>
+              <option value="custom">自定义请求头</option>
+              <option value="none">无需鉴权</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="agent-api-key">API Key</label>
+            <div class="password-field">
+              <input id="agent-api-key" name="apiKey" type="password" autocomplete="off" placeholder="保存到这台电脑" />
+              <button id="toggle-key-button" type="button">显示</button>
+            </div>
+            <div class="saved-key-row is-hidden" id="saved-key-row">
+              <span>已保存；留空不会覆盖</span>
+              <button id="clear-key-button" type="button">清除已保存 Key</button>
+            </div>
+            <input type="hidden" id="clear-api-key" name="clearApiKey" value="false" />
+          </div>
+          <div class="field field-wide is-hidden" id="custom-header-field">
+            <label for="agent-custom-header">自定义鉴权请求头名称</label>
+            <input id="agent-custom-header" name="customHeader" placeholder="例如：X-Token" autocomplete="off" />
+          </div>
+          <details class="advanced-field field-wide">
+            <summary>额外请求头（可选）</summary>
+            <div class="field">
+              <label for="agent-extra-headers">JSON 对象</label>
+              <textarea
+                id="agent-extra-headers"
+                name="extraHeaders"
+                rows="3"
+                spellcheck="false"
+                placeholder='{"X-App-Id":"your-app"}'
+              ></textarea>
+              <p class="field-help">会与 API Key 一起加密保存，适合第三方中转站的特殊请求头。</p>
+            </div>
+          </details>
+          <div class="field field-wide persona-field">
+            <label for="agent-persona">角色设定 <span>可留空</span></label>
+            <textarea
+              id="agent-persona"
+              name="persona"
+              rows="5"
+              placeholder="留空就是原厂味。以后想磕 CP，再把男女主人设写在这里。"
+            ></textarea>
+          </div>
+        </div>
+
+        <div class="connection-result is-hidden" id="connection-result" aria-live="polite"></div>
+        <div class="dialog-footer">
+          <button class="button button-danger is-hidden" id="delete-agent-button" type="button">删除嘉宾</button>
+          <div class="dialog-footer-right">
+            <button class="button button-quiet" id="test-agent-button" type="button">测试连接</button>
+            <button class="button button-primary" type="submit">保存嘉宾</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="access-dialog" id="access-dialog">
+      <form id="access-form">
+        <span class="access-mark" aria-hidden="true"></span>
+        <p class="section-kicker">PRIVATE OBSERVATION ROOM</p>
+        <h2>先对一下暗号</h2>
+        <p class="access-copy">
+          你正在从另一台设备进入。访问码显示在运行观察室的电脑上。
+        </p>
+        <label for="access-code">局域网访问码</label>
+        <input
+          id="access-code"
+          name="code"
+          type="password"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          maxlength="32"
+          required
+          autofocus
+          placeholder="输入 8 位访问码"
+        />
+        <p class="access-result" id="access-result" aria-live="polite"></p>
+        <button class="button button-primary" id="access-submit" type="submit">进入观察室</button>
+        <p class="access-warning">仅在你信任的家庭 Wi-Fi 中使用，不要连接公共网络。</p>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
