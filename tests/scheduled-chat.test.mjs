@@ -50,6 +50,7 @@ test("定时唤醒会连续抢麦，全员弃权后立即收场", async () => {
       scoreIndex.set(payload.agent.id, index + 1);
       assert.match(payload.messages[0].content, /当前时间：1970年1月1日/);
       assert.match(payload.messages[0].content, /群聊不必围着用户进行/);
+      assert.match(payload.messages[0].content, /不要据此认定用户迟到、旷课、失约/);
       assert.match(payload.messages[1].content, /\[1970年1月1日/);
       return { text: String(scorePlan.get(payload.agent.id)[index]) };
     }
@@ -91,6 +92,7 @@ test("定时唤醒会告知真实时间和距上次发言的时长", async () =>
       }
       assert.match(payload.messages[0].content, /2026年8月7日 星期五 07:45/);
       assert.match(payload.messages[1].content, /用户没有刚刚发新消息/);
+      assert.match(payload.messages[0].content, /不代表虚构世界必须与现实严格同步/);
       checkedReply = true;
       return { text: "B，醒了吗？" };
     },
