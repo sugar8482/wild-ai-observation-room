@@ -100,6 +100,10 @@ const accessDialog = byId("access-dialog");
 const accessForm = byId("access-form");
 const accessResult = byId("access-result");
 const accessSubmit = byId("access-submit");
+const securityDialog = byId("security-dialog");
+const securityForm = byId("security-form");
+const securityResult = byId("security-result");
+const securitySubmit = byId("security-submit");
 const summarizerDialog = byId("summarizer-dialog");
 const summarizerForm = byId("summarizer-form");
 const summarizerConnectionResult = byId("summarizer-connection-result");
@@ -110,6 +114,7 @@ let toastTimer;
 let saveChain = Promise.resolve();
 let loadPromise = null;
 let unseenMessageCount = 0;
+let accessProtectionEnabled = true;
 const summarizingRoomIds = new Set();
 const summaryRuns = new Map();
 const summaryNotices = new Map();
@@ -1091,6 +1096,34 @@ function updateRoomScheduleStatus(room) {
   roomScheduleStatus.textContent = `下次约 ${next} · 今日 ${used}/${schedule.dailyLimit} 次${schedule.lastResult ? ` · ${schedule.lastResult}` : ""}`;
 }
 
+function roomScheduleConfigFromForm(data = new FormData(roomForm)) {
+  return {
+    enabled: data.get("scheduleEnabled") === "on",
+    intervalMinutes: Number(data.get("scheduleInterval")) === 30 ? 30 : 60,
+    maxTurns: Math.min(6, Math.max(1, Number(data.get("scheduleMaxTurns")) || 3)),
+    dailyLimit: Math.min(48, Math.max(1, Number(data.get("scheduleDailyLimit")) || 8)),
+    quietEnabled: data.get("scheduleQuietEnabled") === "on",
+    quietStart: String(data.get("scheduleQuietStart") || "23:00"),
+    quietEnd: String(data.get("scheduleQuietEnd") || "08:00"),
+  };
+}
+
+function previewRoomScheduleStatus() {
+  const room = state.rooms.find((item) => item.id === roomForm.elements.namedItem("id").value);
+  const current = room?.schedule || hydrateRoomSchedule();
+  const draft = { ...current, ...roomScheduleConfigFromForm() };
+  updateRoomScheduleStatus({ schedule: draft });
+  if (JSON.stringify(roomScheduleConfigFromForm()) !== JSON.stringify({
+    enabled: current.enabled,
+    intervalMinutes: current.intervalMinutes,
+    maxTurns: current.maxTurns,
+    dailyLimit: current.dailyLimit,
+    quietEnabled: current.quietEnabled,
+    quietStart: current.quietStart,
+    quietEnd: current.quietEnd,
+  })) roomScheduleStatus.textContent += " · 点击“保存房间”后生效";
+}
+
 function waitForSummaryRetry(signal, milliseconds = 1200) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -1622,15 +1655,7 @@ roomForm.addEventListener("submit", (event) => {
   const memoryInterval = Math.min(100, Math.max(5, Number(data.get("memoryInterval")) || 20));
   const memoryFocus = String(data.get("memoryFocus") || "").trim();
   const memorySummary = String(data.get("memorySummary") || "").trim();
-  const scheduleConfig = {
-    enabled: data.get("scheduleEnabled") === "on",
-    intervalMinutes: Number(data.get("scheduleInterval")) === 30 ? 30 : 60,
-    maxTurns: Math.min(6, Math.max(1, Number(data.get("scheduleMaxTurns")) || 3)),
-    dailyLimit: Math.min(48, Math.max(1, Number(data.get("scheduleDailyLimit")) || 8)),
-    quietEnabled: data.get("scheduleQuietEnabled") === "on",
-    quietStart: String(data.get("scheduleQuietStart") || "23:00"),
-    quietEnd: String(data.get("scheduleQuietEnd") || "08:00"),
-  };
+  const scheduleConfig = roomScheduleConfigFromForm(data);
   const participantIds = data.getAll("participantIds").map(String);
   if (!name) {
     showToast("先给聊天室起个名字");
@@ -1752,6 +1777,18 @@ byId("close-summarizer-dialog").addEventListener("click", () => summarizerDialog
 byId("add-agent-button").addEventListener("click", () => openAgentDialog());
 byId("add-room-button").addEventListener("click", () => openRoomDialog());
 byId("open-summarizer-button").addEventListener("click", openSummarizerDialog);
+for (const id of [
+  "room-schedule-enabled",
+  "room-schedule-interval",
+  "room-schedule-max-turns",
+  "room-schedule-daily-limit",
+  "room-schedule-quiet-enabled",
+  "room-schedule-quiet-start",
+  "room-schedule-quiet-end",
+]) {
+  byId(id).addEventListener("input", previewRoomScheduleStatus);
+  byId(id).addEventListener("change", previewRoomScheduleStatus);
+}
 mobileRoomCurrent.addEventListener("click", () => {
   const opening = !mobileRoomSwitcher.classList.contains("is-open");
   mobileRoomSwitcher.classList.toggle("is-open", opening);
@@ -1954,6 +1991,7 @@ async function checkAccess() {
     const response = await fetch("/api/access", { cache: "no-store" });
     if (!response.ok) throw new Error();
     const access = await response.json();
+    accessProtectionEnabled = access.protectionEnabled !== false;
     if (access.required && !access.authenticated) {
       setRuntimeStatus("error", "等待输入访问码");
       accessResult.textContent = "";
@@ -1961,7 +1999,8 @@ async function checkAccess() {
       return false;
     }
     if (accessDialog.open) accessDialog.close();
-    await checkHealth(access.required);
+    const isLanView = !["localhost", "127.0.0.1", "::1"].includes(location.hostname);
+    await checkHealth(isLanView);
     await loadServerState();
     return true;
   } catch {
@@ -1969,6 +2008,48 @@ async function checkAccess() {
     return false;
   }
 }
+
+byId("access-settings-button").addEventListener("click", async () => {
+  securityResult.textContent = "";
+  byId("security-access-code").value = "";
+  try {
+    const response = await fetch("/api/access", { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "无法读取访问保护设置");
+    accessProtectionEnabled = payload.protectionEnabled !== false;
+    byId("security-access-enabled").checked = accessProtectionEnabled;
+    securityDialog.showModal();
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+
+byId("security-cancel").addEventListener("click", () => securityDialog.close());
+securityForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = new FormData(securityForm);
+  const enabled = data.get("enabled") === "on";
+  const code = String(data.get("code") || "").trim();
+  securitySubmit.disabled = true;
+  securityResult.textContent = "正在保存……";
+  try {
+    const response = await fetch("/api/access", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled, ...(code ? { code } : {}) }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "访问保护设置保存失败");
+    accessProtectionEnabled = payload.protectionEnabled !== false;
+    securityDialog.close();
+    showToast(accessProtectionEnabled ? "局域网访问码已开启" : "局域网访问码已关闭");
+    await checkAccess();
+  } catch (error) {
+    securityResult.textContent = error.message;
+  } finally {
+    securitySubmit.disabled = false;
+  }
+});
 
 accessDialog.addEventListener("cancel", (event) => event.preventDefault());
 accessForm.addEventListener("submit", async (event) => {

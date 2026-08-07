@@ -74,10 +74,12 @@ test("配置错误不会把请求转发到上游", async (context) => {
 });
 
 test("局域网模式要求访问码并签发仅限本站的会话 Cookie", async (context) => {
+  const changedSettings = [];
   const server = createAppServer({
     accessCode: "87654321",
     sessionToken: "test-session-token",
     forceAccessCode: true,
+    onAccessRequiredChange: async (enabled) => changedSettings.push(enabled),
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -89,6 +91,7 @@ test("局域网模式要求访问码并签发仅限本站的会话 Cookie", asyn
   assert.deepEqual(await initial.json(), {
     required: true,
     authenticated: false,
+    protectionEnabled: true,
   });
 
   const denied = await fetch(`${origin}/api/chat`, {
@@ -115,6 +118,7 @@ test("局域网模式要求访问码并签发仅限本站的会话 Cookie", asyn
   assert.match(cookie, /^observation_session=test-session-token;/);
   assert.match(cookie, /HttpOnly/);
   assert.match(cookie, /SameSite=Strict/);
+  assert.match(cookie, /Max-Age=15552000/);
 
   const authenticated = await fetch(`${origin}/api/access`, {
     headers: { cookie },
@@ -122,7 +126,33 @@ test("局域网模式要求访问码并签发仅限本站的会话 Cookie", asyn
   assert.deepEqual(await authenticated.json(), {
     required: true,
     authenticated: true,
+    protectionEnabled: true,
   });
+
+  const disabled = await fetch(`${origin}/api/access`, {
+    method: "PUT",
+    headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify({ enabled: false }),
+  });
+  assert.equal(disabled.status, 200);
+  assert.deepEqual(await disabled.json(), { ok: true, protectionEnabled: false });
+  assert.deepEqual(changedSettings, [false]);
+
+  const openAccess = await fetch(`${origin}/api/access`);
+  assert.deepEqual(await openAccess.json(), {
+    required: false,
+    authenticated: true,
+    protectionEnabled: false,
+  });
+
+  const enabled = await fetch(`${origin}/api/access`, {
+    method: "PUT",
+    headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify({ enabled: true }),
+  });
+  assert.equal(enabled.status, 200);
+  assert.deepEqual(await enabled.json(), { ok: true, protectionEnabled: true });
+  assert.deepEqual(changedSettings, [false, true]);
 });
 
 test("观察室状态可以通过本地接口读取和保存", async (context) => {

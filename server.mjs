@@ -19,6 +19,7 @@ const publicRoot = resolve(projectRoot, "public");
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const MAX_LOGIN_FAILURES = 8;
+const SESSION_MAX_AGE_SECONDS = 180 * 24 * 60 * 60;
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -266,16 +267,29 @@ export function createAppServer(options = {}) {
   const accessCode = String(options.accessCode || randomBytes(6).toString("hex"));
   const sessionToken = String(options.sessionToken || randomBytes(32).toString("hex"));
   const forceAccessCode = options.forceAccessCode === true;
+  const onAccessRequiredChange = typeof options.onAccessRequiredChange === "function"
+    ? options.onAccessRequiredChange
+    : async () => {};
+  let accessRequired = options.accessRequired !== false;
   const stateStore = options.stateStore || null;
   const loginFailures = new Map();
 
   function requiresAccessCode(request) {
-    return forceAccessCode || !isLoopbackAddress(request.socket.remoteAddress);
+    return accessRequired && (forceAccessCode || !isLoopbackAddress(request.socket.remoteAddress));
   }
 
   function isAuthorized(request) {
     if (!requiresAccessCode(request)) return true;
     return safeEqual(cookieValue(request, "observation_session"), sessionToken);
+  }
+
+  function hasAdminSession(request) {
+    return isLoopbackAddress(request.socket.remoteAddress)
+      || safeEqual(cookieValue(request, "observation_session"), sessionToken);
+  }
+
+  function sessionCookie() {
+    return `observation_session=${encodeURIComponent(sessionToken)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}`;
   }
 
   function failureState(request) {
@@ -296,7 +310,37 @@ export function createAppServer(options = {}) {
       sendJson(response, 200, {
         required,
         authenticated: !required || isAuthorized(request),
+        protectionEnabled: accessRequired,
       });
+      return;
+    }
+
+    if (request.method === "PUT" && url.pathname === "/api/access") {
+      try {
+        const payload = await readJson(request);
+        if (typeof payload?.enabled !== "boolean") {
+          sendJson(response, 400, { error: "访问保护设置不正确" });
+          return;
+        }
+        const codeMatches = Boolean(payload?.code) && safeEqual(payload.code, accessCode);
+        if (!hasAdminSession(request) && !codeMatches) {
+          sendJson(response, 401, { error: "需要当前访问码才能修改保护设置" });
+          return;
+        }
+        await onAccessRequiredChange(payload.enabled);
+        accessRequired = payload.enabled;
+        sendJson(
+          response,
+          200,
+          { ok: true, protectionEnabled: accessRequired },
+          codeMatches ? { "set-cookie": sessionCookie() } : {},
+        );
+      } catch (error) {
+        const isConfigError = error instanceof ProviderConfigError;
+        sendJson(response, isConfigError ? 400 : 500, {
+          error: isConfigError ? error.message : "访问保护设置保存失败",
+        });
+      }
       return;
     }
 
@@ -327,7 +371,7 @@ export function createAppServer(options = {}) {
           200,
           { ok: true },
           {
-            "set-cookie": `observation_session=${encodeURIComponent(sessionToken)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`,
+            "set-cookie": sessionCookie(),
           },
         );
       } catch (error) {
@@ -414,6 +458,14 @@ async function ensureLocalSettings(settings) {
     next.OBSERVATION_DATA_KEY = randomBytes(32).toString("hex");
     additions.push(`OBSERVATION_DATA_KEY=${next.OBSERVATION_DATA_KEY}`);
   }
+  if (!process.env.OBSERVATION_SESSION_TOKEN && !next.OBSERVATION_SESSION_TOKEN) {
+    next.OBSERVATION_SESSION_TOKEN = randomBytes(32).toString("hex");
+    additions.push(`OBSERVATION_SESSION_TOKEN=${next.OBSERVATION_SESSION_TOKEN}`);
+  }
+  if (!process.env.OBSERVATION_ACCESS_REQUIRED && !next.OBSERVATION_ACCESS_REQUIRED) {
+    next.OBSERVATION_ACCESS_REQUIRED = "true";
+    additions.push("OBSERVATION_ACCESS_REQUIRED=true");
+  }
   if (!additions.length) return next;
 
   const settingsPath = resolve(projectRoot, ".env.local");
@@ -426,6 +478,25 @@ async function ensureLocalSettings(settings) {
   const separator = existing && !existing.endsWith("\n") ? "\n" : "";
   await writeFile(settingsPath, `${existing}${separator}${additions.join("\n")}\n`, "utf8");
   return next;
+}
+
+async function writeLocalSetting(name, value) {
+  const settingsPath = resolve(projectRoot, ".env.local");
+  let existing = "";
+  try {
+    existing = await readFile(settingsPath, "utf8");
+  } catch {
+    // The file is created on first launch.
+  }
+  const lines = existing.split(/\r?\n/);
+  let replaced = false;
+  const updated = lines.map((line) => {
+    if (!line.trim().startsWith(`${name}=`)) return line;
+    replaced = true;
+    return `${name}=${value}`;
+  });
+  if (!replaced) updated.push(`${name}=${value}`);
+  await writeFile(settingsPath, `${updated.filter((line, index) => line || index < updated.length - 1).join("\n").replace(/\n*$/, "")}\n`, "utf8");
 }
 
 function lanAddresses() {
@@ -446,12 +517,22 @@ if (isMainModule) {
   const port = Number(process.env.PORT || settings.PORT || 4173);
   const host = process.env.HOST || settings.HOST || "0.0.0.0";
   const accessCode = process.env.OBSERVATION_ACCESS_CODE || settings.OBSERVATION_ACCESS_CODE || randomBytes(4).toString("hex");
+  const sessionToken = process.env.OBSERVATION_SESSION_TOKEN || settings.OBSERVATION_SESSION_TOKEN || randomBytes(32).toString("hex");
+  const accessRequired = String(process.env.OBSERVATION_ACCESS_REQUIRED || settings.OBSERVATION_ACCESS_REQUIRED || "true").toLowerCase() !== "false";
   const dataSecret = process.env.OBSERVATION_DATA_KEY || settings.OBSERVATION_DATA_KEY || accessCode;
   const stateStore = createStateStore({
     filePath: resolve(projectRoot, "data", "state.json"),
     secret: dataSecret,
   });
-  const server = createAppServer({ accessCode, stateStore });
+  const server = createAppServer({
+    accessCode,
+    sessionToken,
+    accessRequired,
+    stateStore,
+    onAccessRequiredChange: async (enabled) => {
+      await writeLocalSetting("OBSERVATION_ACCESS_REQUIRED", enabled ? "true" : "false");
+    },
+  });
   const schedulerOrigin = `http://127.0.0.1:${port}`;
   const scheduler = createRoomScheduler({
     stateStore,
@@ -472,7 +553,7 @@ if (isMainModule) {
     scheduler.start();
     console.log(`野生 AI 观察室已启动：http://127.0.0.1:${port}`);
     for (const address of lanAddresses()) console.log(`iPad 地址：http://${address}:${port}`);
-    console.log(`局域网访问码：${accessCode}`);
+    console.log(accessRequired ? `局域网访问码：${accessCode}` : "局域网访问码保护：已关闭");
     console.log("只建议在你信任的家庭 Wi-Fi 中使用。按 Ctrl+C 停止服务。");
   });
 }

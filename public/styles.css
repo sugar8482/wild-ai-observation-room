@@ -1009,6 +1009,51 @@ input[type="range"] {
   text-align: center;
 }
 
+.security-dialog .security-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin: 0 0 18px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--wash);
+  cursor: pointer;
+}
+
+.security-dialog .security-toggle input {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin: 2px 0 0;
+  flex: 0 0 auto;
+}
+
+.security-toggle span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.security-toggle small,
+.security-code-label span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.security-dialog #security-access-code {
+  font-size: 13px;
+  letter-spacing: normal;
+}
+
+.security-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr;
+  gap: 8px;
+}
+
 .agent-dialog form,
 .room-dialog form {
   padding: 22px;
