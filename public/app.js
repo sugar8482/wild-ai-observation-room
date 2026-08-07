@@ -1,4 +1,10 @@
-import { DEFAULT_MIC_OPTIONS, parseWillingnessScore, pickMicWinner } from "./mic-grab.js";
+import {
+  DEFAULT_MIC_OPTIONS,
+  parseWillingnessScore,
+  pickMicWinner,
+  rankMicCandidates,
+  recordMicScores,
+} from "./mic-grab.js";
 import { buildSummaryMessages } from "./memory-prompt.js";
 import { bubbleSplitInstruction, formatChatBubbleReply } from "./chat-bubbles.js";
 
@@ -244,6 +250,21 @@ function hydrateRoomSchedule(schedule) {
   };
 }
 
+function hydrateRoomMic(mic) {
+  const scoreHistory = {};
+  for (const [id, history] of Object.entries(mic?.scoreHistory || {})) {
+    if (!Array.isArray(history)) continue;
+    scoreHistory[id] = history
+      .map(Number)
+      .filter((score) => Number.isFinite(score) && score >= 0 && score <= 10)
+      .slice(-DEFAULT_MIC_OPTIONS.historyWindow);
+  }
+  return {
+    scoreHistory,
+    revision: Math.max(0, Number(mic?.revision) || 0),
+  };
+}
+
 function hydrateRoom(room, fallbackParticipants = []) {
   return {
     id: room?.id || newId("room"),
@@ -252,6 +273,7 @@ function hydrateRoom(room, fallbackParticipants = []) {
     bubbleSplit: room?.bubbleSplit === true,
     memory: hydrateRoomMemory(room?.memory),
     schedule: hydrateRoomSchedule(room?.schedule),
+    mic: hydrateRoomMic(room?.mic),
     participantIds: Array.isArray(room?.participantIds) ? [...new Set(room.participantIds)] : fallbackParticipants,
     messages: Array.isArray(room?.messages) ? room.messages : [],
     createdAt: Number(room?.createdAt || Date.now()),
@@ -379,6 +401,9 @@ function mergeServerRoomUpdates(serverRooms = []) {
       addedMessages += scheduledMessages.length;
     }
     room.schedule = hydrateRoomSchedule(remote.schedule);
+    if (Number(remote.mic?.revision) > Number(room.mic?.revision)) {
+      room.mic = hydrateRoomMic(remote.mic);
+    }
     if (Number(remote.memory?.updatedAt) > Number(room.memory?.updatedAt)) {
       room.memory = hydrateRoomMemory(remote.memory);
     }
@@ -692,7 +717,7 @@ function renderMode() {
   roundsControl.classList.toggle("is-hidden", !isFree);
   micStatus.classList.toggle("is-hidden", !isMicGrab);
   freeStrategyHelp.textContent = isMicGrab
-    ? "每轮会增加一次所有嘉宾的短评分调用；切回轮流接话就没有额外费用。"
+    ? "每轮会增加一次所有嘉宾的短评分调用；系统会按每位嘉宾自己的平时分数校准。"
     : "按嘉宾席顺序轮流发言，不会增加额外调用。";
   roundsLabel.textContent = isMicGrab ? "抢麦轮数" : "讨论轮数";
   roundsHelp.textContent = isMicGrab
@@ -956,11 +981,15 @@ async function scoreMicRound(activeAgents, room, signal) {
   }));
 }
 
-function micSnapshotText(scores, winner = null, roundNumber = 1) {
+function micSnapshotText(scores, winner = null, roundNumber = 1, options = {}) {
+  const ranked = new Map(rankMicCandidates(scores, options).map((entry) => [entry.id, entry]));
   const parts = scores.map((entry) => {
     if (entry.score === null) return `${entry.name} 未接通`;
-    if (entry.score < DEFAULT_MIC_OPTIONS.threshold) return `${entry.name} ${entry.score}（弃权）`;
-    return `${entry.name} ${entry.score}`;
+    const result = ranked.get(entry.id);
+    const shift = result?.baseline === null ? 0 : result.calibratedScore - entry.score;
+    const trend = shift > 0.4 ? "↑" : shift < -0.4 ? "↓" : "";
+    if (!result?.eligible) return `${entry.name} ${entry.score}${trend}（弃权）`;
+    return `${entry.name} ${entry.score}${trend}`;
   });
   if (winner) return `第 ${roundNumber} 轮｜${parts.join(" · ")} → ${winner.name} 抢到`;
   return `第 ${roundNumber} 轮｜${parts.join(" · ")} → 没人接话`;
@@ -1002,6 +1031,7 @@ async function deliverAgentTurn(speaker, activeAgents, room, controller) {
 
 async function runMicGrabConversation(activeAgents, room, controller, rounds) {
   const missedTurns = {};
+  let micChanged = false;
   let consecutivePasses = 0;
   let lastSpeakerId = room.messages.filter((message) => message.kind === "agent").at(-1)?.agentId || "";
 
@@ -1024,14 +1054,25 @@ async function runMicGrabConversation(activeAgents, room, controller, rounds) {
       break;
     }
 
-    const winner = pickMicWinner(scores, {
+    const micOptions = {
       ...DEFAULT_MIC_OPTIONS,
       missedTurns,
       lastSpeakerId,
-    });
+      scoreHistory: room.mic.scoreHistory,
+    };
+    const rankedScores = rankMicCandidates(scores, micOptions);
+    const winner = pickMicWinner(scores, micOptions);
+    const snapshotText = micSnapshotText(scores, winner, round, micOptions);
+    const updatedHistory = recordMicScores(room.mic.scoreHistory, scores);
+    if (scores.some((entry) => Number.isFinite(entry.score))) {
+      room.mic.scoreHistory = updatedHistory;
+      room.mic.revision += 1;
+      room.updatedAt = Date.now();
+      micChanged = true;
+    }
     if (!winner) {
       consecutivePasses += 1;
-      micStatus.textContent = micSnapshotText(scores, null, round);
+      micStatus.textContent = snapshotText;
       if (consecutivePasses >= 2) {
         showToast("连续两轮没人想接话，这次自由聊自然收场啦");
         break;
@@ -1040,16 +1081,17 @@ async function runMicGrabConversation(activeAgents, room, controller, rounds) {
     }
 
     consecutivePasses = 0;
-    for (const entry of scores) {
-      if (entry.score === null || entry.score < DEFAULT_MIC_OPTIONS.threshold) continue;
+    for (const entry of rankedScores) {
+      if (!entry.eligible) continue;
       missedTurns[entry.id] = entry.id === winner.id ? 0 : (missedTurns[entry.id] || 0) + 1;
     }
     const speaker = activeAgents.find((agent) => agent.id === winner.id);
-    micStatus.textContent = micSnapshotText(scores, speaker, round);
+    micStatus.textContent = snapshotText;
     if (!speaker) break;
     await deliverAgentTurn(speaker, activeAgents, room, controller);
     lastSpeakerId = speaker.id;
   }
+  if (micChanged) await queuePersist();
 }
 
 function memoryMessages(room) {
@@ -1822,7 +1864,7 @@ document.querySelectorAll("[data-free-strategy]").forEach((button) => {
     state.freeStrategy = button.dataset.freeStrategy === "mic-grab" ? "mic-grab" : "round-robin";
     updateDirectorPrefs({ freeStrategy: state.freeStrategy });
     if (state.freeStrategy === "mic-grab") {
-      micStatus.textContent = "抢麦结果会显示在这里，不会写进聊天记录。";
+      micStatus.textContent = "抢麦结果会显示在这里；↑↓ 表示相对这位嘉宾自己的平时分数。";
     }
     renderMode();
   });

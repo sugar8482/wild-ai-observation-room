@@ -164,4 +164,7 @@ test("自由聊可以选择轮流接话或并行评分抢麦", async () => {
   assert.match(script, /Promise\.allSettled/);
   assert.match(script, /requestMode: "willingness-score"/);
   assert.match(script, /runMicGrabConversation/);
+  assert.match(script, /recordMicScores/);
+  assert.match(script, /scoreHistory: room\.mic\.scoreHistory/);
+  assert.match(html, /↑↓ 表示相对这位嘉宾自己的平时分数/);
 });

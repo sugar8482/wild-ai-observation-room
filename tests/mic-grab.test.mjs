@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseWillingnessScore, pickMicWinner } from "../public/mic-grab.js";
+import {
+  parseWillingnessScore,
+  pickMicWinner,
+  rankMicCandidates,
+  recordMicScores,
+} from "../public/mic-grab.js";
 
 test("意愿分解析兼容常见短回答并拒绝越界内容", () => {
   assert.equal(parseWillingnessScore("8"), 8);
@@ -52,4 +57,43 @@ test("全员低于阈值时没有赢家，真正平手时才随机", () => {
     () => 0.99,
   );
   assert.equal(tiedWinner.id, "claude");
+});
+
+test("个人基线会让比平时更积极的低分嘉宾抢到麦", () => {
+  const scores = [
+    { id: "gpt", name: "GPT", score: 8 },
+    { id: "claude", name: "Claude", score: 7 },
+  ];
+  const options = {
+    scoreHistory: {
+      gpt: [8, 8, 8],
+      claude: [4, 4, 4],
+    },
+    repeatPenalty: 0,
+  };
+  const ranked = rankMicCandidates(scores, options);
+  assert.equal(ranked.find((entry) => entry.id === "gpt").calibratedScore, 5);
+  assert.equal(ranked.find((entry) => entry.id === "claude").calibratedScore, 8);
+  assert.equal(pickMicWinner(scores, options).id, "claude");
+});
+
+test("明确弃权不会因为个人基线被强行拉上麦", () => {
+  const winner = pickMicWinner(
+    [{ id: "claude", name: "Claude", score: 2 }],
+    { scoreHistory: { claude: [0, 1, 1] } },
+  );
+  assert.equal(winner, null);
+});
+
+test("个人评分历史只保留最近二十次有效分数", () => {
+  const history = recordMicScores(
+    { claude: Array.from({ length: 20 }, (_, index) => index % 11) },
+    [
+      { id: "claude", score: 7 },
+      { id: "gpt", score: null },
+    ],
+  );
+  assert.equal(history.claude.length, 20);
+  assert.equal(history.claude.at(-1), 7);
+  assert.equal(history.gpt, undefined);
 });

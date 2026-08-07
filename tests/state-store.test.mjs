@@ -219,6 +219,10 @@ test("后台定时发言不会被滞后的浏览器保存覆盖", async (context
   await store.completeScheduledRun("room-timer", {
     at: Date.now(),
     result: "新增 1 条定时发言",
+    mic: {
+      scoreHistory: { "guest-one": [3, 7] },
+      revision: 2,
+    },
     messages: [{
       id: "message-scheduled",
       kind: "agent",
@@ -232,6 +236,8 @@ test("后台定时发言不会被滞后的浏览器保存覆盖", async (context
   const merged = await store.save(stale);
   assert.equal(merged.rooms[0].messages.some((message) => message.id === "message-scheduled"), true);
   assert.equal(merged.rooms[0].schedule.dailyCount, 1);
+  assert.deepEqual(merged.rooms[0].mic.scoreHistory["guest-one"], [3, 7]);
+  assert.equal(merged.rooms[0].mic.revision, 2);
 
   merged.rooms[0].messages = merged.rooms[0].messages.filter((message) => message.id !== "message-scheduled");
   const deleted = await store.save(merged);

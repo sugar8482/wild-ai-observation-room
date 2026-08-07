@@ -70,6 +70,9 @@ test("定时唤醒会连续抢麦，全员弃权后立即收场", async () => {
   assert.equal(replyCalls, 2);
   assert.deepEqual(outcome.messages.map((message) => message.author), ["A", "B"]);
   assert.equal(outcome.messages.every((message) => message.source === "scheduled"), true);
+  assert.deepEqual(outcome.mic.scoreHistory["guest-a"], [8, 2, 0]);
+  assert.deepEqual(outcome.mic.scoreHistory["guest-b"], [2, 9, 0]);
+  assert.equal(outcome.mic.revision, 3);
   assert.match(outcome.result, /全员弃权收场/);
 });
 
