@@ -5,7 +5,12 @@ import {
   rankMicCandidates,
   recordMicScores,
 } from "./mic-grab.js";
-import { buildSummaryMessages } from "./memory-prompt.js";
+import {
+  buildAppendSummaryMessages,
+  buildRebuildOverviewMessages,
+  buildRebuildSectionMessages,
+  formatMemorySegment,
+} from "./memory-prompt.js";
 import { bubbleSplitInstruction, formatChatBubbleReply } from "./chat-bubbles.js";
 
 const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
@@ -1199,7 +1204,7 @@ function waitForSummaryRetry(signal, milliseconds = 1200) {
   });
 }
 
-async function requestSummaryChunk(room, previousSummary, messages, signal) {
+async function requestSummary(room, promptMessages, signal, maxTokens) {
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const response = await fetch("/api/chat", {
       method: "POST",
@@ -1207,9 +1212,9 @@ async function requestSummaryChunk(room, previousSummary, messages, signal) {
       body: JSON.stringify({
         agent: state.summarizer,
         temperature: 0.2,
-        maxTokens: 1800,
+        maxTokens,
         requestMode: "memory-summary",
-        messages: buildSummaryMessages(room, previousSummary, messages),
+        messages: promptMessages,
       }),
       signal,
     });
@@ -1268,9 +1273,53 @@ async function summarizeRoom(room, { rebuild = false, manual = false } = {}) {
   updateRoomMemoryStatus(room);
   renderRooms();
   try {
-    let summary = rebuild ? "" : room.memory.summary;
-    for (let index = 0; index < source.length; index += 40) {
-      summary = await requestSummaryChunk(room, summary, source.slice(index, index + 40), controller.signal);
+    const previousSummary = room.memory.summary.trim();
+    let summary = previousSummary;
+    if (rebuild) {
+      const sections = [];
+      for (let index = 0; index < source.length; index += 40) {
+        const chunk = source.slice(index, index + 40);
+        const run = summaryRuns.get(room.id);
+        if (run) run.phase = `正在细读第 ${index + 1}–${index + chunk.length} 条记录`;
+        if (roomDialog.open && roomForm.elements.namedItem("id").value === room.id) updateRoomMemoryStatus(room);
+        const body = await requestSummary(
+          room,
+          buildRebuildSectionMessages(room, chunk),
+          controller.signal,
+          2200,
+        );
+        sections.push(formatMemorySegment(chunk, body, index + 1, index + chunk.length));
+      }
+      const run = summaryRuns.get(room.id);
+      if (run) run.phase = "正在把分段记录汇成全篇概览";
+      if (roomDialog.open && roomForm.elements.namedItem("id").value === room.id) updateRoomMemoryStatus(room);
+      const overview = await requestSummary(
+        room,
+        buildRebuildOverviewMessages(room, previousSummary, sections, source.slice(-20)),
+        controller.signal,
+        4096,
+      );
+      summary = `# 全篇概览\n\n${overview}\n\n# 逐段记录\n\n${sections.join("\n\n---\n\n")}`;
+    } else {
+      const sections = [];
+      const chunkSize = Math.max(5, Number(room.memory.interval) || 20);
+      const startOffset = Math.max(0, Number(room.memory.summarizedMessageCount) || 0);
+      for (let index = 0; index < source.length; index += chunkSize) {
+        const chunk = source.slice(index, index + chunkSize);
+        const startNumber = startOffset + index + 1;
+        const endNumber = startOffset + index + chunk.length;
+        const run = summaryRuns.get(room.id);
+        if (run) run.phase = `正在整理新增的第 ${startNumber}–${endNumber} 条记录`;
+        if (roomDialog.open && roomForm.elements.namedItem("id").value === room.id) updateRoomMemoryStatus(room);
+        const body = await requestSummary(
+          room,
+          buildAppendSummaryMessages(room, chunk),
+          controller.signal,
+          1400,
+        );
+        sections.push(formatMemorySegment(chunk, body, startNumber, endNumber));
+      }
+      summary = [previousSummary, ...sections].filter(Boolean).join("\n\n---\n\n");
     }
     if (!state.rooms.some((item) => item.id === room.id)) return false;
     const allMessages = memoryMessages(room);
@@ -1287,7 +1336,11 @@ async function summarizeRoom(room, { rebuild = false, manual = false } = {}) {
     }
     renderRooms();
     await queuePersist();
-    showToast(manual ? "房间长期记忆已更新" : "记忆整理员悄悄收好了旧聊天");
+    showToast(rebuild
+      ? "已用现存聊天重建全篇记忆"
+      : manual
+        ? "新的记忆片段已追加，旧内容没有改动"
+        : "记忆整理员追加了一段新记忆");
     return true;
   } catch (error) {
     if (error?.name === "AbortError") {
@@ -1776,7 +1829,11 @@ byId("memory-summarize-now").addEventListener("click", () => {
 byId("memory-rebuild").addEventListener("click", () => {
   const room = state.rooms.find((item) => item.id === roomForm.elements.namedItem("id").value);
   if (!room) return;
-  if (!window.confirm("用本房间现有的全部聊天重新生成长期记忆？聊天原文会完整保留，只替换当前总结。")) return;
+  if (!window.confirm([
+    "重新生成一份全篇记忆？",
+    "",
+    "这会清空并覆盖当前总结；聊天原文不会删除。整理员会重新阅读全部现存聊天，以旧总结作为线索参考，并生成更长的全篇概览和逐段记录。",
+  ].join("\n"))) return;
   void summarizeRoom(room, { rebuild: true, manual: true });
 });
 

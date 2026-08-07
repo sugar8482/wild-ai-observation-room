@@ -68,11 +68,13 @@ test("房间长期记忆独立于聊天消息并注入最近原文之前", async
   assert.match(script, /\[502, 503\]\.includes/);
   assert.match(html, /留空使用默认的“记事、不定性”规则/);
   assert.match(memoryPrompt, /不是人物评委或角色编剧/);
-  assert.match(memoryPrompt, /属于可记录的关系事实，不是人物标签/);
+  assert.match(memoryPrompt, /属于关系事实。只按原文含义记录/);
   assert.match(memoryPrompt, /【本房间的额外记忆重点】/);
   assert.match(script, /focus: String\(memory\?\.focus \|\| ""\)/);
-  assert.match(memoryPrompt, /旧总结只是待修订的草稿/);
-  assert.match(script, /聊天原文会完整保留，只替换当前总结/);
+  assert.match(memoryPrompt, /旧总结只用于提醒可能被忽略的线索/);
+  assert.match(memoryPrompt, /不要重写、压缩或评价此前的长期记忆/);
+  assert.match(script, /这会清空并覆盖当前总结；聊天原文不会删除/);
+  assert.match(html, /立即或自动整理只会在末尾追加新片段/);
   assert.doesNotMatch(memoryPrompt, /人物自我介绍与稳定偏好/);
 });
 
