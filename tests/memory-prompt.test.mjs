@@ -12,8 +12,8 @@ const room = {
 };
 
 const messages = [
-  { author: "晨曦", text: "你们还记得那件事吗？", timestamp: Date.UTC(2026, 7, 7, 1, 0) },
-  { author: "谢知衡", text: "记得。", timestamp: Date.UTC(2026, 7, 7, 1, 1) },
+  { kind: "user", author: "晨曦", text: "你们还记得那件事吗？", timestamp: Date.UTC(2026, 7, 7, 1, 0) },
+  { kind: "agent", author: "谢知衡", text: "记得。", timestamp: Date.UTC(2026, 7, 7, 1, 1) },
 ];
 
 test("追加整理只读取本批原文，不要求重写旧总结", () => {
@@ -21,7 +21,10 @@ test("追加整理只读取本批原文，不要求重写旧总结", () => {
   assert.match(prompt[0].content, /独立的时间记录片段/);
   assert.match(prompt[0].content, /不要重写、压缩或评价此前的长期记忆/);
   assert.match(prompt[0].content, /保留共同经历和仍未回答的问题/);
+  assert.match(prompt[0].content, /用户原话较短时尽量完整引用/);
   assert.match(prompt[1].content, /本批新增聊天原文/);
+  assert.match(prompt[1].content, /【用户原话｜晨曦】：你们还记得那件事吗？/);
+  assert.match(prompt[1].content, /谢知衡：记得。/);
   assert.doesNotMatch(prompt[1].content, /现有长期总结/);
 });
 

@@ -1,5 +1,10 @@
 function transcript(messages) {
-  return messages.map((message) => `${message.author}：${message.text}`).join("\n\n");
+  return messages.map((message) => {
+    const author = message.kind === "user"
+      ? `【用户原话｜${message.author}】`
+      : message.author;
+    return `${author}：${message.text}`;
+  }).join("\n\n");
 }
 
 function focusRule(room) {
@@ -28,6 +33,8 @@ const FACT_RULES = [
   "成员明确建立的关系状态、彼此使用的称呼、做出的承诺、共同经历，以及亲口表达的感受，属于关系事实。只按原文含义记录，不得延伸推断。",
   "绝对不要写成员档案、人格画像或能力排名；不要写“X 是……的人”“X 喜欢、擅长、不擅长、总是、习惯……”这类标签；不要把互评中的人物判断当作事实。",
   "区分事实、玩笑、成员当时的观点和不确定猜测；不要脑补任何人的感情、动机或固定性格。",
+  "原文中标为“【用户原话｜名字】”的消息具有最高保留优先级。用户的提问、要求、纠正、话题转换、决定，以及对感受或关系的亲口表达，通常是理解对话走向的关键节点。",
+  "用户原话较短时尽量完整引用，保留其语气和关键措辞；较长时可以忠实压缩，但不得只写成“用户询问了某事”“用户表达了看法”这类失去内容的空泛概括。纯表情、重复确认、无后续的寒暄可以省略。",
 ];
 
 const TIMELINE_RULES = [
