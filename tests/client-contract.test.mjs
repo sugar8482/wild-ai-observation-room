@@ -97,16 +97,23 @@ test("每个房间可以配置后台定时抢麦", async () => {
 });
 
 test("局域网访问保护可以在页面中关闭或重新开启", async () => {
-  const [html, script] = await Promise.all([
+  const [html, script, styles, themeBoot] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../public/theme-boot.js", import.meta.url), "utf8"),
   ]);
-  for (const id of ["access-settings-button", "security-dialog", "security-form", "security-access-enabled"]) {
+  for (const id of ["settings-button", "security-dialog", "security-form", "security-access-enabled"]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.match(script, /method: "PUT"/);
   assert.match(script, /局域网访问码已关闭/);
   assert.match(html, /API Key 仍不会显示/);
+  assert.match(html, /data-theme-choice="light"/);
+  assert.match(html, /data-theme-choice="dark"/);
+  assert.match(script, /function applyTheme\(value\)/);
+  assert.match(styles, /html\[data-theme="dark"\]/);
+  assert.match(themeBoot, /wild-ai-observation-room\.theme\.v1/);
 });
 
 test("每个房间可以用一次模型回复显示连续气泡", async () => {

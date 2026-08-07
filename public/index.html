@@ -10,6 +10,7 @@
     />
     <title>野生 AI 观察室</title>
     <link rel="icon" href="/favicon.svg" />
+    <script src="/theme-boot.js"></script>
     <link rel="stylesheet" href="/styles.css" />
     <script type="module" src="/app.js"></script>
   </head>
@@ -27,9 +28,9 @@
           <span class="status-dot" id="status-dot"></span>
           <span id="status-text">本地代理就绪</span>
         </div>
-        <button class="button button-quiet" id="access-settings-button" type="button">访问保护</button>
         <button class="button button-quiet" id="export-button" type="button">导出记录</button>
         <button class="button button-quiet" id="new-chat-button" type="button">清空本房</button>
+        <button class="icon-button settings-button" id="settings-button" type="button" aria-label="打开设置" title="设置">⚙︎</button>
       </div>
     </header>
 
@@ -512,9 +513,35 @@
 
     <dialog class="access-dialog security-dialog" id="security-dialog">
       <form id="security-form">
-        <p class="section-kicker">LAN ACCESS</p>
-        <h2>局域网访问保护</h2>
-        <p class="access-copy">控制同一 Wi-Fi 中的其他设备打开观察室时，是否需要先输入访问码。</p>
+        <p class="section-kicker">PREFERENCES</p>
+        <h2>设置</h2>
+
+        <section class="settings-section" aria-labelledby="theme-setting-title">
+          <div class="settings-section-heading">
+            <div>
+              <p class="section-kicker">APPEARANCE</p>
+              <h3 id="theme-setting-title">主题</h3>
+            </div>
+            <span class="settings-section-note">只影响这台设备</span>
+          </div>
+          <div class="theme-options" role="group" aria-label="选择主题">
+            <button class="theme-choice" type="button" data-theme-choice="light" aria-pressed="true">
+              <span aria-hidden="true">☀︎</span> 白天
+            </button>
+            <button class="theme-choice" type="button" data-theme-choice="dark" aria-pressed="false">
+              <span aria-hidden="true">☾</span> 夜晚
+            </button>
+          </div>
+        </section>
+
+        <section class="settings-section settings-security" aria-labelledby="security-setting-title">
+          <div class="settings-section-heading">
+            <div>
+              <p class="section-kicker">LAN ACCESS</p>
+              <h3 id="security-setting-title">访问保护</h3>
+            </div>
+          </div>
+          <p class="access-copy">控制同一 Wi-Fi 中的其他设备打开观察室时，是否需要先输入访问码。</p>
         <label class="security-toggle" for="security-access-enabled">
           <input id="security-access-enabled" name="enabled" type="checkbox" />
           <span>
@@ -532,9 +559,10 @@
           placeholder="仅在重新验证时填写"
         />
         <p class="access-result" id="security-result" aria-live="polite"></p>
+        </section>
         <div class="security-actions">
           <button class="button button-quiet" id="security-cancel" type="button">取消</button>
-          <button class="button button-primary" id="security-submit" type="submit">保存设置</button>
+          <button class="button button-primary" id="security-submit" type="submit">完成</button>
         </div>
         <p class="access-warning">关闭后 API Key 仍不会显示，但其他设备可以读取聊天、使用已配置的模型或修改记录。只在可信的家庭 Wi-Fi 中关闭。</p>
       </form>

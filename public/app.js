@@ -6,6 +6,7 @@ const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
 const LEGACY_MESSAGE_KEY = "wild-ai-observation-room.messages.v1";
 const GUEST_CATALOG_KEY = "wild-ai-observation-room.guest-catalog.v2";
 const DIRECTOR_PREFS_KEY = "wild-ai-observation-room.director-prefs.v1";
+const THEME_KEY = "wild-ai-observation-room.theme.v1";
 const SUMMARY_AGENT_ID = "memory-summarizer";
 
 const FORMAT_META = {
@@ -134,6 +135,20 @@ function safeWrite(key, value) {
   } catch {
     // The computer remains authoritative; this marker is only used for migration.
   }
+}
+
+function applyTheme(value) {
+  const theme = value === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name="color-scheme"]')?.setAttribute("content", theme);
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    // Theme persistence is a device-local convenience.
+  }
+  document.querySelectorAll("[data-theme-choice]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.themeChoice === theme));
+  });
 }
 
 function updateDirectorPrefs(patch) {
@@ -2009,9 +2024,10 @@ async function checkAccess() {
   }
 }
 
-byId("access-settings-button").addEventListener("click", async () => {
+byId("settings-button").addEventListener("click", async () => {
   securityResult.textContent = "";
   byId("security-access-code").value = "";
+  applyTheme(document.documentElement.dataset.theme);
   try {
     const response = await fetch("/api/access", { cache: "no-store" });
     const payload = await response.json();
@@ -2022,6 +2038,10 @@ byId("access-settings-button").addEventListener("click", async () => {
   } catch (error) {
     showToast(error.message);
   }
+});
+
+document.querySelectorAll("[data-theme-choice]").forEach((button) => {
+  button.addEventListener("click", () => applyTheme(button.dataset.themeChoice));
 });
 
 byId("security-cancel").addEventListener("click", () => securityDialog.close());

@@ -1,6 +1,6 @@
 {
   "name": "wild-ai-observation-room",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "private": true,
   "description": "A local-first, multi-provider AI group chat room.",
   "license": "MIT",

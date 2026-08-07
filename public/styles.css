@@ -14,6 +14,20 @@
     "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
 }
 
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #ececec;
+  --muted: #b4b4b4;
+  --quiet: #8e8e8e;
+  --line: #444444;
+  --soft-line: #333333;
+  --paper: #212121;
+  --wash: #2f2f2f;
+  --warm: #292929;
+  --error: #ff8f86;
+  --shadow: 0 20px 70px rgba(0, 0, 0, 0.48);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -191,6 +205,11 @@ h2 {
   color: var(--ink);
   border-radius: 7px;
   font-weight: 650;
+}
+
+.settings-button {
+  flex: 0 0 auto;
+  font-size: 18px;
 }
 
 .button {
@@ -1021,6 +1040,64 @@ input[type="range"] {
   cursor: pointer;
 }
 
+.settings-section {
+  padding: 18px 0;
+  border-top: 1px solid var(--soft-line);
+}
+
+.settings-section:first-of-type {
+  margin-top: 16px;
+}
+
+.settings-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.settings-section-heading h3 {
+  margin: 3px 0 0;
+  font-size: 14px;
+}
+
+.settings-section-note {
+  color: var(--quiet);
+  font-size: 10px;
+}
+
+.theme-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.theme-choice {
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.theme-choice span {
+  margin-right: 5px;
+  font-size: 16px;
+}
+
+.theme-choice[aria-pressed="true"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.settings-security .access-copy {
+  margin-bottom: 14px;
+}
+
 .security-dialog .security-toggle input {
   width: 18px;
   height: 18px;
@@ -1052,6 +1129,71 @@ input[type="range"] {
   display: grid;
   grid-template-columns: 1fr 1.3fr;
   gap: 8px;
+}
+
+html[data-theme="dark"] .status-dot {
+  box-shadow: 0 0 0 3px #24472e;
+}
+
+html[data-theme="dark"] .status-dot.is-busy {
+  box-shadow: 0 0 0 3px #4b3b22;
+}
+
+html[data-theme="dark"] .status-dot.is-error {
+  box-shadow: 0 0 0 3px #522f2c;
+}
+
+html[data-theme="dark"] .button-primary:hover {
+  background: #d9d9d9;
+}
+
+html[data-theme="dark"] .button-danger {
+  border-color: #6d403c;
+}
+
+html[data-theme="dark"] .room-card.is-active {
+  border-color: #686868;
+  background: #343434;
+  color: var(--ink);
+}
+
+html[data-theme="dark"] .room-card.is-active span {
+  color: var(--muted);
+}
+
+html[data-theme="dark"] .agent-card:hover,
+html[data-theme="dark"] .room-prompt-field textarea,
+html[data-theme="dark"] .persona-field textarea {
+  border-color: #565656;
+  background: #292929;
+}
+
+html[data-theme="dark"] .agent-readiness.is-ready,
+html[data-theme="dark"] .saved-key-row {
+  color: #75d18b;
+}
+
+html[data-theme="dark"] .switch-track {
+  background: #555555;
+}
+
+html[data-theme="dark"] .message.is-error .message-body,
+html[data-theme="dark"] .connection-result.is-error {
+  background: #382523;
+}
+
+html[data-theme="dark"] .composer {
+  border-color: #555555;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.22);
+}
+
+html[data-theme="dark"] .room-memory-field,
+html[data-theme="dark"] .room-schedule-field {
+  background: #272727;
+}
+
+html[data-theme="dark"] .mobile-room-switcher {
+  background: rgba(33, 33, 33, 0.96);
 }
 
 .agent-dialog form,
