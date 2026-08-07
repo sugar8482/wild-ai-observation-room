@@ -7,7 +7,6 @@ import {
 } from "./mic-grab.js";
 import {
   buildAppendSummaryMessages,
-  buildRebuildOverviewMessages,
   buildRebuildSectionMessages,
   formatMemorySegment,
 } from "./memory-prompt.js";
@@ -1290,16 +1289,7 @@ async function summarizeRoom(room, { rebuild = false, manual = false } = {}) {
         );
         sections.push(formatMemorySegment(chunk, body, index + 1, index + chunk.length));
       }
-      const run = summaryRuns.get(room.id);
-      if (run) run.phase = "正在把分段记录汇成全篇概览";
-      if (roomDialog.open && roomForm.elements.namedItem("id").value === room.id) updateRoomMemoryStatus(room);
-      const overview = await requestSummary(
-        room,
-        buildRebuildOverviewMessages(room, previousSummary, sections, source.slice(-20)),
-        controller.signal,
-        4096,
-      );
-      summary = `# 全篇概览\n\n${overview}\n\n# 逐段记录\n\n${sections.join("\n\n---\n\n")}`;
+      summary = `# 全篇时间记录\n\n${sections.join("\n\n---\n\n")}`;
     } else {
       const sections = [];
       const chunkSize = Math.max(5, Number(room.memory.interval) || 20);
@@ -1832,7 +1822,7 @@ byId("memory-rebuild").addEventListener("click", () => {
   if (!window.confirm([
     "重新生成一份全篇记忆？",
     "",
-    "这会清空并覆盖当前总结；聊天原文不会删除。整理员会重新阅读全部现存聊天，以旧总结作为线索参考，并生成更长的全篇概览和逐段记录。",
+    "这会清空并覆盖当前总结；聊天原文不会删除。整理员会重新阅读全部现存聊天，按时间顺序生成一组不重复的分段记录。",
   ].join("\n"))) return;
   void summarizeRoom(room, { rebuild: true, manual: true });
 });
