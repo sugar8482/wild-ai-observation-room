@@ -48,11 +48,14 @@ test("定时唤醒会连续抢麦，全员弃权后立即收场", async () => {
     if (payload.requestMode === "willingness-score") {
       const index = scoreIndex.get(payload.agent.id) || 0;
       scoreIndex.set(payload.agent.id, index + 1);
-      assert.match(payload.messages[0].content, /用户没有刚刚发新消息/);
+      assert.match(payload.messages[0].content, /当前时间：1970年1月1日/);
+      assert.match(payload.messages[0].content, /群聊不必围着用户进行/);
+      assert.match(payload.messages[1].content, /\[1970年1月1日/);
       return { text: String(scorePlan.get(payload.agent.id)[index]) };
     }
     replyCalls += 1;
     assert.match(payload.messages[1].content, /不要假装用户刚说了什么/);
+    assert.match(payload.messages[1].content, /只和其他嘉宾聊天/);
     return { text: payload.agent.id === "guest-a" ? "B，你还记得那件事吗？" : "记得，你居然现在提起来。" };
   };
 
@@ -67,6 +70,33 @@ test("定时唤醒会连续抢麦，全员弃权后立即收场", async () => {
   assert.deepEqual(outcome.messages.map((message) => message.author), ["A", "B"]);
   assert.equal(outcome.messages.every((message) => message.source === "scheduled"), true);
   assert.match(outcome.result, /全员弃权收场/);
+});
+
+test("定时唤醒会告知真实时间和距上次发言的时长", async () => {
+  const lastMessageAt = new Date(2026, 7, 7, 1, 0).getTime();
+  const wakeAt = new Date(2026, 7, 7, 7, 45).getTime();
+  const room = roomFixture(1);
+  room.messages[0].timestamp = lastMessageAt;
+  let checkedReply = false;
+  const outcome = await runScheduledRoom({
+    room,
+    agents,
+    at: wakeAt,
+    random: () => 0,
+    chat: async (payload) => {
+      if (payload.requestMode === "willingness-score") {
+        assert.match(payload.messages[0].content, /2026年8月7日 星期五 07:45/);
+        assert.match(payload.messages[0].content, /6 小时 45 分钟/);
+        return { text: payload.agent.id === "guest-a" ? "9" : "0" };
+      }
+      assert.match(payload.messages[0].content, /2026年8月7日 星期五 07:45/);
+      assert.match(payload.messages[1].content, /用户没有刚刚发新消息/);
+      checkedReply = true;
+      return { text: "B，醒了吗？" };
+    },
+  });
+  assert.equal(checkedReply, true);
+  assert.equal(outcome.messages.length, 1);
 });
 
 test("第一轮全员弃权时不会生成硬凑的聊天", async () => {
