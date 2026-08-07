@@ -126,7 +126,15 @@ test("房间连发设置与气泡分段可以持久化", async (context) => {
     secret: "bubble-room-secret",
   });
   const saved = await store.save({
-    agents: [{ id: "guest-one", name: "GPT", format: "openai", authType: "none" }],
+    agents: [{
+      id: "guest-one",
+      name: "GPT",
+      format: "openai",
+      authType: "none",
+      memoryEnabled: true,
+      memory: "",
+      memoryRevision: 0,
+    }],
     activeRoomId: "room-bubbles",
     rooms: [{
       id: "room-bubbles",
@@ -200,7 +208,15 @@ test("后台定时发言不会被滞后的浏览器保存覆盖", async (context
     secret: "scheduled-room-secret",
   });
   const stale = await store.save({
-    agents: [{ id: "guest-one", name: "GPT", format: "openai", authType: "none" }],
+    agents: [{
+      id: "guest-one",
+      name: "GPT",
+      format: "openai",
+      authType: "none",
+      memoryEnabled: true,
+      memory: "",
+      memoryRevision: 0,
+    }],
     activeRoomId: "room-timer",
     rooms: [{
       id: "room-timer",
@@ -223,6 +239,9 @@ test("后台定时发言不会被滞后的浏览器保存覆盖", async (context
       scoreHistory: { "guest-one": [3, 7] },
       revision: 2,
     },
+    privateMemoryItems: {
+      "guest-one": ["我想等晨曦回来再把这件事说完。"],
+    },
     messages: [{
       id: "message-scheduled",
       kind: "agent",
@@ -238,8 +257,48 @@ test("后台定时发言不会被滞后的浏览器保存覆盖", async (context
   assert.equal(merged.rooms[0].schedule.dailyCount, 1);
   assert.deepEqual(merged.rooms[0].mic.scoreHistory["guest-one"], [3, 7]);
   assert.equal(merged.rooms[0].mic.revision, 2);
+  assert.match(merged.agents[0].memory, /我想等晨曦回来再把这件事说完/);
+  assert.equal(merged.agents[0].memoryEnabled, true);
+  assert.ok(merged.agents[0].memoryRevision > 0);
 
   merged.rooms[0].messages = merged.rooms[0].messages.filter((message) => message.id !== "message-scheduled");
   const deleted = await store.save(merged);
   assert.equal(deleted.rooms[0].messages.some((message) => message.id === "message-scheduled"), false);
+});
+
+test("手动关闭角色记忆时保留内容但后续可再次开启", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({
+    filePath: join(directory, "state.json"),
+    secret: "private-memory-secret",
+  });
+  await store.save({
+    activeRoomId: "room-one",
+    agents: [{
+      id: "guest-one",
+      name: "Claude",
+      format: "anthropic",
+      authType: "none",
+      memoryEnabled: true,
+      memory: "- 我记得这件事。",
+      memoryRevision: 10,
+    }],
+    rooms: [{ id: "room-one", name: "房间", participantIds: ["guest-one"], messages: [] }],
+  });
+  const closed = await store.save({
+    activeRoomId: "room-one",
+    agents: [{
+      id: "guest-one",
+      name: "Claude",
+      format: "anthropic",
+      authType: "none",
+      memoryEnabled: false,
+      memory: "- 我记得这件事。",
+      memoryRevision: 20,
+    }],
+    rooms: [{ id: "room-one", name: "房间", participantIds: ["guest-one"], messages: [] }],
+  });
+  assert.equal(closed.agents[0].memoryEnabled, false);
+  assert.equal(closed.agents[0].memory, "- 我记得这件事。");
 });

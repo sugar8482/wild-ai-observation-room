@@ -498,6 +498,26 @@
               placeholder="留空就是原厂味。以后想磕 CP，再把男女主人设写在这里。"
             ></textarea>
           </div>
+          <div class="field field-wide agent-memory-field">
+            <label class="memory-toggle" for="agent-memory-enabled">
+              <input id="agent-memory-enabled" name="memoryEnabled" type="checkbox" />
+              <span>
+                <strong>开启角色私人记忆</strong>
+                <small>关闭时不会读、不会写，也不会出现在模型提示里。</small>
+              </span>
+            </label>
+            <div class="agent-memory-editor is-hidden" id="agent-memory-editor">
+              <label for="agent-memory">角色记忆 <span>可以手动修改</span></label>
+              <textarea
+                id="agent-memory"
+                name="memory"
+                rows="7"
+                maxlength="20000"
+                placeholder="开启后，角色会在回复末尾用第一人称悄悄记下值得保留的私心、感受、怀疑或打算。你也可以在这里亲手增删。"
+              ></textarea>
+              <p class="field-help">只会交给这位角色本人；其他嘉宾看不到。角色可以自行判断以后要不要说出来。与房间总结不同，这里不抄公开剧情，只记“这件事对我意味着什么”。</p>
+            </div>
+          </div>
         </div>
 
         <div class="connection-result is-hidden" id="connection-result" aria-live="polite"></div>

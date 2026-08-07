@@ -48,6 +48,26 @@ test("房间氛围与个人设定在发言前按 Depth 0 顺序再次注入", as
   assert.match(script, /\$\{buildImmediatePrompt\(agent, room, visibleTokenTarget\)\}/);
 });
 
+test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆", async () => {
+  const [html, script, memoryModule, memoryPrompt] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/agent-memory.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/memory-prompt.js", import.meta.url), "utf8"),
+  ]);
+  for (const id of ["agent-memory-enabled", "agent-memory-editor", "agent-memory"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(html, /其他嘉宾看不到/);
+  assert.match(script, /parseAgentReply\(reply\.text\)/);
+  assert.match(script, /appendAgentMemory/);
+  assert.match(script, /PRIVATE_MEMORY_TOKEN_ALLOWANCE/);
+  assert.match(memoryModule, /<self_memory>/);
+  assert.match(memoryModule, /不要抄写房间公开时间线/);
+  assert.match(memoryPrompt, /公开故事时间线/);
+  assert.match(memoryPrompt, /不属于房间总结/);
+});
+
 test("房间长期记忆独立于聊天消息并注入最近原文之前", async () => {
   const [html, script, memoryPrompt] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),

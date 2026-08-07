@@ -137,3 +137,35 @@ test("定时聊天也会按房间设置保存连续气泡", async () => {
   assert.equal(outcome.messages[0].text, "你们人呢？\n算了，我先写作业。");
   assert.deepEqual(outcome.messages[0].segments, ["你们人呢？", "算了，我先写作业。"]);
 });
+
+test("定时聊天用同一次回复提取角色私人记忆", async () => {
+  const room = roomFixture(1);
+  const memoryAgents = agents.map((agent, index) => ({
+    ...agent,
+    memoryEnabled: index === 0,
+    memory: index === 0 ? "- 我记得晨曦说她会回来。" : "",
+  }));
+  const outcome = await runScheduledRoom({
+    room,
+    agents: memoryAgents,
+    random: () => 0,
+    at: new Date(2026, 7, 7, 9, 0).getTime(),
+    chat: async (payload) => {
+      if (payload.requestMode === "willingness-score") {
+        if (payload.agent.id === "guest-a") {
+          assert.match(payload.messages[0].content, /只属于“A”的角色私人记忆/);
+          return { text: "9" };
+        }
+        assert.doesNotMatch(payload.messages[0].content, /角色私人记忆/);
+        return { text: "0" };
+      }
+      assert.equal(payload.maxTokens, 480);
+      assert.match(payload.messages[0].content, /<self_memory>/);
+      return {
+        text: "B，你今天怎么这么安静？\n<self_memory>\n- 我有点在意B一直没说话。\n</self_memory>",
+      };
+    },
+  });
+  assert.equal(outcome.messages[0].text, "B，你今天怎么这么安静？");
+  assert.deepEqual(outcome.privateMemoryItems["guest-a"], ["我有点在意B一直没说话。"]);
+});

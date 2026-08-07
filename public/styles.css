@@ -1163,9 +1163,14 @@ html[data-theme="dark"] .room-card.is-active span {
 
 html[data-theme="dark"] .agent-card:hover,
 html[data-theme="dark"] .room-prompt-field textarea,
-html[data-theme="dark"] .persona-field textarea {
+html[data-theme="dark"] .persona-field textarea,
+html[data-theme="dark"] .agent-memory-editor textarea {
   border-color: #565656;
   background: #292929;
+}
+
+html[data-theme="dark"] .agent-memory-field {
+  background: #262626;
 }
 
 html[data-theme="dark"] .agent-readiness.is-ready,
@@ -1480,6 +1485,43 @@ html[data-theme="dark"] .mobile-room-switcher {
 .persona-field textarea {
   min-height: 118px;
   background: #fbfbf8;
+}
+
+.agent-memory-field {
+  padding: 13px 14px;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  background: var(--wash);
+}
+
+.agent-memory-field .memory-toggle {
+  align-items: flex-start;
+}
+
+.agent-memory-field .memory-toggle span {
+  display: grid;
+  gap: 3px;
+}
+
+.agent-memory-field .memory-toggle small {
+  color: var(--muted);
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.agent-memory-editor {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--soft-line);
+}
+
+.agent-memory-editor textarea {
+  min-height: 150px;
+  background: var(--paper);
+}
+
+.agent-memory-editor .field-help {
+  margin-top: 7px;
 }
 
 .connection-result {

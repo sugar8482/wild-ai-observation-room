@@ -12,6 +12,13 @@ import {
   formatMemorySegment,
 } from "./memory-prompt.js";
 import { bubbleSplitInstruction, formatChatBubbleReply } from "./chat-bubbles.js";
+import {
+  PRIVATE_MEMORY_TOKEN_ALLOWANCE,
+  appendAgentMemory,
+  parseAgentReply,
+  privateMemoryContext,
+  privateMemoryOutputInstruction,
+} from "./agent-memory.js";
 
 const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
 const LEGACY_MESSAGE_KEY = "wild-ai-observation-room.messages.v1";
@@ -127,6 +134,7 @@ let saveChain = Promise.resolve();
 let loadPromise = null;
 let unseenMessageCount = 0;
 let accessProtectionEnabled = true;
+let agentMemoryDraftDirty = false;
 const summarizingRoomIds = new Set();
 const summaryRuns = new Map();
 const summaryNotices = new Map();
@@ -185,6 +193,9 @@ function hydrateAgent(profile) {
     authType: String(profile?.authType || FORMAT_META[format].defaultAuth),
     customHeader: String(profile?.customHeader || ""),
     persona: String(profile?.persona || ""),
+    memoryEnabled: profile?.memoryEnabled === true,
+    memory: String(profile?.memory || ""),
+    memoryRevision: Math.max(0, Number(profile?.memoryRevision) || 0),
     apiKey: String(profile?.apiKey || ""),
     extraHeaders: String(profile?.extraHeaders || ""),
     hasApiKey: Boolean(profile?.hasApiKey || profile?.apiKey),
@@ -201,6 +212,9 @@ function blankAgent(profile) {
     model: "",
     customHeader: "",
     persona: "",
+    memoryEnabled: false,
+    memory: "",
+    memoryRevision: 0,
   });
 }
 
@@ -369,6 +383,9 @@ function stateSnapshot() {
       authType: agent.authType,
       customHeader: agent.customHeader,
       persona: agent.persona,
+      memoryEnabled: agent.memoryEnabled,
+      memory: agent.memory,
+      memoryRevision: agent.memoryRevision,
       apiKey: agent.apiKey,
       extraHeaders: agent.extraHeaders,
       clearApiKey: agent.clearApiKey === true,
@@ -439,6 +456,29 @@ function applySavedCredentialFlags(serverAgents, serverSummarizer) {
   }
 }
 
+function mergeServerAgentMemories(serverAgents = []) {
+  const remoteById = new Map(serverAgents.map((agent) => [agent.id, agent]));
+  let changed = false;
+  for (const agent of state.agents) {
+    const remote = remoteById.get(agent.id);
+    if (!remote || Number(remote.memoryRevision) <= Number(agent.memoryRevision)) continue;
+    agent.memoryEnabled = remote.memoryEnabled === true;
+    agent.memory = String(remote.memory || "");
+    agent.memoryRevision = Math.max(0, Number(remote.memoryRevision) || 0);
+    if (
+      agentDialog.open
+      && String(agentForm.elements.namedItem("id")?.value || "") === agent.id
+      && !agentMemoryDraftDirty
+    ) {
+      agentForm.elements.namedItem("memoryEnabled").checked = agent.memoryEnabled;
+      agentForm.elements.namedItem("memory").value = agent.memory;
+      syncAgentMemoryField();
+    }
+    changed = true;
+  }
+  return changed;
+}
+
 function queuePersist() {
   const snapshot = JSON.parse(JSON.stringify(stateSnapshot()));
   const save = async () => {
@@ -454,6 +494,7 @@ function queuePersist() {
     }
     if (!response.ok) throw new Error(payload.error || "保存失败");
     applySavedCredentialFlags(payload.agents || [], payload.summarizer);
+    mergeServerAgentMemories(payload.agents || []);
     mergeServerRoomUpdates(payload.rooms || []);
     renderAgents();
     renderRooms();
@@ -577,7 +618,11 @@ function renderAgents() {
       `agent-readiness${isConfigured(agent) ? " is-ready" : ""}`,
       isConfigured(agent) ? "配置已保存" : "等待配置",
     );
-    const personaLabel = createElement("span", "", agent.persona.trim() ? "已有人设" : "原厂味");
+    const personaLabel = createElement(
+      "span",
+      "",
+      `${agent.persona.trim() ? "已有人设" : "原厂味"}${agent.memoryEnabled ? " · 私忆开" : ""}`,
+    );
     const toggleLabel = createElement("label", "switch");
     toggleLabel.setAttribute("aria-label", `${participating ? "移出" : "邀请"}${agent.name}`);
     const toggle = document.createElement("input");
@@ -856,7 +901,9 @@ function buildImmediatePrompt(agent, room, visibleTokenTarget) {
     "个人设定应在房间共同氛围内发挥；两者冲突时，以房间共同氛围为准。",
     `【房间共同氛围｜所有嘉宾】\n${roomAtmosphere}`,
     `【你的个人设定｜${agent.name}】\n${persona}`,
+    privateMemoryContext(agent),
     bubbleSplitInstruction(room?.bubbleSplit),
+    privateMemoryOutputInstruction(agent),
   ].filter(Boolean).join("\n\n");
 }
 
@@ -882,13 +929,17 @@ function longTermMemoryForPrompt(room) {
 
 async function callAgent(agent, activeAgents, room, signal) {
   const visibleTokenTarget = Math.min(4096, Math.max(64, Number(tokensInput.value) || 300));
+  const requestTokenLimit = Math.min(
+    4096,
+    visibleTokenTarget + (agent.memoryEnabled ? PRIVATE_MEMORY_TOKEN_ALLOWANCE : 0),
+  );
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       agent,
       temperature: Number(temperatureInput.value),
-      maxTokens: visibleTokenTarget,
+      maxTokens: requestTokenLimit,
       messages: [
         { role: "system", content: buildSystemPrompt(agent, activeAgents, room, visibleTokenTarget) },
         {
@@ -932,6 +983,7 @@ function buildMicScoringMessages(agent, activeAgents, room) {
         `你是群聊嘉宾“${agent.name}”。${others.length ? `同桌还有：${others.join("、")}。` : ""}`,
         `【房间共同氛围】\n${atmosphere}`,
         `【你的个人设定】\n${persona}`,
+        privateMemoryContext(agent, { maxLength: 4_000 }),
         "你现在只决定要不要争取下一次发言机会，不要生成正式回复。",
         "只输出一个 0 到 10 的整数：0=完全不想接话，4=勉强有话可说，7=很想接，10=必须现在说。",
         "不要解释，不要加标点或其他文字。",
@@ -1005,7 +1057,23 @@ async function deliverAgentTurn(speaker, activeAgents, room, controller) {
   setRunning(true, speaker.name);
   try {
     const reply = await callAgent(speaker, activeAgents, room, controller.signal);
-    addMessage({ kind: "agent", author: speaker.name, text: reply.text, agentId: speaker.id });
+    const parsedReply = speaker.memoryEnabled
+      ? parseAgentReply(reply.text)
+      : { visibleText: reply.text, memoryItems: [] };
+    if (parsedReply.memoryItems.length) {
+      const nextMemory = appendAgentMemory(speaker.memory, parsedReply.memoryItems, {
+        roomName: room.name,
+        at: Date.now(),
+      });
+      if (nextMemory !== speaker.memory) {
+        speaker.memory = nextMemory;
+        speaker.memoryRevision = Math.max(
+          Date.now(),
+          Math.max(0, Number(speaker.memoryRevision) || 0) + 1,
+        );
+      }
+    }
+    addMessage({ kind: "agent", author: speaker.name, text: parsedReply.visibleText, agentId: speaker.id });
     if (reply.finishReason === "length") {
       addMessage({
         kind: "error",
@@ -1440,9 +1508,11 @@ function openAgentDialog(agentId = null) {
     authType: "bearer",
   });
   byId("dialog-title").textContent = agent ? `编辑 ${agent.name}` : "添加 AI 嘉宾";
-  for (const key of ["id", "name", "format", "baseUrl", "model", "authType", "customHeader", "persona"]) {
+  agentMemoryDraftDirty = false;
+  for (const key of ["id", "name", "format", "baseUrl", "model", "authType", "customHeader", "persona", "memory"]) {
     setFormValue(key, draft[key]);
   }
+  agentForm.elements.namedItem("memoryEnabled").checked = draft.memoryEnabled === true;
   setFormValue("apiKey", "");
   setFormValue("extraHeaders", "");
   setFormValue("clearApiKey", "false");
@@ -1455,7 +1525,14 @@ function openAgentDialog(agentId = null) {
   deleteAgentButton.classList.toggle("is-hidden", !agent);
   syncAuthField();
   syncEndpointHelp();
+  syncAgentMemoryField();
   agentDialog.showModal();
+}
+
+function syncAgentMemoryField() {
+  const enabled = byId("agent-memory-enabled").checked;
+  byId("agent-memory-editor").classList.toggle("is-hidden", !enabled);
+  byId("agent-memory-editor").setAttribute("aria-hidden", String(!enabled));
 }
 
 function agentFromForm() {
@@ -1465,6 +1542,12 @@ function agentFromForm() {
   const apiKey = String(data.get("apiKey") || "").trim();
   const extraHeaders = String(data.get("extraHeaders") || "").trim();
   const clearApiKey = String(data.get("clearApiKey")) === "true";
+  const memoryEnabled = data.get("memoryEnabled") === "on";
+  const memory = String(data.get("memory") || "").trim();
+  const memoryChanged = Boolean(existing) && (
+    memoryEnabled !== existing.memoryEnabled
+    || memory !== existing.memory
+  );
   const draft = {
     id: String(data.get("id") || newId("guest")),
     name: String(data.get("name") || "").trim(),
@@ -1476,6 +1559,13 @@ function agentFromForm() {
     customHeader: String(data.get("customHeader") || "").trim(),
     extraHeaders,
     persona: String(data.get("persona") || "").trim(),
+    memoryEnabled,
+    memory,
+    memoryRevision: existing
+      ? memoryChanged
+        ? Math.max(Date.now(), Math.max(0, Number(existing.memoryRevision) || 0) + 1)
+        : Math.max(0, Number(existing.memoryRevision) || 0)
+      : 0,
     hasApiKey: clearApiKey ? false : Boolean(apiKey || existing?.hasApiKey),
     hasExtraHeaders: Boolean(extraHeaders || existing?.hasExtraHeaders),
     clearApiKey,
@@ -1858,6 +1948,13 @@ byId("agent-format").addEventListener("change", () => {
   syncEndpointHelp();
 });
 byId("agent-auth").addEventListener("change", syncAuthField);
+byId("agent-memory-enabled").addEventListener("change", () => {
+  agentMemoryDraftDirty = true;
+  syncAgentMemoryField();
+});
+byId("agent-memory").addEventListener("input", () => {
+  agentMemoryDraftDirty = true;
+});
 byId("summarizer-format").addEventListener("change", () => {
   const format = byId("summarizer-format").value;
   byId("summarizer-auth").value = FORMAT_META[format].defaultAuth;
@@ -2068,9 +2165,11 @@ async function syncBackgroundUpdates() {
     const payload = await response.json();
     const wasViewingLatest = isViewingLatest();
     const beforeActiveCount = activeRoom()?.messages.length || 0;
+    const agentMemoriesChanged = mergeServerAgentMemories(payload.agents || []);
     const addedMessages = mergeServerRoomUpdates(payload.rooms || []);
     const activeAddedMessages = Math.max(0, (activeRoom()?.messages.length || 0) - beforeActiveCount);
     renderRooms();
+    if (agentMemoriesChanged) renderAgents();
     if (addedMessages) {
       if (activeAddedMessages && wasViewingLatest) renderMessages({ scroll: true });
       else if (activeAddedMessages) {
