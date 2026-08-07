@@ -1516,8 +1516,13 @@ html[data-theme="dark"] .mobile-room-switcher {
 }
 
 .agent-memory-editor textarea {
-  min-height: 150px;
+  width: 100%;
+  min-height: 118px;
+  box-sizing: border-box;
+  padding: 10px;
+  resize: vertical;
   background: var(--paper);
+  line-height: 1.55;
 }
 
 .agent-memory-editor .field-help {
