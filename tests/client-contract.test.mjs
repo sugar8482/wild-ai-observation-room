@@ -76,6 +76,9 @@ test("房间长期记忆独立于聊天消息并注入最近原文之前", async
   assert.match(memoryPrompt, /不会再生成另一份总概括/);
   assert.match(memoryPrompt, /原文中标为“【用户原话｜名字】”的消息具有最高保留优先级/);
   assert.match(memoryPrompt, /不得只写成“用户询问了某事”/);
+  assert.match(memoryPrompt, /completeAutomaticSummaryBatch/);
+  assert.match(memoryPrompt, /绝不能升级成已经确认的事实/);
+  assert.match(script, /completeAutomaticSummaryBatch\(pendingSource, room\.memory\.interval\)/);
   assert.match(script, /这会清空并覆盖当前总结；聊天原文不会删除/);
   assert.doesNotMatch(script, /# 全篇概览/);
   assert.match(html, /立即或自动整理只会在末尾追加时间片段/);

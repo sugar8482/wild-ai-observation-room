@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildAppendSummaryMessages,
   buildRebuildSectionMessages,
+  completeAutomaticSummaryBatch,
   formatMemorySegment,
 } from "../public/memory-prompt.js";
 
@@ -42,4 +43,19 @@ test("记忆片段带消息范围且保留模型正文", () => {
   const segment = formatMemorySegment(messages, "这一段发生了两件事。", 21, 22);
   assert.match(segment, /^## 记忆片段 · 第 21–22 条/);
   assert.match(segment, /这一段发生了两件事。$/);
+});
+
+test("自动整理只取完整批次并把零头留到下一批", () => {
+  const pending = Array.from({ length: 41 }, (_, index) => ({ id: `message-${index + 1}` }));
+  assert.equal(completeAutomaticSummaryBatch(pending.slice(0, 19), 20).length, 0);
+  assert.equal(completeAutomaticSummaryBatch(pending.slice(0, 21), 20).length, 20);
+  assert.equal(completeAutomaticSummaryBatch(pending, 20).length, 40);
+  assert.equal(completeAutomaticSummaryBatch(pending, 20).at(-1).id, "message-40");
+});
+
+test("整理提示不会把条件和猜测升级成事实", () => {
+  const prompt = buildAppendSummaryMessages(room, messages.slice(0, 1));
+  assert.match(prompt[0].content, /条件或推测意味的内容/);
+  assert.match(prompt[0].content, /绝不能升级成已经确认的事实/);
+  assert.match(prompt[0].content, /如果本批少于 5 条，只写一段简短自然的时间记录/);
 });

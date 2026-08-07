@@ -8,6 +8,7 @@ import {
 import {
   buildAppendSummaryMessages,
   buildRebuildSectionMessages,
+  completeAutomaticSummaryBatch,
   formatMemorySegment,
 } from "./memory-prompt.js";
 import { bubbleSplitInstruction, formatChatBubbleReply } from "./chat-bubbles.js";
@@ -1254,13 +1255,14 @@ async function summarizeRoom(room, { rebuild = false, manual = false } = {}) {
     if (manual) showToast("旧记忆已经变动，请使用“重新生成”");
     return false;
   }
-  const source = pendingMemoryMessages(room, { rebuild });
+  const pendingSource = pendingMemoryMessages(room, { rebuild });
+  const source = rebuild || manual
+    ? pendingSource
+    : completeAutomaticSummaryBatch(pendingSource, room.memory.interval);
   if (!source.length) {
     if (manual) showToast("暂时没有新的聊天需要整理");
     return false;
   }
-  if (!manual && source.length < room.memory.interval) return false;
-
   const controller = new AbortController();
   summarizingRoomIds.add(room.id);
   summaryNotices.delete(room.id);
