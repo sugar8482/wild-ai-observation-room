@@ -2364,7 +2364,7 @@ byId("deep-compact-agent-memory-button").addEventListener("click", async () => {
       body: JSON.stringify({
         agent: draft,
         temperature: 0.1,
-        maxTokens: 2400,
+        maxTokens: 3600,
         requestMode: "private-memory-summary",
         messages: [
           {
@@ -2372,9 +2372,11 @@ byId("deep-compact-agent-memory-button").addEventListener("click", async () => {
             content: [
               `你就是群聊嘉宾“${draft.name}”。现在不是对外聊天，而是安静整理只属于你自己的私人记忆。`,
               `【你的个人设定】\n${contextExcerpt(draft.persona, 8_000) || "没有额外个人设定；依照你自然的判断整理。"}`,
+              "这是去重整理，不是把一生压成近况摘要。不要追求条数越少越好，也不要只留最近发生的事情。",
               "只整理“现有私人记忆”中已经写下的事情；房间上下文仅用于辨认同一事件、核对后来变化和避免误解，不得从上下文另行摘抄新事件充数。",
-              "把同一事件的重复情绪、重复等待和重复计划合并为一条，只保留最后的新变化。",
-              "由你自己判断什么仍值得记住。优先保留重要误会、关系转折、未公开秘密、仍会影响后续判断的偏向或打算；普通公开时间线和换句话复读可以删除。",
+              "只有确定属于同一件事、同一阶段的重复情绪、重复等待或重复计划才能合并；拿不准是不是同一事件时必须保留。",
+              "同一事件合并时要把较早的原因和后来的新变化写在一条里，不能只留下结局。不同日期发生的独立事件、已经结束但有独特意义的共同经历，也要保留至少一条。",
+              "由你自己判断什么仍值得记住。优先保留重要误会、关系转折、未公开秘密、仍会影响后续判断的偏向或打算；只有不含独立信息的普通复读可以删除。",
               "不要评价或重写自己的人设，不要为了显得深情、聪明或有戏剧性而增加原文没有的心思。",
               "修掉重复的房间与日期标签。保留第一人称；不确定内容继续使用“我怀疑／我猜／我以为”。",
               "只输出精简后的逐条记忆，每行格式为：- [房间 · 月/日] 第一人称内容。不要标题、说明或代码块。",
@@ -2397,10 +2399,23 @@ byId("deep-compact-agent-memory-button").addEventListener("click", async () => {
       throw new Error("局域网访问码已失效，请重新输入");
     }
     if (!response.ok) throw new Error(payload.error || `深度整理失败（${response.status}）`);
-    const compacted = compactAgentMemory(payload.text);
+    const compacted = compactAgentMemory(payload.text, { mergeTopics: false });
     if (!compacted) throw new Error("整理员没有返回可保存的记忆");
     const beforeCount = memory.split(/\r?\n/).filter((line) => line.trim()).length;
     const afterCount = compacted.split(/\r?\n/).filter((line) => line.trim()).length;
+    const aggressiveFloor = Math.max(6, Math.ceil(beforeCount * 0.4));
+    if (beforeCount >= 12 && afterCount < aggressiveFloor) {
+      const useAggressiveResult = window.confirm([
+        `${draft.name}想把 ${beforeCount} 条记忆缩成 ${afterCount} 条，幅度有点大。`,
+        "",
+        "这可能是大量重复，也可能误删了较早的独立事件。",
+        "选择“取消”会完整保留整理前的草稿；只有选择“确定”才使用这份结果。",
+      ].join("\n"));
+      if (!useAggressiveResult) {
+        updateAgentMemoryStatus(`已拦下过度瘦身：仍保留原来的 ${beforeCount} 条记忆。`);
+        return;
+      }
+    }
     editor.value = compacted;
     agentMemoryDraftDirty = true;
     updateAgentMemoryStatus(`深度整理完成：${beforeCount} → ${afterCount} 条；请检查后保存嘉宾。`);

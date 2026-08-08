@@ -130,7 +130,10 @@ function preferMemoryEntry(existing, incoming) {
   return incoming;
 }
 
-export function compactAgentMemory(value, { maxLength = AUTO_PRIVATE_MEMORY_LIMIT } = {}) {
+export function compactAgentMemory(value, {
+  maxLength = AUTO_PRIVATE_MEMORY_LIMIT,
+  mergeTopics = true,
+} = {}) {
   const entries = String(value || "")
     .split(/\r?\n/)
     .map(parseMemoryEntry)
@@ -151,7 +154,7 @@ export function compactAgentMemory(value, { maxLength = AUTO_PRIVATE_MEMORY_LIMI
       continue;
     }
     let topicIndex = -1;
-    if (entry.auto) {
+    if (entry.auto && mergeTopics) {
       for (let index = compacted.length - 1; index >= 0; index -= 1) {
         if (sameMemoryTopic(compacted[index], entry)) {
           topicIndex = index;

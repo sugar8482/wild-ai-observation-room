@@ -88,3 +88,15 @@ test("本地整理优先保留手写内容、关系变化和未公开秘密并�
   assert.match(compacted, /手动写的/);
   assert.match(compacted, /不公开这段关系/);
 });
+
+test("深度整理后的保守清理只删完全重复，不再次按相似主题吞掉独立旧事", () => {
+  const source = [
+    "- [竹马群 · 8/7] 我等她下楼等得有点不耐烦。",
+    "- [竹马群 · 8/8] 我在球场输给老谢，答应请一周可乐。",
+    "- [竹马群 · 8/8] 我在球场输给老谢，答应请一周可乐。",
+  ].join("\n");
+  const result = compactAgentMemory(source, { mergeTopics: false });
+  assert.match(result, /等她下楼/);
+  assert.match(result, /请一周可乐/);
+  assert.equal(result.split("\n").length, 2);
+});
