@@ -148,6 +148,8 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
   assert.match(html, /30,000 字只是建议整理线/);
   assert.match(html, /每条最多合并两条旧记忆/);
   assert.match(html, /目标是校订而不是缩短/);
+  assert.match(html, /日常每轮可认真选择写 0～2 条/);
+  assert.match(html, /首次初始化可写 1～3 条/);
   assert.doesNotMatch(script, /agent: state\.summarizer,[\s\S]{0,240}requestMode: "private-memory-summary"/);
   assert.match(memoryModule, /只有出现新变化、重要误会、关系转折或尚未公开/);
   assert.match(script, /PRIVATE_MEMORY_TOKEN_ALLOWANCE/);

@@ -32,6 +32,7 @@ test("空白私人记忆在用户要求初始化时允许从既有对话实际�
   });
   assert.match(instruction, /首次初始化私人记忆/);
   assert.match(instruction, /必须实际写入至少 1 条/);
+  assert.match(instruction, /首次初始化是例外，可写 1～3 条/);
   assert.match(instruction, /不能只口头表示完成/);
   assert.match(instruction, /不能只写在思考、推理或草稿中/);
 });
@@ -44,6 +45,9 @@ test("已有私人记忆时不会反复要求执行首次初始化", () => {
   });
   assert.doesNotMatch(instruction, /你当前的私人记忆还是空的/);
   assert.match(instruction, /不能只口头表示完成/);
+  assert.match(instruction, /日常回复允许写 0～2 条/);
+  assert.match(instruction, /不得因为懒得整理、正文写上头或嫌格式麻烦/);
+  assert.match(instruction, /不要为了证明自己有在记录而凑数/);
 });
 
 test("回复末尾的私人便笺会被剥离且最多保存三条", () => {
