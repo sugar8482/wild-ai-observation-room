@@ -4,7 +4,7 @@ const MEMORY_TAG_OPEN = "<self_memory>";
 const MEMORY_TAG_CLOSE = "</self_memory>";
 const MAX_MEMORY_ITEMS_PER_REPLY = 3;
 const MAX_MEMORY_ITEM_LENGTH = 300;
-export const AUTO_PRIVATE_MEMORY_LIMIT = 9_000;
+export const AUTO_PRIVATE_MEMORY_LIMIT = 18_000;
 
 const MEMORY_CONCEPTS = [
   ["等待出现", /等|没下来|没来|没出现|没动静|没回应|没回|磨蹭|迟到|失踪/],
@@ -132,7 +132,7 @@ function preferMemoryEntry(existing, incoming) {
 
 export function compactAgentMemory(value, {
   maxLength = AUTO_PRIVATE_MEMORY_LIMIT,
-  mergeTopics = true,
+  mergeTopics = false,
 } = {}) {
   const entries = String(value || "")
     .split(/\r?\n/)
@@ -248,7 +248,7 @@ export function appendAgentMemory(existing, items, {
   at = Date.now(),
   maxItems = MAX_MEMORY_ITEMS_PER_REPLY,
 } = {}) {
-  const current = compactAgentMemory(existing);
+  const current = compactAgentMemory(existing, { mergeTopics: false });
   const known = new Set(
     current
       .split(/\r?\n/)
@@ -270,5 +270,5 @@ export function appendAgentMemory(existing, items, {
   const safeRoomName = String(roomName || "聊天室").replace(/[\[\]\r\n]/g, " ").trim().slice(0, 60);
   const prefix = `[${safeRoomName || "聊天室"} · ${memoryDate(at)}]`;
   const combined = [current, ...fresh.map((item) => `- ${prefix} ${item}`)].filter(Boolean).join("\n");
-  return compactAgentMemory(combined);
+  return compactAgentMemory(combined, { mergeTopics: false });
 }

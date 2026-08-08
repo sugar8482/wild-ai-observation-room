@@ -1836,7 +1836,7 @@ function updateAgentMemoryStatus(message = "") {
   const memory = byId("agent-memory").value.trim();
   const entries = memory ? memory.split(/\r?\n/).filter((line) => line.trim()).length : 0;
   byId("agent-memory-status").textContent = message
-    || `${entries} 条 · ${memory.length.toLocaleString("zh-CN")} 字；自动新增会在约 ${AUTO_PRIVATE_MEMORY_LIMIT.toLocaleString("zh-CN")} 字内先合并再淘汰。`;
+    || `${entries} 条 · ${memory.length.toLocaleString("zh-CN")} 字；自动新增只做基础去重，接近 ${AUTO_PRIVATE_MEMORY_LIMIT.toLocaleString("zh-CN")} 字时建议深度整理。`;
 }
 
 function contextExcerpt(value, maxLength) {
@@ -2317,7 +2317,7 @@ byId("compact-agent-memory-button").addEventListener("click", () => {
     return;
   }
   const beforeCount = before.split(/\r?\n/).filter((line) => line.trim()).length;
-  const after = compactAgentMemory(before);
+  const after = compactAgentMemory(before, { mergeTopics: false });
   const afterCount = after ? after.split(/\r?\n/).filter((line) => line.trim()).length : 0;
   editor.value = after;
   agentMemoryDraftDirty = true;

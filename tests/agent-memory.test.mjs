@@ -57,22 +57,22 @@ test("角色记忆按房间和日期追加并跳过完全重复内容", () => {
   assert.match(next, /\[竹马群 · 8\/7\] 我决定先不把截图的事说透。/);
 });
 
-test("本地整理会修掉重复日期标签并合并同一轮反复等待", () => {
+test("基础清理会修掉重复日期标签但保留措辞不同的独立心思", () => {
   const compacted = compactAgentMemory([
     "- [竹马群 · 8/8] [竹马群 · 8/8] 晨曦换衣服太慢，我怀疑她还在楼上磨蹭。",
     "- [竹马群 · 8/8] 晨曦这么久没下来，我决定再在楼下等一会儿。",
     "- [竹马群 · 8/8] 晨曦还是没下来，我准备让老谢上楼看看。",
   ].join("\n"));
   assert.doesNotMatch(compacted, /\[竹马群 · 8\/8\]\s*\[竹马群 · 8\/8\]/);
-  assert.ok(compacted.split("\n").length < 3);
+  assert.equal(compacted.split("\n").length, 3);
 });
 
-test("同一个未公开秘密会合并，但不同秘密不会被误删", () => {
+test("可选语义合并会合并同一个未公开秘密，但保留不同秘密", () => {
   const compacted = compactAgentMemory([
     "- [竹马群 · 8/7] 其实那晚我并没有截图，只是随口一诈，这件事不能让他们知道。",
     "- [竹马群 · 8/8] 截图这张牌还可以继续留着，我暂时不说破。",
     "- [竹马群 · 8/8] 口红那次是他陪她去退的，这件事我还没告诉别人。",
-  ].join("\n"));
+  ].join("\n"), { mergeTopics: true });
   assert.equal(compacted.match(/截图/g)?.length, 1);
   assert.match(compacted, /口红/);
 });
