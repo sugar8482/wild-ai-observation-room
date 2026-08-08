@@ -55,7 +55,13 @@
           </div>
           <button class="icon-button" id="add-agent-button" type="button" aria-label="添加 AI 嘉宾">＋</button>
         </div>
-        <p class="panel-note">开关决定谁参加当前房间。点击“编辑”填写接口与人设。</p>
+        <p class="panel-note">默认只看本房成员；切到全部嘉宾，可以邀请新人或按房间查找。</p>
+        <div class="agent-view-controls" id="agent-view-controls" role="group" aria-label="嘉宾席显示范围">
+          <button class="agent-view-choice" id="agent-view-room" type="button" aria-pressed="true">本房成员</button>
+          <button class="agent-view-choice" id="agent-view-all" type="button" aria-pressed="false">全部嘉宾</button>
+        </div>
+        <p class="agent-editing-note" id="agent-editing-note"></p>
+        <div class="agent-room-filters is-hidden" id="agent-room-filters" aria-label="按聊天室筛选嘉宾"></div>
         <div class="agent-list" id="agent-list"></div>
         <div class="privacy-note">
           <span class="privacy-icon" aria-hidden="true">⌁</span>
@@ -611,6 +617,19 @@
         <p class="access-result" id="access-result" aria-live="polite"></p>
         <button class="button button-primary" id="access-submit" type="submit">进入观察室</button>
         <p class="access-warning">仅在你信任的家庭 Wi-Fi 中使用，不要连接公共网络。</p>
+      </form>
+    </dialog>
+
+    <dialog class="copy-fallback-dialog" id="copy-fallback-dialog">
+      <form method="dialog">
+        <p class="section-kicker">COPY MESSAGE</p>
+        <h2>长按复制这段文字</h2>
+        <p>浏览器没有允许自动复制，我已经替你选好了原文。</p>
+        <textarea id="copy-fallback-text" readonly aria-label="待复制的消息原文"></textarea>
+        <div class="copy-fallback-actions">
+          <button class="button button-quiet" id="copy-fallback-select" type="button">重新全选</button>
+          <button class="button button-primary" type="submit">关闭</button>
+        </div>
       </form>
     </dialog>
 

@@ -40,6 +40,37 @@ test("消息操作在点选当前消息后才展开", async () => {
   assert.match(styles, /pointer-events: none/);
 });
 
+test("局域网 HTTP 下复制消息有 iPad 兼容兜底", async () => {
+  const [html, script] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+  ]);
+  for (const id of ["copy-fallback-dialog", "copy-fallback-text", "copy-fallback-select"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(script, /function legacyCopyText\(text\)/);
+  assert.match(script, /document\.execCommand\("copy"\)/);
+  assert.match(script, /globalThis\.isSecureContext/);
+  assert.match(script, /openCopyFallback\(message\.text\)/);
+});
+
+test("嘉宾席可只看本房成员并按聊天室或未分房筛选", async () => {
+  const [html, script, styles] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
+  ]);
+  for (const id of ["agent-view-room", "agent-view-all", "agent-room-filters", "agent-editing-note"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(script, /let agentListView = "room"/);
+  assert.match(script, /agentRoomFilter === "unassigned"/);
+  assert.match(script, /正在编辑：\$\{room\.name\}的嘉宾阵容/);
+  assert.match(script, /尚未加入房间/);
+  assert.match(styles, /\.agent-room-filters/);
+  assert.match(styles, /\.agent-membership/);
+});
+
 test("房间氛围与个人设定在发言前按 Depth 0 顺序再次注入", async () => {
   const script = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(script, /function buildImmediatePrompt\(agent, room, visibleTokenTarget\)/);

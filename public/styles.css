@@ -295,7 +295,80 @@ h2 {
 .agent-list {
   display: grid;
   gap: 9px;
-  margin-top: 18px;
+  margin-top: 12px;
+}
+
+.agent-view-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 14px;
+  padding: 3px;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  background: var(--wash);
+}
+
+.agent-view-choice,
+.agent-room-filter {
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  white-space: nowrap;
+}
+
+.agent-view-choice {
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.agent-view-choice[aria-pressed="true"] {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 1px 4px rgba(17, 17, 15, 0.08);
+}
+
+.agent-editing-note {
+  margin: 9px 1px 0;
+  color: var(--quiet);
+  font-size: 10px;
+}
+
+.agent-room-filters {
+  display: flex;
+  gap: 6px;
+  margin-top: 9px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+
+.agent-room-filter {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border: 1px solid var(--soft-line);
+  border-radius: 999px;
+  background: var(--paper);
+  font-size: 10px;
+}
+
+.agent-room-filter[aria-pressed="true"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.agent-list-empty {
+  padding: 18px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  text-align: center;
 }
 
 .room-list {
@@ -382,7 +455,7 @@ h2 {
 }
 
 .agent-card.is-disabled {
-  opacity: 0.52;
+  opacity: 0.68;
 }
 
 .agent-card-top {
@@ -435,6 +508,7 @@ h2 {
 
 .agent-card-bottom {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   margin-top: 10px;
@@ -442,6 +516,55 @@ h2 {
   border-top: 1px solid var(--soft-line);
   font-size: 10px;
   color: var(--muted);
+}
+
+.agent-status {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 3px 7px;
+}
+
+.agent-memberships {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.agent-membership {
+  max-width: 100%;
+  padding: 3px 6px;
+  overflow: hidden;
+  border: 1px solid var(--soft-line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-membership.is-current {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.agent-membership.is-unassigned {
+  border-style: dashed;
+}
+
+.agent-room-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.agent-room-toggle-text {
+  color: var(--quiet);
+  font-size: 9px;
+  white-space: nowrap;
 }
 
 .agent-readiness.is-ready {
@@ -949,6 +1072,55 @@ input[type="range"] {
   backdrop-filter: blur(3px);
 }
 
+.copy-fallback-dialog {
+  width: min(520px, calc(100vw - 28px));
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink);
+  background: var(--paper);
+  box-shadow: var(--shadow);
+}
+
+.copy-fallback-dialog::backdrop {
+  background: rgba(17, 17, 15, 0.58);
+  backdrop-filter: blur(2px);
+}
+
+.copy-fallback-dialog form {
+  padding: 22px;
+}
+
+.copy-fallback-dialog h2 {
+  margin: 8px 0;
+  font-family: Georgia, "Songti SC", serif;
+  font-size: 23px;
+  font-weight: 500;
+}
+
+.copy-fallback-dialog p:not(.section-kicker) {
+  margin: 0 0 13px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.copy-fallback-dialog textarea {
+  width: 100%;
+  min-height: 180px;
+  padding: 11px;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.copy-fallback-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .access-dialog form {
   display: flex;
   flex-direction: column;
@@ -1159,6 +1331,16 @@ html[data-theme="dark"] .room-card.is-active {
 
 html[data-theme="dark"] .room-card.is-active span {
   color: var(--muted);
+}
+
+html[data-theme="dark"] .agent-view-choice[aria-pressed="true"] {
+  background: #343434;
+  box-shadow: none;
+}
+
+html[data-theme="dark"] .agent-room-filter[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--paper);
 }
 
 html[data-theme="dark"] .agent-card:hover,

@@ -73,6 +73,10 @@ const DEFAULT_AGENTS = [
 
 const byId = (id) => document.getElementById(id);
 const agentList = byId("agent-list");
+const agentViewRoom = byId("agent-view-room");
+const agentViewAll = byId("agent-view-all");
+const agentEditingNote = byId("agent-editing-note");
+const agentRoomFilters = byId("agent-room-filters");
 const roomList = byId("room-list");
 const messageFeed = byId("message-feed");
 const mobileRoomSwitcher = byId("mobile-room-switcher");
@@ -128,11 +132,15 @@ const summarizerForm = byId("summarizer-form");
 const summarizerConnectionResult = byId("summarizer-connection-result");
 const roomMemoryStatus = byId("room-memory-status");
 const roomScheduleStatus = byId("room-schedule-status");
+const copyFallbackDialog = byId("copy-fallback-dialog");
+const copyFallbackText = byId("copy-fallback-text");
 
 let toastTimer;
 let saveChain = Promise.resolve();
 let loadPromise = null;
 let unseenMessageCount = 0;
+let agentListView = "room";
+let agentRoomFilter = "all";
 let accessProtectionEnabled = true;
 let agentMemoryDraftDirty = false;
 const summarizingRoomIds = new Set();
@@ -363,6 +371,55 @@ function createElement(tag, className, text) {
   if (className) element.className = className;
   if (text !== undefined) element.textContent = text;
   return element;
+}
+
+function legacyCopyText(text) {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("aria-hidden", "true");
+  textarea.style.position = "fixed";
+  textarea.style.inset = "0 auto auto 0";
+  textarea.style.width = "1px";
+  textarea.style.height = "1px";
+  textarea.style.padding = "0";
+  textarea.style.border = "0";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.focus({ preventScroll: true });
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  textarea.remove();
+  return copied;
+}
+
+async function copyText(text) {
+  if (globalThis.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Safari may expose Clipboard API while still denying this particular write.
+    }
+  }
+  return legacyCopyText(text);
+}
+
+function selectCopyFallbackText() {
+  copyFallbackText.focus({ preventScroll: true });
+  copyFallbackText.select();
+  copyFallbackText.setSelectionRange(0, copyFallbackText.value.length);
+}
+
+function openCopyFallback(text) {
+  copyFallbackText.value = text;
+  if (!copyFallbackDialog.open) copyFallbackDialog.showModal();
+  requestAnimationFrame(selectCopyFallbackText);
 }
 
 function isConfigured(agent) {
@@ -597,7 +654,67 @@ function renderSummarizerStatus() {
 function renderAgents() {
   agentList.replaceChildren();
   const room = activeRoom();
-  for (const agent of state.agents) {
+  if (!room) return;
+
+  const roomMemberIds = new Set(room.participantIds);
+  const membershipsFor = (agentId) => state.rooms.filter((item) => item.participantIds.includes(agentId));
+  const unassignedCount = state.agents.filter((agent) => membershipsFor(agent.id).length === 0).length;
+  const validRoomFilter = agentRoomFilter.startsWith("room:")
+    ? state.rooms.some((item) => `room:${item.id}` === agentRoomFilter)
+    : ["all", "unassigned"].includes(agentRoomFilter);
+  if (!validRoomFilter) agentRoomFilter = "all";
+
+  const roomView = agentListView === "room";
+  agentViewRoom.textContent = `本房成员 ${room.participantIds.length}`;
+  agentViewAll.textContent = `全部嘉宾 ${state.agents.length}`;
+  agentViewRoom.setAttribute("aria-pressed", String(roomView));
+  agentViewAll.setAttribute("aria-pressed", String(!roomView));
+  agentEditingNote.textContent = `正在编辑：${room.name}的嘉宾阵容`;
+  agentRoomFilters.classList.toggle("is-hidden", roomView);
+  agentRoomFilters.replaceChildren();
+
+  if (!roomView) {
+    const filters = [
+      { value: "all", label: `全部 ${state.agents.length}` },
+      ...state.rooms.map((item) => ({
+        value: `room:${item.id}`,
+        label: `${item.name} ${state.agents.filter((agent) => item.participantIds.includes(agent.id)).length}`,
+      })),
+      ...(unassignedCount ? [{ value: "unassigned", label: `未分房 ${unassignedCount}` }] : []),
+    ];
+    for (const filter of filters) {
+      const button = createElement("button", "agent-room-filter", filter.label);
+      button.type = "button";
+      button.dataset.agentRoomFilter = filter.value;
+      button.setAttribute("aria-pressed", String(agentRoomFilter === filter.value));
+      agentRoomFilters.append(button);
+    }
+  }
+
+  let visibleAgents = roomView
+    ? state.agents.filter((agent) => roomMemberIds.has(agent.id))
+    : [...state.agents];
+  if (!roomView && agentRoomFilter === "unassigned") {
+    visibleAgents = visibleAgents.filter((agent) => membershipsFor(agent.id).length === 0);
+  } else if (!roomView && agentRoomFilter.startsWith("room:")) {
+    const filterRoomId = agentRoomFilter.slice("room:".length);
+    visibleAgents = visibleAgents.filter((agent) => state.rooms
+      .find((item) => item.id === filterRoomId)?.participantIds.includes(agent.id));
+  } else if (!roomView) {
+    visibleAgents.sort((left, right) => Number(roomMemberIds.has(right.id)) - Number(roomMemberIds.has(left.id)));
+  }
+
+  if (!visibleAgents.length) {
+    const empty = createElement(
+      "div",
+      "agent-list-empty",
+      roomView ? "本房还没有嘉宾。切换到“全部嘉宾”邀请一位吧。" : "这个分类里还没有嘉宾。",
+    );
+    agentList.append(empty);
+    return;
+  }
+
+  for (const agent of visibleAgents) {
     const participating = Boolean(room?.participantIds.includes(agent.id));
     const card = createElement("article", `agent-card${participating ? "" : " is-disabled"}`);
     const top = createElement("div", "agent-card-top");
@@ -623,6 +740,19 @@ function renderAgents() {
       "",
       `${agent.persona.trim() ? "已有人设" : "原厂味"}${agent.memoryEnabled ? " · 私忆开" : ""}`,
     );
+    const memberships = membershipsFor(agent.id);
+    const membershipRow = createElement("div", "agent-memberships");
+    if (memberships.length) {
+      for (const membership of memberships) {
+        membershipRow.append(createElement(
+          "span",
+          `agent-membership${membership.id === room.id ? " is-current" : ""}`,
+          membership.name,
+        ));
+      }
+    } else {
+      membershipRow.append(createElement("span", "agent-membership is-unassigned", "尚未加入房间"));
+    }
     const toggleLabel = createElement("label", "switch");
     toggleLabel.setAttribute("aria-label", `${participating ? "移出" : "邀请"}${agent.name}`);
     const toggle = document.createElement("input");
@@ -630,8 +760,14 @@ function renderAgents() {
     toggle.checked = participating;
     toggle.addEventListener("change", () => toggleRoomParticipant(agent.id, toggle.checked));
     toggleLabel.append(toggle, createElement("span", "switch-track"));
-    bottom.append(readiness, personaLabel, toggleLabel);
-    card.append(top, bottom);
+    const status = createElement("div", "agent-status");
+    status.append(readiness, personaLabel);
+    const roomToggle = createElement("div", "agent-room-toggle");
+    roomToggle.append(createElement("span", "agent-room-toggle-text", participating ? "已在本房" : "加入本房"), toggleLabel);
+    bottom.append(status, roomToggle);
+    card.append(top);
+    if (!roomView) card.append(membershipRow);
+    card.append(bottom);
     agentList.append(card);
   }
 }
@@ -691,11 +827,11 @@ function renderMessages({ scroll = false } = {}) {
       copyButton.type = "button";
       copyButton.setAttribute("aria-label", `复制 ${message.author} 的${segments.length > 1 ? "这组" : "这条"}消息`);
       copyButton.addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(message.text);
+        if (await copyText(message.text)) {
           showToast("已复制");
-        } catch {
-          showToast("复制失败，请手动选择文字");
+        } else {
+          openCopyFallback(message.text);
+          showToast("浏览器拦住了自动复制，已为你选中原文");
         }
       });
       actions.append(copyButton);
@@ -839,6 +975,8 @@ function switchRoom(roomId) {
     return;
   }
   state.activeRoomId = roomId;
+  agentListView = "room";
+  agentRoomFilter = "all";
   unseenMessageCount = 0;
   closeMobileRoomMenu();
   renderAll({ scroll: true });
@@ -1980,6 +2118,21 @@ byId("close-summarizer-dialog").addEventListener("click", () => summarizerDialog
 byId("add-agent-button").addEventListener("click", () => openAgentDialog());
 byId("add-room-button").addEventListener("click", () => openRoomDialog());
 byId("open-summarizer-button").addEventListener("click", openSummarizerDialog);
+agentViewRoom.addEventListener("click", () => {
+  agentListView = "room";
+  renderAgents();
+});
+agentViewAll.addEventListener("click", () => {
+  agentListView = "all";
+  renderAgents();
+});
+agentRoomFilters.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-agent-room-filter]");
+  if (!button) return;
+  agentRoomFilter = button.dataset.agentRoomFilter;
+  renderAgents();
+});
+byId("copy-fallback-select").addEventListener("click", selectCopyFallbackText);
 for (const id of [
   "room-schedule-enabled",
   "room-schedule-interval",
