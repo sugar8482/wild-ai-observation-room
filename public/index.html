@@ -324,9 +324,19 @@
           </div>
           <label class="memory-toggle schedule-event-toggle" for="room-schedule-events-enabled">
             <input id="room-schedule-events-enabled" name="scheduleEventsEnabled" type="checkbox" />
-            <span>唤醒时抽一张生活事件卡</span>
+            <span>唤醒时抽一张本房事件卡</span>
           </label>
-          <p class="field-help schedule-event-help">事件只是可接可不接的聊天引子，不会替晨曦编造迟到、生病、失踪或已经答应参加。</p>
+          <div class="field schedule-event-focus-field">
+            <label for="room-schedule-events-focus">本房事件范围 <span>可留空</span></label>
+            <textarea
+              id="room-schedule-events-focus"
+              name="scheduleEventsFocus"
+              rows="3"
+              maxlength="4000"
+              placeholder="例如：只写校园、小区和竹马日常；可以出现同学、比赛和旧物，不加入超自然事件。"
+            ></textarea>
+            <p class="field-help schedule-event-help">每个房间单独保存。留空会按本房氛围、人设和已有聊天适配；事件只是引子，不会擅自安排用户。</p>
+          </div>
           <label class="memory-toggle schedule-quiet-toggle" for="room-schedule-quiet-enabled">
             <input id="room-schedule-quiet-enabled" name="scheduleQuietEnabled" type="checkbox" />
             <span>开启免打扰时段</span>

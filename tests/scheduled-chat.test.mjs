@@ -173,7 +173,7 @@ test("定时聊天用同一次回复提取角色私人记忆", async () => {
 test("轻量定时抢麦不调用意愿评分，并可用一张不强制发生的生活事件卡", async () => {
   const room = roomFixture(1);
   room.schedule.strategy = "light-mic";
-  room.eventCards = { enabled: true, recentIds: [], revision: 0 };
+  room.eventCards = { enabled: true, focus: "只写架空古代客栈里的日常，不出现学校。", recentIds: [], revision: 0 };
   let scoreCalls = 0;
   let replyCalls = 0;
   const randomValues = [0, 0.9, 0];
@@ -186,6 +186,7 @@ test("轻量定时抢麦不调用意愿评分，并可用一张不强制发生�
       if (payload.requestMode === "willingness-score") scoreCalls += 1;
       replyCalls += 1;
       assert.match(payload.messages[0].content, /谈资卡，不是已经发生的事实/);
+      assert.match(payload.messages[0].content, /只写架空古代客栈里的日常，不出现学校/);
       assert.match(payload.messages[0].content, /不得替用户决定行程、位置、健康、迟到、失踪/);
       assert.match(payload.messages[1].content, /本地轻量轮候/);
       return { text: "B，学校刚来了个临时通知，你看了吗？" };

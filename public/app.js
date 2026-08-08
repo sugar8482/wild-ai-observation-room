@@ -290,6 +290,7 @@ function hydrateRoomSchedule(schedule) {
 function hydrateRoomEventCards(eventCards) {
   return {
     enabled: eventCards?.enabled === true,
+    focus: String(eventCards?.focus || "").slice(0, 4_000),
     recentIds: Array.isArray(eventCards?.recentIds)
       ? [...new Set(eventCards.recentIds.map(String).filter(Boolean))].slice(-4)
       : [],
@@ -1431,7 +1432,7 @@ function updateRoomScheduleStatus(room) {
   const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   const used = schedule.dayKey === todayKey ? schedule.dailyCount : 0;
   const strategyLabel = schedule.strategy === "light-mic" ? "轻量抢麦" : "真实抢麦";
-  roomScheduleStatus.textContent = `下次约 ${next} · 今日 ${used}/${schedule.dailyLimit} 次 · ${strategyLabel}${eventCards.enabled ? " · 生活事件卡" : ""}${schedule.lastResult ? ` · ${schedule.lastResult}` : ""}`;
+  roomScheduleStatus.textContent = `下次约 ${next} · 今日 ${used}/${schedule.dailyLimit} 次 · ${strategyLabel}${eventCards.enabled ? " · 本房事件卡" : ""}${schedule.lastResult ? ` · ${schedule.lastResult}` : ""}`;
 }
 
 function roomScheduleConfigFromForm(data = new FormData(roomForm)) {
@@ -1448,7 +1449,10 @@ function roomScheduleConfigFromForm(data = new FormData(roomForm)) {
 }
 
 function roomEventCardsConfigFromForm(data = new FormData(roomForm)) {
-  return { enabled: data.get("scheduleEventsEnabled") === "on" };
+  return {
+    enabled: data.get("scheduleEventsEnabled") === "on",
+    focus: String(data.get("scheduleEventsFocus") || "").trim().slice(0, 4_000),
+  };
 }
 
 function previewRoomScheduleStatus() {
@@ -1467,7 +1471,10 @@ function previewRoomScheduleStatus() {
     quietEnabled: current.quietEnabled,
     quietStart: current.quietStart,
     quietEnd: current.quietEnd,
-  }) || roomEventCardsConfigFromForm().enabled !== currentEvents.enabled) {
+  }) || JSON.stringify(roomEventCardsConfigFromForm()) !== JSON.stringify({
+    enabled: currentEvents.enabled,
+    focus: currentEvents.focus,
+  })) {
     roomScheduleStatus.textContent += " · 点击“保存房间”后生效";
   }
 }
@@ -2030,6 +2037,7 @@ function openRoomDialog(roomId = null) {
   roomForm.elements.namedItem("scheduleMaxTurns").value = String(schedule.maxTurns);
   roomForm.elements.namedItem("scheduleDailyLimit").value = String(schedule.dailyLimit);
   roomForm.elements.namedItem("scheduleEventsEnabled").checked = eventCards.enabled;
+  roomForm.elements.namedItem("scheduleEventsFocus").value = eventCards.focus;
   roomForm.elements.namedItem("scheduleQuietEnabled").checked = schedule.quietEnabled;
   roomForm.elements.namedItem("scheduleQuietStart").value = schedule.quietStart;
   roomForm.elements.namedItem("scheduleQuietEnd").value = schedule.quietEnd;
@@ -2226,8 +2234,12 @@ roomForm.addEventListener("submit", (event) => {
     room.memory.focus = memoryFocus;
     room.memory.summary = memorySummary;
     room.schedule = { ...room.schedule, ...scheduleConfig };
-    if (room.eventCards.enabled !== eventCardsConfig.enabled) {
+    if (
+      room.eventCards.enabled !== eventCardsConfig.enabled
+      || room.eventCards.focus !== eventCardsConfig.focus
+    ) {
       room.eventCards.enabled = eventCardsConfig.enabled;
+      room.eventCards.focus = eventCardsConfig.focus;
       room.eventCards.revision += 1;
     }
     if (clearedSummary) {
@@ -2529,6 +2541,7 @@ for (const id of [
   "room-schedule-max-turns",
   "room-schedule-daily-limit",
   "room-schedule-events-enabled",
+  "room-schedule-events-focus",
   "room-schedule-quiet-enabled",
   "room-schedule-quiet-start",
   "room-schedule-quiet-end",

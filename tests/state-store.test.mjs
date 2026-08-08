@@ -308,7 +308,7 @@ test("后台定时发言不会被滞后的浏览器保存覆盖", async (context
         maxTurns: 3,
         dailyLimit: 8,
       },
-      eventCards: { enabled: true, recentIds: [], revision: 0 },
+      eventCards: { enabled: true, focus: "只写这个房间里的事件。", recentIds: [], revision: 0 },
     }],
   });
 
@@ -321,6 +321,7 @@ test("后台定时发言不会被滞后的浏览器保存覆盖", async (context
     },
     eventCards: {
       enabled: true,
+      focus: "只写这个房间里的事件。",
       recentIds: ["old-object"],
       lastEvent: "翻出了一件旧东西。",
       revision: 1,
@@ -344,6 +345,7 @@ test("后台定时发言不会被滞后的浏览器保存覆盖", async (context
   assert.deepEqual(merged.rooms[0].mic.scoreHistory["guest-one"], [3, 7]);
   assert.equal(merged.rooms[0].mic.revision, 2);
   assert.deepEqual(merged.rooms[0].eventCards.recentIds, ["old-object"]);
+  assert.equal(merged.rooms[0].eventCards.focus, "只写这个房间里的事件。");
   assert.equal(merged.rooms[0].eventCards.revision, 1);
   assert.match(merged.agents[0].memory, /我想等晨曦回来再把这件事说完/);
   assert.equal(merged.agents[0].memoryEnabled, true);

@@ -191,9 +191,10 @@ test("房间长期记忆独立于聊天消息并注入最近原文之前", async
 });
 
 test("每个房间可以配置后台定时抢麦", async () => {
-  const [html, script] = await Promise.all([
+  const [html, script, styles] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
   ]);
   for (const id of [
     "room-schedule-enabled",
@@ -202,11 +203,14 @@ test("每个房间可以配置后台定时抢麦", async () => {
     "room-schedule-max-turns",
     "room-schedule-daily-limit",
     "room-schedule-events-enabled",
+    "room-schedule-events-focus",
     "room-schedule-quiet-enabled",
     "room-schedule-status",
   ]) assert.match(html, new RegExp(`id="${id}"`));
   assert.match(html, /全员安静会立即收场/);
-  assert.match(html, /事件只是可接可不接的聊天引子/);
+  assert.match(html, /每个房间单独保存/);
+  assert.match(html, /留空会按本房氛围、人设和已有聊天适配/);
+  assert.match(styles, /schedule-quiet-grid input\[type="time"\]/);
   assert.match(script, /function hydrateRoomSchedule\(schedule\)/);
   assert.match(script, /function previewRoomScheduleStatus\(\)/);
   assert.match(script, /点击“保存房间”后生效/);

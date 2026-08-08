@@ -1509,7 +1509,16 @@ html[data-theme="dark"] .mobile-room-switcher {
 }
 
 .schedule-event-help {
-  margin: 7px 0 0 24px;
+  margin: 7px 0 0;
+}
+
+.schedule-event-focus-field {
+  margin: 10px 0 0 24px;
+}
+
+.schedule-event-focus-field textarea {
+  min-height: 76px;
+  background: var(--paper);
 }
 
 .memory-interval-field,
@@ -1571,7 +1580,21 @@ html[data-theme="dark"] .mobile-room-switcher {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+  width: 100%;
   margin-top: 10px;
+}
+
+.schedule-quiet-grid > .field,
+.schedule-quiet-grid input[type="time"] {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.schedule-quiet-grid input[type="time"] {
+  display: block;
+  inline-size: 100%;
+  min-inline-size: 0;
+  padding-inline: 8px;
 }
 
 @media (max-width: 720px) {
