@@ -98,7 +98,7 @@ function isOfficialDeepSeekV4(agent) {
 
 export function chatRequestPolicy(agent, payload = {}) {
   const isWillingnessScore = payload.requestMode === "willingness-score";
-  const isMemorySummary = payload.requestMode === "memory-summary";
+  const isMemorySummary = ["memory-summary", "private-memory-summary"].includes(payload.requestMode);
   const minimumTokens = isWillingnessScore ? 1 : 64;
   const maximumTokens = isWillingnessScore ? 64 : 4096;
   const visibleTokenTarget = Number.isFinite(Number(payload.maxTokens))

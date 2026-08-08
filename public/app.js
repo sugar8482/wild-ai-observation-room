@@ -1839,6 +1839,46 @@ function updateAgentMemoryStatus(message = "") {
     || `${entries} 条 · ${memory.length.toLocaleString("zh-CN")} 字；自动新增会在约 ${AUTO_PRIVATE_MEMORY_LIMIT.toLocaleString("zh-CN")} 字内先合并再淘汰。`;
 }
 
+function contextExcerpt(value, maxLength) {
+  const text = String(value || "").trim();
+  if (!text || text.length <= maxLength) return text;
+  const headLength = Math.max(1, Math.floor(maxLength * 0.38));
+  const tailLength = Math.max(1, maxLength - headLength - 12);
+  return `${text.slice(0, headLength)}\n…（中间省略）…\n${text.slice(-tailLength)}`;
+}
+
+function privateMemoryDeepContext(agentId, { maxLength = 24_000 } = {}) {
+  const joinedRooms = state.rooms.filter((room) => room.participantIds.includes(agentId));
+  const currentRoomId = activeRoom()?.id;
+  joinedRooms.sort((left, right) => Number(right.id === currentRoomId) - Number(left.id === currentRoomId));
+  if (!joinedRooms.length) return "（这位角色尚未加入任何房间，没有可供核对的房间上下文。）";
+
+  const sections = [];
+  let remaining = maxLength;
+  for (const room of joinedRooms) {
+    if (remaining < 500) break;
+    const atmosphere = contextExcerpt(room.roomPrompt, 1_800);
+    const longMemory = room.memory.enabled && !room.memory.stale
+      ? contextExcerpt(room.memory.summary, 6_000)
+      : "";
+    const recent = room.messages
+      .filter((message) => message.kind !== "error" && String(message.text || "").trim())
+      .slice(-24)
+      .map((message) => `${message.author}：${contextExcerpt(message.text, 800)}`)
+      .join("\n\n");
+    const section = [
+      `【房间：${room.name}】`,
+      atmosphere ? `房间氛围：\n${atmosphere}` : "",
+      longMemory ? `较早聊天的房间长期记忆：\n${longMemory}` : "",
+      recent ? `最近公开聊天：\n${recent}` : "（这个房间还没有公开聊天记录。）",
+    ].filter(Boolean).join("\n\n");
+    const visibleSection = contextExcerpt(section, remaining);
+    sections.push(visibleSection);
+    remaining -= visibleSection.length + 4;
+  }
+  return sections.join("\n\n---\n\n");
+}
+
 function agentFromForm() {
   const data = new FormData(agentForm);
   const format = String(data.get("format") || "openai");
@@ -2294,25 +2334,35 @@ byId("deep-compact-agent-memory-button").addEventListener("click", async () => {
     updateAgentMemoryStatus("现在没有需要深度整理的私人记忆。");
     return;
   }
-  if (!isConfigured(state.summarizer)) {
-    showToast("先在右上角设置里配置记忆整理员");
+  let draft;
+  try {
+    draft = agentFromForm();
+  } catch (error) {
+    updateAgentMemoryStatus(`暂时不能深度整理：${error instanceof SyntaxError ? "额外请求头不是有效的 JSON" : error.message}`);
     return;
   }
+  if (!isConfigured(draft)) {
+    showToast("先配置并保存这位嘉宾自己的 API");
+    return;
+  }
+  const joinedRoomCount = state.rooms.filter((room) => room.participantIds.includes(draft.id)).length;
   if (!window.confirm([
-    "让记忆整理员深度归纳这位角色的私人记忆？",
+    `让“${draft.name}”亲自整理自己的私人记忆？`,
     "",
-    "这会产生 1 次 API 调用，并把私人记忆发送给你配置的整理模型。结果只会替换当前编辑草稿，检查后仍需点击“保存嘉宾”才生效。",
+    `这会产生 1 次这位嘉宾自己的 API 调用，并让它同时参考自己的人设、私人记忆${joinedRoomCount ? `、${joinedRoomCount} 个所属房间的长期记忆与近期聊天` : ""}。`,
+    "结果只会替换当前编辑草稿，检查后仍需点击“保存嘉宾”才生效。",
   ].join("\n"))) return;
 
   const button = byId("deep-compact-agent-memory-button");
   button.disabled = true;
-  updateAgentMemoryStatus("记忆整理员正在合并同一事件，并保留秘密与关系变化……");
+  updateAgentMemoryStatus(`${draft.name}正在回看自己的记忆与房间上下文……`);
   try {
+    const roomContext = privateMemoryDeepContext(draft.id);
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        agent: state.summarizer,
+        agent: draft,
         temperature: 0.1,
         maxTokens: 2400,
         requestMode: "private-memory-summary",
@@ -2320,14 +2370,24 @@ byId("deep-compact-agent-memory-button").addEventListener("click", async () => {
           {
             role: "system",
             content: [
-              "你是角色私人记忆的档案编辑员。只整理给定原文，不补写事实，不评价角色，也不把猜测升级为事实。",
+              `你就是群聊嘉宾“${draft.name}”。现在不是对外聊天，而是安静整理只属于你自己的私人记忆。`,
+              `【你的个人设定】\n${contextExcerpt(draft.persona, 8_000) || "没有额外个人设定；依照你自然的判断整理。"}`,
+              "只整理“现有私人记忆”中已经写下的事情；房间上下文仅用于辨认同一事件、核对后来变化和避免误解，不得从上下文另行摘抄新事件充数。",
               "把同一事件的重复情绪、重复等待和重复计划合并为一条，只保留最后的新变化。",
-              "优先保留重要误会、关系转折、未公开秘密、仍会影响后续判断的偏向或打算。普通复读可以删除。",
+              "由你自己判断什么仍值得记住。优先保留重要误会、关系转折、未公开秘密、仍会影响后续判断的偏向或打算；普通公开时间线和换句话复读可以删除。",
+              "不要评价或重写自己的人设，不要为了显得深情、聪明或有戏剧性而增加原文没有的心思。",
               "修掉重复的房间与日期标签。保留第一人称；不确定内容继续使用“我怀疑／我猜／我以为”。",
               "只输出精简后的逐条记忆，每行格式为：- [房间 · 月/日] 第一人称内容。不要标题、说明或代码块。",
             ].join("\n"),
           },
-          { role: "user", content: memory },
+          {
+            role: "user",
+            content: [
+              `【你当前的私人记忆｜需要整理】\n${memory}`,
+              `【所属房间上下文｜只供核对，不要照抄】\n${roomContext}`,
+              "现在亲自整理你的私人记忆。只输出整理后的记忆条目。",
+            ].join("\n\n"),
+          },
         ],
       }),
     });

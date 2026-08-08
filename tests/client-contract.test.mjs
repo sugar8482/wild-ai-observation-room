@@ -127,7 +127,11 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
   assert.match(script, /appendAgentMemory/);
   assert.match(script, /compactAgentMemory/);
   assert.match(script, /requestMode: "private-memory-summary"/);
-  assert.match(script, /这会产生 1 次 API 调用/);
+  assert.match(script, /agent: draft/);
+  assert.match(script, /privateMemoryDeepContext\(draft\.id\)/);
+  assert.match(script, /这会产生 1 次这位嘉宾自己的 API 调用/);
+  assert.match(script, /所属房间上下文｜只供核对，不要照抄/);
+  assert.doesNotMatch(script, /agent: state\.summarizer,[\s\S]{0,240}requestMode: "private-memory-summary"/);
   assert.match(memoryModule, /只有出现新变化、重要误会、关系转折或尚未公开/);
   assert.match(script, /PRIVATE_MEMORY_TOKEN_ALLOWANCE/);
   assert.match(memoryModule, /<self_memory>/);
