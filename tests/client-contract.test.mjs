@@ -176,13 +176,16 @@ test("每个房间可以配置后台定时抢麦", async () => {
   ]);
   for (const id of [
     "room-schedule-enabled",
+    "room-schedule-strategy",
     "room-schedule-interval",
     "room-schedule-max-turns",
     "room-schedule-daily-limit",
+    "room-schedule-events-enabled",
     "room-schedule-quiet-enabled",
     "room-schedule-status",
   ]) assert.match(html, new RegExp(`id="${id}"`));
-  assert.match(html, /全员弃权立即收场/);
+  assert.match(html, /全员安静会立即收场/);
+  assert.match(html, /事件只是可接可不接的聊天引子/);
   assert.match(script, /function hydrateRoomSchedule\(schedule\)/);
   assert.match(script, /function previewRoomScheduleStatus\(\)/);
   assert.match(script, /点击“保存房间”后生效/);
@@ -247,16 +250,19 @@ test("iPad 顶部可以切换房间并温和提示新消息", async () => {
   assert.match(styles, /\.new-message-jump/);
 });
 
-test("自由聊可以选择轮流接话或并行评分抢麦", async () => {
+test("自由聊可以选择轮流接话、轻量抢麦或并行评分抢麦", async () => {
   const [html, script] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
   ]);
   assert.match(html, /data-free-strategy="round-robin"/);
+  assert.match(html, /data-free-strategy="light-mic"/);
   assert.match(html, /data-free-strategy="mic-grab"/);
   assert.match(script, /Promise\.allSettled/);
   assert.match(script, /requestMode: "willingness-score"/);
   assert.match(script, /runMicGrabConversation/);
+  assert.match(script, /runLightMicConversation/);
+  assert.match(script, /不显示或伪造 AI 意愿分/);
   assert.match(script, /recordMicScores/);
   assert.match(script, /scoreHistory: room\.mic\.scoreHistory/);
   assert.match(html, /↑↓ 表示相对这位嘉宾自己的平时分数/);

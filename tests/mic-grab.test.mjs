@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   parseWillingnessScore,
+  pickLightMicWinner,
   pickMicWinner,
+  rankLightMicCandidates,
   rankMicCandidates,
   recordMicScores,
 } from "../public/mic-grab.js";
@@ -96,4 +98,40 @@ test("个人评分历史只保留最近二十次有效分数", () => {
   assert.equal(history.claude.length, 20);
   assert.equal(history.claude.at(-1), 7);
   assert.equal(history.gpt, undefined);
+});
+
+test("原始分达到门槛就保留候选资格，历史基线只影响排序", () => {
+  const [candidate] = rankMicCandidates(
+    [{ id: "gpt", name: "GPT", score: 5 }],
+    { scoreHistory: { gpt: [9, 9, 9] } },
+  );
+  assert.equal(candidate.eligible, true);
+  assert.equal(candidate.calibratedScore, 1);
+});
+
+test("轻量抢麦会提高被点名与久未发言者的本地权重", () => {
+  const ranked = rankLightMicCandidates(
+    [
+      { id: "gpt", name: "GPT" },
+      { id: "claude", name: "Claude" },
+    ],
+    [
+      { kind: "agent", agentId: "gpt", author: "GPT", text: "刚说完。" },
+      { kind: "user", author: "晨曦", text: "Claude，你怎么看？" },
+    ],
+    { lastSpeakerId: "gpt" },
+  );
+  assert.equal(ranked.find((entry) => entry.id === "claude").mentioned, true);
+  assert.ok(
+    ranked.find((entry) => entry.id === "claude").weight
+      > ranked.find((entry) => entry.id === "gpt").weight,
+  );
+});
+
+test("轻量抢麦可以全员安静，也可以只抽一次正式发言者", () => {
+  const agents = [{ id: "gpt", name: "GPT" }, { id: "claude", name: "Claude" }];
+  assert.equal(pickLightMicWinner(agents, [], {}, () => 0), null);
+  const randomValues = [0.9, 0];
+  const winner = pickLightMicWinner(agents, [], {}, () => randomValues.shift());
+  assert.equal(winner.id, "gpt");
 });

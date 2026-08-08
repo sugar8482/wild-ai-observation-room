@@ -1,6 +1,7 @@
 import {
   DEFAULT_MIC_OPTIONS,
   parseWillingnessScore,
+  pickLightMicWinner,
   pickMicWinner,
   rankMicCandidates,
   recordMicScores,
@@ -267,6 +268,7 @@ function hydrateRoomMemory(memory) {
 function hydrateRoomSchedule(schedule) {
   return {
     enabled: schedule?.enabled === true,
+    strategy: schedule?.strategy === "light-mic" ? "light-mic" : "mic-grab",
     intervalMinutes: Number(schedule?.intervalMinutes) === 30 ? 30 : 60,
     maxTurns: Math.min(6, Math.max(1, Number(schedule?.maxTurns) || 3)),
     dailyLimit: Math.min(48, Math.max(1, Number(schedule?.dailyLimit) || 8)),
@@ -279,6 +281,17 @@ function hydrateRoomSchedule(schedule) {
     dayKey: String(schedule?.dayKey || ""),
     dailyCount: Math.max(0, Number(schedule?.dailyCount) || 0),
     revision: Math.max(0, Number(schedule?.revision) || 0),
+  };
+}
+
+function hydrateRoomEventCards(eventCards) {
+  return {
+    enabled: eventCards?.enabled === true,
+    recentIds: Array.isArray(eventCards?.recentIds)
+      ? [...new Set(eventCards.recentIds.map(String).filter(Boolean))].slice(-4)
+      : [],
+    lastEvent: String(eventCards?.lastEvent || ""),
+    revision: Math.max(0, Number(eventCards?.revision) || 0),
   };
 }
 
@@ -305,6 +318,7 @@ function hydrateRoom(room, fallbackParticipants = []) {
     bubbleSplit: room?.bubbleSplit === true,
     memory: hydrateRoomMemory(room?.memory),
     schedule: hydrateRoomSchedule(room?.schedule),
+    eventCards: hydrateRoomEventCards(room?.eventCards),
     mic: hydrateRoomMic(room?.mic),
     participantIds: Array.isArray(room?.participantIds) ? [...new Set(room.participantIds)] : fallbackParticipants,
     messages: Array.isArray(room?.messages) ? room.messages : [],
@@ -486,6 +500,9 @@ function mergeServerRoomUpdates(serverRooms = []) {
       addedMessages += scheduledMessages.length;
     }
     room.schedule = hydrateRoomSchedule(remote.schedule);
+    if (Number(remote.eventCards?.revision) > Number(room.eventCards?.revision)) {
+      room.eventCards = hydrateRoomEventCards(remote.eventCards);
+    }
     if (Number(remote.mic?.revision) > Number(room.mic?.revision)) {
       room.mic = hydrateRoomMic(remote.mic);
     }
@@ -582,7 +599,7 @@ function renderRooms() {
       createElement(
         "span",
         "",
-        `${room.participantIds.length} 位嘉宾 · ${room.messages.length} 条记录${room.roomPrompt.trim() ? " · 有氛围" : ""}${room.bubbleSplit ? " · 连发气泡" : ""}${room.memory.summary.trim() ? " · 有记忆" : ""}${room.schedule.enabled ? ` · 定时 ${room.schedule.intervalMinutes}m` : ""}`,
+        `${room.participantIds.length} 位嘉宾 · ${room.messages.length} 条记录${room.roomPrompt.trim() ? " · 有氛围" : ""}${room.bubbleSplit ? " · 连发气泡" : ""}${room.memory.summary.trim() ? " · 有记忆" : ""}${room.schedule.enabled ? ` · 定时 ${room.schedule.intervalMinutes}m${room.schedule.strategy === "light-mic" ? " 轻量" : ""}` : ""}${room.eventCards.enabled ? " · 事件卡" : ""}`,
       ),
     );
     main.addEventListener("click", () => switchRoom(room.id));
@@ -596,7 +613,8 @@ function renderRooms() {
 }
 
 function compactModeLabel() {
-  if (state.mode === "free" && state.freeStrategy === "mic-grab") return "抢麦";
+  if (state.mode === "free" && state.freeStrategy === "mic-grab") return "真实抢麦";
+  if (state.mode === "free" && state.freeStrategy === "light-mic") return "轻量抢麦";
   if (state.mode === "free") return "自由聊";
   if (state.mode === "point") return "点名";
   return "圆桌";
@@ -900,22 +918,31 @@ function renderMode() {
   const meta = MODE_META[state.mode];
   const isFree = state.mode === "free";
   const isMicGrab = isFree && state.freeStrategy === "mic-grab";
-  roomModeLabel.textContent = isMicGrab ? "自由聊 · 抢麦" : meta.label;
+  const isLightMic = isFree && state.freeStrategy === "light-mic";
+  roomModeLabel.textContent = isMicGrab
+    ? "自由聊 · 真实抢麦"
+    : isLightMic ? "自由聊 · 轻量抢麦" : meta.label;
   sendButton.textContent = meta.action;
   modeHelp.textContent = isMicGrab
     ? "每轮先让所有嘉宾暗中报一个接话意愿分，再由最想说的一位发言。"
-    : meta.help;
+    : isLightMic
+      ? "本地参考点名、冷场和发言间隔抽一位接话；不先询问 AI，也不增加评分调用。"
+      : meta.help;
   speakerControl.classList.toggle("is-hidden", state.mode !== "point");
   freeStrategyControl.classList.toggle("is-hidden", !isFree);
   roundsControl.classList.toggle("is-hidden", !isFree);
-  micStatus.classList.toggle("is-hidden", !isMicGrab);
+  micStatus.classList.toggle("is-hidden", !(isMicGrab || isLightMic));
   freeStrategyHelp.textContent = isMicGrab
     ? "每轮会增加一次所有嘉宾的短评分调用；系统会按每位嘉宾自己的平时分数校准。"
-    : "按嘉宾席顺序轮流发言，不会增加额外调用。";
-  roundsLabel.textContent = isMicGrab ? "抢麦轮数" : "讨论轮数";
+    : isLightMic
+      ? "只调用最终被抽中的嘉宾；刚说过会降权、久未发言和被点名会加权，也可能全员安静。"
+      : "按嘉宾席顺序轮流发言，不会增加额外调用。";
+  roundsLabel.textContent = (isMicGrab || isLightMic) ? "抢麦轮数" : "讨论轮数";
   roundsHelp.textContent = isMicGrab
     ? "一轮只产生一位赢家的正式发言；连续两轮全员弃权会自然收场。"
-    : "一轮 = 每位启用的嘉宾发言一次。设了上限，不会无限烧额度。";
+    : isLightMic
+      ? "一轮最多产生一位正式发言；本地抽到安静就自然收场。"
+      : "一轮 = 每位启用的嘉宾发言一次。设了上限，不会无限烧额度。";
   const room = activeRoom();
   mobileRoomMeta.textContent = room ? `${room.messages.length} 条 · ${compactModeLabel()}` : "还没有房间";
 }
@@ -1247,6 +1274,34 @@ async function deliverAgentTurn(speaker, activeAgents, room, controller) {
   }
 }
 
+async function runLightMicConversation(activeAgents, room, controller, rounds) {
+  const missedTurns = {};
+  let lastSpeakerId = room.messages.filter((message) => message.kind === "agent").at(-1)?.agentId || "";
+
+  for (let round = 1; round <= rounds; round += 1) {
+    if (controller.signal.aborted) break;
+    const winner = pickLightMicWinner(activeAgents, room.messages, {
+      missedTurns,
+      lastSpeakerId,
+      roundNumber: round,
+    });
+    if (!winner) {
+      micStatus.textContent = `第 ${round} 轮｜轻量抢麦没有抽中发言者，这轮安静收场。`;
+      break;
+    }
+
+    for (const agent of activeAgents) {
+      missedTurns[agent.id] = agent.id === winner.id ? 0 : (missedTurns[agent.id] || 0) + 1;
+    }
+    const reason = winner.mentioned
+      ? "（刚被点名）"
+      : winner.turnsSince >= 6 ? "（久未发言）" : "";
+    micStatus.textContent = `第 ${round} 轮｜本地抽中 ${winner.name}${reason}，没有进行意愿评分。`;
+    const delivered = await deliverAgentTurn(winner, activeAgents, room, controller);
+    if (delivered) lastSpeakerId = winner.id;
+  }
+}
+
 async function runMicGrabConversation(activeAgents, room, controller, rounds) {
   const missedTurns = {};
   let micChanged = false;
@@ -1358,6 +1413,7 @@ function updateRoomMemoryStatus(room) {
 
 function updateRoomScheduleStatus(room) {
   const schedule = hydrateRoomSchedule(room?.schedule);
+  const eventCards = hydrateRoomEventCards(room?.eventCards);
   if (!schedule.enabled) {
     roomScheduleStatus.textContent = "后台定时未开启。";
     return;
@@ -1368,12 +1424,14 @@ function updateRoomScheduleStatus(room) {
   const today = new Date();
   const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   const used = schedule.dayKey === todayKey ? schedule.dailyCount : 0;
-  roomScheduleStatus.textContent = `下次约 ${next} · 今日 ${used}/${schedule.dailyLimit} 次${schedule.lastResult ? ` · ${schedule.lastResult}` : ""}`;
+  const strategyLabel = schedule.strategy === "light-mic" ? "轻量抢麦" : "真实抢麦";
+  roomScheduleStatus.textContent = `下次约 ${next} · 今日 ${used}/${schedule.dailyLimit} 次 · ${strategyLabel}${eventCards.enabled ? " · 生活事件卡" : ""}${schedule.lastResult ? ` · ${schedule.lastResult}` : ""}`;
 }
 
 function roomScheduleConfigFromForm(data = new FormData(roomForm)) {
   return {
     enabled: data.get("scheduleEnabled") === "on",
+    strategy: data.get("scheduleStrategy") === "light-mic" ? "light-mic" : "mic-grab",
     intervalMinutes: Number(data.get("scheduleInterval")) === 30 ? 30 : 60,
     maxTurns: Math.min(6, Math.max(1, Number(data.get("scheduleMaxTurns")) || 3)),
     dailyLimit: Math.min(48, Math.max(1, Number(data.get("scheduleDailyLimit")) || 8)),
@@ -1383,20 +1441,29 @@ function roomScheduleConfigFromForm(data = new FormData(roomForm)) {
   };
 }
 
+function roomEventCardsConfigFromForm(data = new FormData(roomForm)) {
+  return { enabled: data.get("scheduleEventsEnabled") === "on" };
+}
+
 function previewRoomScheduleStatus() {
   const room = state.rooms.find((item) => item.id === roomForm.elements.namedItem("id").value);
   const current = room?.schedule || hydrateRoomSchedule();
   const draft = { ...current, ...roomScheduleConfigFromForm() };
-  updateRoomScheduleStatus({ schedule: draft });
+  const currentEvents = room?.eventCards || hydrateRoomEventCards();
+  const eventDraft = { ...currentEvents, ...roomEventCardsConfigFromForm() };
+  updateRoomScheduleStatus({ schedule: draft, eventCards: eventDraft });
   if (JSON.stringify(roomScheduleConfigFromForm()) !== JSON.stringify({
     enabled: current.enabled,
+    strategy: current.strategy,
     intervalMinutes: current.intervalMinutes,
     maxTurns: current.maxTurns,
     dailyLimit: current.dailyLimit,
     quietEnabled: current.quietEnabled,
     quietStart: current.quietStart,
     quietEnd: current.quietEnd,
-  })) roomScheduleStatus.textContent += " · 点击“保存房间”后生效";
+  }) || roomEventCardsConfigFromForm().enabled !== currentEvents.enabled) {
+    roomScheduleStatus.textContent += " · 点击“保存房间”后生效";
+  }
 }
 
 function waitForSummaryRetry(signal, milliseconds = 1200) {
@@ -1586,6 +1653,7 @@ async function startConversation() {
 
   let speakers = [];
   let micGrabRounds = 0;
+  let lightMicRounds = 0;
   if (state.mode === "point") {
     const target = participants.find((agent) => agent.id === speakerSelect.value);
     if (!target || !isConfigured(target)) {
@@ -1596,6 +1664,7 @@ async function startConversation() {
   } else if (state.mode === "free") {
     const rounds = Math.min(6, Math.max(1, Number(roundsInput.value) || 2));
     if (state.freeStrategy === "mic-grab") micGrabRounds = rounds;
+    else if (state.freeStrategy === "light-mic") lightMicRounds = rounds;
     else speakers = Array.from({ length: rounds }, () => configuredAgents).flat();
   } else {
     speakers = configuredAgents;
@@ -1618,6 +1687,8 @@ async function startConversation() {
   try {
     if (micGrabRounds) {
       await runMicGrabConversation(configuredAgents, room, controller, micGrabRounds);
+    } else if (lightMicRounds) {
+      await runLightMicConversation(configuredAgents, room, controller, lightMicRounds);
     } else {
       for (const speaker of speakers) {
         if (controller.signal.aborted) break;
@@ -1887,6 +1958,7 @@ function openRoomDialog(roomId = null) {
   const room = state.rooms.find((item) => item.id === roomId);
   const memory = room?.memory || hydrateRoomMemory();
   const schedule = room?.schedule || hydrateRoomSchedule();
+  const eventCards = room?.eventCards || hydrateRoomEventCards();
   byId("room-dialog-title").textContent = room ? `设置 ${room.name}` : "新建聊天室";
   roomForm.elements.namedItem("id").value = room?.id || "";
   roomForm.elements.namedItem("name").value = room?.name || "";
@@ -1897,9 +1969,11 @@ function openRoomDialog(roomId = null) {
   roomForm.elements.namedItem("memoryFocus").value = memory.focus;
   roomForm.elements.namedItem("memorySummary").value = memory.summary;
   roomForm.elements.namedItem("scheduleEnabled").checked = schedule.enabled;
+  roomForm.elements.namedItem("scheduleStrategy").value = schedule.strategy;
   roomForm.elements.namedItem("scheduleInterval").value = String(schedule.intervalMinutes);
   roomForm.elements.namedItem("scheduleMaxTurns").value = String(schedule.maxTurns);
   roomForm.elements.namedItem("scheduleDailyLimit").value = String(schedule.dailyLimit);
+  roomForm.elements.namedItem("scheduleEventsEnabled").checked = eventCards.enabled;
   roomForm.elements.namedItem("scheduleQuietEnabled").checked = schedule.quietEnabled;
   roomForm.elements.namedItem("scheduleQuietStart").value = schedule.quietStart;
   roomForm.elements.namedItem("scheduleQuietEnd").value = schedule.quietEnd;
@@ -1908,7 +1982,7 @@ function openRoomDialog(roomId = null) {
   byId("memory-summarize-now").disabled = !room;
   byId("memory-rebuild").disabled = !room || !room.messages.length;
   updateRoomMemoryStatus(room || { messages: [], memory });
-  updateRoomScheduleStatus(room || { schedule });
+  updateRoomScheduleStatus(room || { schedule, eventCards });
   roomDialog.showModal();
 }
 
@@ -2071,6 +2145,7 @@ roomForm.addEventListener("submit", (event) => {
   const memoryFocus = String(data.get("memoryFocus") || "").trim();
   const memorySummary = String(data.get("memorySummary") || "").trim();
   const scheduleConfig = roomScheduleConfigFromForm(data);
+  const eventCardsConfig = roomEventCardsConfigFromForm(data);
   const participantIds = data.getAll("participantIds").map(String);
   if (!name) {
     showToast("先给聊天室起个名字");
@@ -2095,6 +2170,10 @@ roomForm.addEventListener("submit", (event) => {
     room.memory.focus = memoryFocus;
     room.memory.summary = memorySummary;
     room.schedule = { ...room.schedule, ...scheduleConfig };
+    if (room.eventCards.enabled !== eventCardsConfig.enabled) {
+      room.eventCards.enabled = eventCardsConfig.enabled;
+      room.eventCards.revision += 1;
+    }
     if (clearedSummary) {
       room.memory.summarizedThroughId = "";
       room.memory.summarizedMessageCount = 0;
@@ -2114,6 +2193,7 @@ roomForm.addEventListener("submit", (event) => {
       messages: [],
       memory: { enabled: memoryEnabled, interval: memoryInterval, focus: memoryFocus, summary: memorySummary },
       schedule: scheduleConfig,
+      eventCards: eventCardsConfig,
     });
     state.rooms.push(created);
     state.activeRoomId = created.id;
@@ -2271,9 +2351,11 @@ agentRoomFilters.addEventListener("click", (event) => {
 byId("copy-fallback-select").addEventListener("click", selectCopyFallbackText);
 for (const id of [
   "room-schedule-enabled",
+  "room-schedule-strategy",
   "room-schedule-interval",
   "room-schedule-max-turns",
   "room-schedule-daily-limit",
+  "room-schedule-events-enabled",
   "room-schedule-quiet-enabled",
   "room-schedule-quiet-start",
   "room-schedule-quiet-end",
@@ -2296,10 +2378,14 @@ document.querySelectorAll("[data-mode]").forEach((button) => {
 });
 document.querySelectorAll("[data-free-strategy]").forEach((button) => {
   button.addEventListener("click", () => {
-    state.freeStrategy = button.dataset.freeStrategy === "mic-grab" ? "mic-grab" : "round-robin";
+    state.freeStrategy = ["mic-grab", "light-mic"].includes(button.dataset.freeStrategy)
+      ? button.dataset.freeStrategy
+      : "round-robin";
     updateDirectorPrefs({ freeStrategy: state.freeStrategy });
     if (state.freeStrategy === "mic-grab") {
       micStatus.textContent = "抢麦结果会显示在这里；↑↓ 表示相对这位嘉宾自己的平时分数。";
+    } else if (state.freeStrategy === "light-mic") {
+      micStatus.textContent = "轻量抢麦只在本地抽取发言者，不显示或伪造 AI 意愿分。";
     }
     renderMode();
   });
@@ -2579,7 +2665,9 @@ accessForm.addEventListener("submit", async (event) => {
 });
 
 const directorPrefs = safeRead(DIRECTOR_PREFS_KEY, {});
-state.freeStrategy = directorPrefs.freeStrategy === "mic-grab" ? "mic-grab" : "round-robin";
+state.freeStrategy = ["mic-grab", "light-mic"].includes(directorPrefs.freeStrategy)
+  ? directorPrefs.freeStrategy
+  : "round-robin";
 tokensInput.value = String(
   Math.min(4096, Math.max(64, Number(directorPrefs.visibleTokenTarget) || 300)),
 );

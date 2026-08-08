@@ -169,3 +169,32 @@ test("定时聊天用同一次回复提取角色私人记忆", async () => {
   assert.equal(outcome.messages[0].text, "B，你今天怎么这么安静？");
   assert.deepEqual(outcome.privateMemoryItems["guest-a"], ["我有点在意B一直没说话。"]);
 });
+
+test("轻量定时抢麦不调用意愿评分，并可用一张不强制发生的生活事件卡", async () => {
+  const room = roomFixture(1);
+  room.schedule.strategy = "light-mic";
+  room.eventCards = { enabled: true, recentIds: [], revision: 0 };
+  let scoreCalls = 0;
+  let replyCalls = 0;
+  const randomValues = [0, 0.9, 0];
+  const outcome = await runScheduledRoom({
+    room,
+    agents,
+    random: () => randomValues.shift() ?? 0.5,
+    at: new Date(2026, 7, 8, 10, 0).getTime(),
+    chat: async (payload) => {
+      if (payload.requestMode === "willingness-score") scoreCalls += 1;
+      replyCalls += 1;
+      assert.match(payload.messages[0].content, /谈资卡，不是已经发生的事实/);
+      assert.match(payload.messages[0].content, /不得替用户决定行程、位置、健康、迟到、失踪/);
+      assert.match(payload.messages[1].content, /本地轻量轮候/);
+      return { text: "B，学校刚来了个临时通知，你看了吗？" };
+    },
+  });
+  assert.equal(scoreCalls, 0);
+  assert.equal(replyCalls, 1);
+  assert.equal(outcome.messages.length, 1);
+  assert.equal(outcome.mic, null);
+  assert.equal(outcome.eventCards.revision, 1);
+  assert.equal(outcome.eventCards.recentIds.length, 1);
+});

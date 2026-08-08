@@ -961,7 +961,7 @@ h2 {
 }
 
 .free-strategy-switch {
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   margin-top: 9px;
 }
 
@@ -1454,6 +1454,15 @@ html[data-theme="dark"] .mobile-room-switcher {
 
 .memory-toggle input {
   accent-color: var(--ink);
+}
+
+.schedule-strategy-field,
+.schedule-event-toggle {
+  margin-top: 14px;
+}
+
+.schedule-event-help {
+  margin: 7px 0 0 24px;
 }
 
 .memory-interval-field,

@@ -162,7 +162,8 @@
           <span class="control-label">自由聊方式</span>
           <div class="mode-switch free-strategy-switch" id="free-strategy-switch">
             <button type="button" data-free-strategy="round-robin" class="is-active">轮流接话</button>
-            <button type="button" data-free-strategy="mic-grab">抢麦</button>
+            <button type="button" data-free-strategy="light-mic">轻量抢麦</button>
+            <button type="button" data-free-strategy="mic-grab">真实抢麦</button>
           </div>
           <p class="field-help" id="free-strategy-help">按嘉宾席顺序轮流发言，不会增加额外调用。</p>
           <p class="mic-status is-hidden" id="mic-status" aria-live="polite">抢麦结果会显示在这里；↑↓ 表示相对这位嘉宾自己的平时分数。</p>
@@ -289,6 +290,13 @@
             <input id="room-schedule-enabled" name="scheduleEnabled" type="checkbox" />
             <span>iPad 关闭后也定时唤醒</span>
           </label>
+          <div class="field schedule-strategy-field">
+            <label for="room-schedule-strategy">定时发言方式</label>
+            <select id="room-schedule-strategy" name="scheduleStrategy">
+              <option value="light-mic">轻量抢麦（不额外评分）</option>
+              <option value="mic-grab" selected>真实抢麦（先询问意愿）</option>
+            </select>
+          </div>
           <div class="schedule-grid">
             <div class="field">
               <label for="room-schedule-interval">唤醒间隔</label>
@@ -312,6 +320,11 @@
               </div>
             </div>
           </div>
+          <label class="memory-toggle schedule-event-toggle" for="room-schedule-events-enabled">
+            <input id="room-schedule-events-enabled" name="scheduleEventsEnabled" type="checkbox" />
+            <span>唤醒时抽一张生活事件卡</span>
+          </label>
+          <p class="field-help schedule-event-help">事件只是可接可不接的聊天引子，不会替晨曦编造迟到、生病、失踪或已经答应参加。</p>
           <label class="memory-toggle schedule-quiet-toggle" for="room-schedule-quiet-enabled">
             <input id="room-schedule-quiet-enabled" name="scheduleQuietEnabled" type="checkbox" />
             <span>开启免打扰时段</span>
@@ -326,7 +339,7 @@
               <input id="room-schedule-quiet-end" name="scheduleQuietEnd" type="time" value="08:00" />
             </div>
           </div>
-          <p class="field-help">每次先进行抢麦；全员弃权立即收场，有人开口才继续下一轮。电脑和观察室服务需要保持运行，电脑休眠时不会唤醒。</p>
+          <p class="field-help">全员安静会立即收场，有人开口才继续下一轮。电脑和观察室服务需要保持运行，电脑休眠时不会唤醒。</p>
           <p class="memory-status" id="room-schedule-status">后台定时未开启。</p>
         </details>
         <fieldset class="participant-picker">
