@@ -944,13 +944,13 @@ function renderMode() {
   freeStrategyHelp.textContent = isMicGrab
     ? "每轮会增加一次所有嘉宾的短评分调用；系统会按每位嘉宾自己的平时分数校准。"
     : isLightMic
-      ? "只调用最终被抽中的嘉宾；刚说过会降权、久未发言和被点名会加权，也可能全员安静。"
+      ? "只调用最终被抽中的嘉宾；每轮一定抽中一位，并优先轮到本次还没说过的人。"
       : "按嘉宾席顺序轮流发言，不会增加额外调用。";
   roundsLabel.textContent = (isMicGrab || isLightMic) ? "抢麦轮数" : "讨论轮数";
   roundsHelp.textContent = isMicGrab
     ? "一轮只产生一位赢家的正式发言；连续两轮全员弃权会自然收场。"
     : isLightMic
-      ? "一轮最多产生一位正式发言；本地抽到安静就自然收场。"
+      ? "一轮产生一位正式发言；按随机轮候顺序进行，到设定轮数后收场。"
       : "一轮 = 每位启用的嘉宾发言一次。设了上限，不会无限烧额度。";
   const room = activeRoom();
   mobileRoomMeta.textContent = room ? `${room.messages.length} 条 · ${compactModeLabel()}` : "还没有房间";
@@ -1297,19 +1297,24 @@ async function deliverAgentTurn(speaker, activeAgents, room, controller) {
 
 async function runLightMicConversation(activeAgents, room, controller, rounds) {
   const missedTurns = {};
+  const spokenThisCycle = new Set();
   let lastSpeakerId = room.messages.filter((message) => message.kind === "agent").at(-1)?.agentId || "";
 
   for (let round = 1; round <= rounds; round += 1) {
     if (controller.signal.aborted) break;
-    const winner = pickLightMicWinner(activeAgents, room.messages, {
+    if (spokenThisCycle.size >= activeAgents.length) spokenThisCycle.clear();
+    const waitingAgents = activeAgents.filter((agent) => !spokenThisCycle.has(agent.id));
+    const winner = pickLightMicWinner(waitingAgents, room.messages, {
       missedTurns,
       lastSpeakerId,
       roundNumber: round,
+      allowSilence: false,
     });
     if (!winner) {
-      micStatus.textContent = `第 ${round} 轮｜轻量抢麦没有抽中发言者，这轮安静收场。`;
+      micStatus.textContent = `第 ${round} 轮｜当前没有可轮候的嘉宾。`;
       break;
     }
+    spokenThisCycle.add(winner.id);
 
     for (const agent of activeAgents) {
       missedTurns[agent.id] = agent.id === winner.id ? 0 : (missedTurns[agent.id] || 0) + 1;
@@ -1317,7 +1322,7 @@ async function runLightMicConversation(activeAgents, room, controller, rounds) {
     const reason = winner.mentioned
       ? "（刚被点名）"
       : winner.turnsSince >= 6 ? "（久未发言）" : "";
-    micStatus.textContent = `第 ${round} 轮｜本地抽中 ${winner.name}${reason}，没有进行意愿评分。`;
+    micStatus.textContent = `第 ${round} 轮｜随机轮候抽中 ${winner.name}${reason}，没有进行意愿评分。`;
     const delivered = await deliverAgentTurn(winner, activeAgents, room, controller);
     if (delivered) lastSpeakerId = winner.id;
   }
@@ -1689,7 +1694,7 @@ async function startConversation() {
     }
     speakers = [target];
   } else if (state.mode === "free") {
-    const rounds = Math.min(6, Math.max(1, Number(roundsInput.value) || 2));
+    const rounds = Math.min(6, Math.max(1, Number(roundsInput.value) || 3));
     if (state.freeStrategy === "mic-grab") micGrabRounds = rounds;
     else if (state.freeStrategy === "light-mic") lightMicRounds = rounds;
     else speakers = Array.from({ length: rounds }, () => configuredAgents).flat();
@@ -2577,7 +2582,7 @@ document.querySelectorAll("[data-free-strategy]").forEach((button) => {
     if (state.freeStrategy === "mic-grab") {
       micStatus.textContent = "抢麦结果会显示在这里；↑↓ 表示相对这位嘉宾自己的平时分数。";
     } else if (state.freeStrategy === "light-mic") {
-      micStatus.textContent = "轻量抢麦只在本地抽取发言者，不显示或伪造 AI 意愿分。";
+      micStatus.textContent = "轻量抢麦按本地随机轮候抽取发言者，不显示或伪造 AI 意愿分。";
     }
     renderMode();
   });

@@ -135,3 +135,9 @@ test("轻量抢麦可以全员安静，也可以只抽一次正式发言者", ()
   const winner = pickLightMicWinner(agents, [], {}, () => randomValues.shift());
   assert.equal(winner.id, "gpt");
 });
+
+test("手动随机轮候可以关闭安静概率并保证抽中嘉宾", () => {
+  const agents = [{ id: "gpt", name: "GPT" }, { id: "claude", name: "Claude" }];
+  const winner = pickLightMicWinner(agents, [], { allowSilence: false }, () => 0);
+  assert.equal(winner.id, "gpt");
+});

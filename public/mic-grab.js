@@ -146,21 +146,23 @@ export function rankLightMicCandidates(agents, messages = [], options = {}) {
 export function pickLightMicWinner(agents, messages = [], options = {}, random = Math.random) {
   if (!agents.length) return null;
   const ranked = rankLightMicCandidates(agents, messages, options);
-  const hasMention = ranked.some((candidate) => candidate.mentioned);
-  const roundNumber = Math.max(1, Number(options.roundNumber) || 1);
-  const baseSilence = numericOption(options.silenceProbability, DEFAULT_LIGHT_MIC_OPTIONS.silenceProbability);
-  const silenceStep = numericOption(options.silenceStep, DEFAULT_LIGHT_MIC_OPTIONS.silenceStep);
-  const maximumSilence = numericOption(
-    options.maximumSilenceProbability,
-    DEFAULT_LIGHT_MIC_OPTIONS.maximumSilenceProbability,
-  );
-  const eventRelief = options.hasEventCard ? 0.06 : 0;
-  const mentionRelief = hasMention ? 0.12 : 0;
-  const silenceProbability = Math.max(
-    0.01,
-    Math.min(maximumSilence, baseSilence + (roundNumber - 1) * silenceStep - eventRelief - mentionRelief),
-  );
-  if (Math.max(0, Math.min(0.999999, random())) < silenceProbability) return null;
+  if (options.allowSilence !== false) {
+    const hasMention = ranked.some((candidate) => candidate.mentioned);
+    const roundNumber = Math.max(1, Number(options.roundNumber) || 1);
+    const baseSilence = numericOption(options.silenceProbability, DEFAULT_LIGHT_MIC_OPTIONS.silenceProbability);
+    const silenceStep = numericOption(options.silenceStep, DEFAULT_LIGHT_MIC_OPTIONS.silenceStep);
+    const maximumSilence = numericOption(
+      options.maximumSilenceProbability,
+      DEFAULT_LIGHT_MIC_OPTIONS.maximumSilenceProbability,
+    );
+    const eventRelief = options.hasEventCard ? 0.06 : 0;
+    const mentionRelief = hasMention ? 0.12 : 0;
+    const silenceProbability = Math.max(
+      0.01,
+      Math.min(maximumSilence, baseSilence + (roundNumber - 1) * silenceStep - eventRelief - mentionRelief),
+    );
+    if (Math.max(0, Math.min(0.999999, random())) < silenceProbability) return null;
+  }
   const total = ranked.reduce((sum, candidate) => sum + candidate.weight, 0);
   let needle = Math.max(0, Math.min(0.999999, random())) * total;
   for (const candidate of ranked) {

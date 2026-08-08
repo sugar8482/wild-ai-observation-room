@@ -299,6 +299,11 @@ test("自由聊可以选择轮流接话、轻量抢麦或并行评分抢麦", as
   assert.match(script, /requestMode: "willingness-score"/);
   assert.match(script, /runMicGrabConversation/);
   assert.match(script, /runLightMicConversation/);
+  assert.match(script, /allowSilence: false/);
+  assert.match(script, /const spokenThisCycle = new Set\(\)/);
+  assert.match(script, /随机轮候抽中/);
+  assert.match(html, /id="rounds-input"[^>]+value="3"/);
+  assert.match(html, /id="rounds-output">3 轮/);
   assert.match(script, /不显示或伪造 AI 意愿分/);
   assert.match(script, /recordMicScores/);
   assert.match(script, /scoreHistory: room\.mic\.scoreHistory/);
