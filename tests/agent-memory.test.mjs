@@ -24,6 +24,28 @@ test("开启后只把私人记忆交给角色本人并要求第一人称短记",
   assert.match(privateMemoryOutputInstruction(agent), /不要抄写房间公开时间线/);
 });
 
+test("空白私人记忆在用户要求初始化时允许从既有对话实际写入", () => {
+  const instruction = privateMemoryOutputInstruction({
+    name: "DeepSeek",
+    memoryEnabled: true,
+    memory: "",
+  });
+  assert.match(instruction, /首次初始化私人记忆/);
+  assert.match(instruction, /必须实际写入至少 1 条/);
+  assert.match(instruction, /不能只口头表示完成/);
+  assert.match(instruction, /不能只写在思考、推理或草稿中/);
+});
+
+test("已有私人记忆时不会反复要求执行首次初始化", () => {
+  const instruction = privateMemoryOutputInstruction({
+    name: "DeepSeek",
+    memoryEnabled: true,
+    memory: "- 我已经记下一件事。",
+  });
+  assert.doesNotMatch(instruction, /你当前的私人记忆还是空的/);
+  assert.match(instruction, /不能只口头表示完成/);
+});
+
 test("回复末尾的私人便笺会被剥离且最多保存三条", () => {
   const parsed = parseAgentReply(`先回答你：没有。\n<self_memory>\n- 我其实有点在意她追问。\n* 我怀疑江枫采也看出来了。\n3. 我暂时不想说明。\n- 第四条不应保存。\n</self_memory>`);
   assert.equal(parsed.visibleText, "先回答你：没有。");

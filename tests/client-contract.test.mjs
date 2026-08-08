@@ -124,6 +124,9 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
   }
   assert.match(html, /其他嘉宾看不到/);
   assert.match(script, /parseAgentReply\(reply\.text\)/);
+  assert.match(script, /privateMemoryOutputInstruction\(agent\)/);
+  assert.match(script, /function isPrivateMemoryInitializationRequest\(room\)/);
+  assert.match(script, /本轮没有实际写入私人记忆/);
   assert.match(script, /appendAgentMemory/);
   assert.match(script, /compactAgentMemory/);
   assert.match(script, /requestMode: "private-memory-summary"/);

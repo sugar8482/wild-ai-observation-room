@@ -1070,7 +1070,8 @@ function buildSystemPrompt(agent, activeAgents, room, visibleTokenTarget) {
     `这是群聊中的一次简短发言。最终正文尽量控制在约 ${visibleTokenTarget} tokens 以内；先说最想说的，保持句子完整，不要为了凑长度展开成小论文。`,
     bubbleSplitInstruction(room?.bubbleSplit),
     "直接输出你在群聊里要说的话，不加姓名前缀，不复述规则。使用群聊主要语言，自然交流。",
-  ].join("\n\n");
+    privateMemoryOutputInstruction(agent),
+  ].filter(Boolean).join("\n\n");
 }
 
 function buildImmediatePrompt(agent, room, visibleTokenTarget) {
@@ -1084,8 +1085,15 @@ function buildImmediatePrompt(agent, room, visibleTokenTarget) {
     `【你的个人设定｜${agent.name}】\n${persona}`,
     privateMemoryContext(agent),
     bubbleSplitInstruction(room?.bubbleSplit),
-    privateMemoryOutputInstruction(agent),
   ].filter(Boolean).join("\n\n");
+}
+
+function isPrivateMemoryInitializationRequest(room) {
+  const latestUserMessage = [...(room?.messages || [])]
+    .reverse()
+    .find((message) => message.kind === "user");
+  const text = String(latestUserMessage?.text || "");
+  return /(?:初始化|写入|填写|建立|新增).{0,16}(?:私人记忆|角色记忆)|(?:私人记忆|角色记忆).{0,16}(?:初始化|写入|填写|建立|新增)/.test(text);
 }
 
 function transcriptForPrompt(room) {
@@ -1237,6 +1245,7 @@ async function deliverAgentTurn(speaker, activeAgents, room, controller) {
   if (controller.signal.aborted) return false;
   setRunning(true, speaker.name);
   try {
+    const memoryWasEmpty = speaker.memoryEnabled && !String(speaker.memory || "").trim();
     const reply = await callAgent(speaker, activeAgents, room, controller.signal);
     const parsedReply = speaker.memoryEnabled
       ? parseAgentReply(reply.text)
@@ -1255,6 +1264,9 @@ async function deliverAgentTurn(speaker, activeAgents, room, controller) {
       }
     }
     addMessage({ kind: "agent", author: speaker.name, text: parsedReply.visibleText, agentId: speaker.id });
+    if (memoryWasEmpty && isPrivateMemoryInitializationRequest(room) && !parsedReply.memoryItems.length) {
+      showToast(`${speaker.name} 本轮没有实际写入私人记忆`);
+    }
     if (reply.finishReason === "length") {
       addMessage({
         kind: "error",

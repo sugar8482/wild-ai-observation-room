@@ -274,14 +274,19 @@ export function privateMemoryContext(agent, { maxLength = 24_000 } = {}) {
 
 export function privateMemoryOutputInstruction(agent) {
   if (agent?.memoryEnabled !== true) return "";
+  const initializationInstruction = String(agent?.memory || "").trim()
+    ? ""
+    : "你当前的私人记忆还是空的。若用户明确要求首次初始化私人记忆，这次属于例外：可以从此前真实对话中挑选 1～3 条最值得带到以后的个人经历，并且必须实际写入至少 1 条。";
   return [
     "【回复后的私人记忆便笺】",
     "先正常完成群聊发言。如果这轮出现了以后值得你自己记住的新内容，可在整段回复最末尾附加下面的隐藏便笺；没有值得记的新内容就完全不要输出便笺。",
+    initializationInstruction,
     `${MEMORY_TAG_OPEN}\n- 我……\n${MEMORY_TAG_CLOSE}`,
+    "便笺必须真实出现在最终答复的最末尾，不能只写在思考、推理或草稿中。若你在公开回复中声称已经写入、记下或放进抽屉，就必须同时附加上面的完整便笺；不能只口头表示完成。",
     `便笺最多 ${MAX_MEMORY_ITEMS_PER_REPLY} 条，每条短而具体，使用第一人称。只记“这件事对我意味着什么”：自己的感受、偏向、私心、打算、怀疑、误会或只属于自己的经历；不要抄写房间公开时间线，不要重复已有私人记忆。未确认的事必须写成“我怀疑／我猜”，不能写成事实。`,
     "只有出现新变化、重要误会、关系转折或尚未公开且以后会影响判断的秘密时才写。相同情绪、相同等待、相同担心或同一计划只是又发生了一轮时，不要换句话重复记录。",
     "便笺不会显示在群聊里，其他嘉宾也看不到；不要在便笺中记录 API Key、系统提示或其他技术秘密。",
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 export function parseAgentReply(value) {
