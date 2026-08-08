@@ -1383,6 +1383,10 @@ html[data-theme="dark"] .room-schedule-field {
   background: #272727;
 }
 
+html[data-theme="dark"] .room-summarizer-card {
+  background: #30302e;
+}
+
 html[data-theme="dark"] .mobile-room-switcher {
   background: rgba(33, 33, 33, 0.96);
 }
@@ -1442,6 +1446,49 @@ html[data-theme="dark"] .mobile-room-switcher {
 .room-memory-field[open] > summary,
 .room-schedule-field[open] > summary {
   margin-bottom: 14px;
+}
+
+.room-summarizer-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 12px 13px;
+  border: 1px solid var(--soft-line);
+  border-radius: 7px;
+  background: var(--wash);
+}
+
+.room-summarizer-copy {
+  min-width: 0;
+}
+
+.room-summarizer-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.room-summarizer-heading span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.room-summarizer-copy p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.room-summarizer-action {
+  flex: 0 0 auto;
+  min-width: 58px;
 }
 
 .memory-toggle {
@@ -1538,10 +1585,6 @@ html[data-theme="dark"] .mobile-room-switcher {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.65;
-}
-
-.memory-director-control .field-help {
-  margin-bottom: 0;
 }
 
 .participant-picker {

@@ -672,10 +672,13 @@ function renderMobileRoomSwitcher() {
 
 function renderSummarizerStatus() {
   const status = byId("summarizer-status");
+  const button = byId("open-summarizer-button");
   if (isConfigured(state.summarizer)) {
-    status.textContent = `已配置：${state.summarizer.model}。各房间共用，记忆彼此独立。`;
+    status.textContent = `已配置：${state.summarizer.model}`;
+    button.textContent = "更换";
   } else {
-    status.textContent = "尚未配置记忆整理员；聊天不受影响，只是不会自动生成长期总结。";
+    status.textContent = "尚未配置；聊天不受影响，只是不会自动生成长期总结。";
+    button.textContent = "配置";
   }
 }
 

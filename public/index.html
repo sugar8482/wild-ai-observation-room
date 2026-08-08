@@ -196,14 +196,6 @@
           <p class="field-help">只管最终说出来的篇幅；思考模型会另留后台余量，优先保证句子完整。</p>
         </div>
 
-        <div class="control-group memory-director-control">
-          <div class="label-row">
-            <span class="control-label">房间长期记忆</span>
-            <button class="text-button" id="open-summarizer-button" type="button">配置整理员</button>
-          </div>
-          <p class="field-help" id="summarizer-status">尚未配置记忆整理员。</p>
-        </div>
-
         <div class="director-tip">
           <p class="tip-number">导演提示 01</p>
           <p>想磕 CP 时，给两位嘉宾各写一份人设，再选“自由聊”。你负责递话题，他们负责发展剧情。</p>
@@ -244,6 +236,16 @@
         </div>
         <details class="room-memory-field" open>
           <summary>房间长期记忆</summary>
+          <div class="room-summarizer-card">
+            <div class="room-summarizer-copy">
+              <div class="room-summarizer-heading">
+                <strong>记忆整理员</strong>
+                <span>所有房间共用</span>
+              </div>
+              <p id="summarizer-status">尚未配置；聊天不受影响，只是不会自动生成长期总结。</p>
+            </div>
+            <button class="button button-quiet room-summarizer-action" id="open-summarizer-button" type="button">配置</button>
+          </div>
           <label class="memory-toggle" for="room-memory-enabled">
             <input id="room-memory-enabled" name="memoryEnabled" type="checkbox" checked />
             <span>自动整理这个房间</span>
@@ -365,7 +367,7 @@
           </div>
           <button class="icon-button" id="close-summarizer-dialog" type="button" aria-label="关闭">×</button>
         </div>
-        <p class="dialog-intro">它只负责把旧聊天整理成房间长期记忆，不会出现在嘉宾席，也不会参与聊天。</p>
+        <p class="dialog-intro">所有房间共用这一套接口配置，但每个房间的长期记忆彼此独立。整理员不会出现在嘉宾席，也不会参与聊天。</p>
         <div class="form-grid">
           <div class="field">
             <label for="summarizer-format">接口格式</label>

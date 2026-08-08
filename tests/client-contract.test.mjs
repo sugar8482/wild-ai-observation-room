@@ -154,6 +154,12 @@ test("房间长期记忆独立于聊天消息并注入最近原文之前", async
     readFile(new URL("../public/memory-prompt.js", import.meta.url), "utf8"),
   ]);
   assert.match(html, /id="summarizer-dialog"/);
+  const roomMemoryStart = html.indexOf('<details class="room-memory-field"');
+  const roomMemoryEnd = html.indexOf('<details class="room-schedule-field"');
+  const roomMemorySection = html.slice(roomMemoryStart, roomMemoryEnd);
+  assert.match(roomMemorySection, /id="summarizer-status"/);
+  assert.match(roomMemorySection, /id="open-summarizer-button"/);
+  assert.match(roomMemorySection, /所有房间共用/);
   assert.match(html, /id="room-memory-summary"/);
   assert.match(html, /id="room-memory-focus"/);
   assert.match(html, /id="memory-cancel"/);
