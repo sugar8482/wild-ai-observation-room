@@ -4,7 +4,8 @@ const MEMORY_TAG_OPEN = "<self_memory>";
 const MEMORY_TAG_CLOSE = "</self_memory>";
 const MAX_MEMORY_ITEMS_PER_REPLY = 3;
 const MAX_MEMORY_ITEM_LENGTH = 300;
-export const AUTO_PRIVATE_MEMORY_LIMIT = 18_000;
+export const PRIVATE_MEMORY_REVIEW_THRESHOLD = 30_000;
+export const PRIVATE_MEMORY_STORAGE_LIMIT = 100_000;
 
 const MEMORY_CONCEPTS = [
   ["等待出现", /等|没下来|没来|没出现|没动静|没回应|没回|磨蹭|迟到|失踪/],
@@ -131,7 +132,7 @@ function preferMemoryEntry(existing, incoming) {
 }
 
 export function compactAgentMemory(value, {
-  maxLength = AUTO_PRIVATE_MEMORY_LIMIT,
+  maxLength = PRIVATE_MEMORY_STORAGE_LIMIT,
   mergeTopics = false,
 } = {}) {
   const entries = String(value || "")
@@ -170,7 +171,10 @@ export function compactAgentMemory(value, {
     }
   }
 
-  const limit = Math.min(20_000, Math.max(300, Number(maxLength) || AUTO_PRIVATE_MEMORY_LIMIT));
+  const limit = Math.min(
+    PRIVATE_MEMORY_STORAGE_LIMIT,
+    Math.max(300, Number(maxLength) || PRIVATE_MEMORY_STORAGE_LIMIT),
+  );
   let retained = compacted;
   const render = (list) => list.map((entry) => entry.rendered).join("\n").trim();
   while (retained.length > 1 && render(retained).length > limit) {
@@ -188,10 +192,12 @@ export function compactAgentMemory(value, {
   return (firstBreak >= 0 ? clipped.slice(firstBreak + 1) : clipped).trim();
 }
 
-export function privateMemoryContext(agent, { maxLength = 12_000 } = {}) {
+export function privateMemoryContext(agent, { maxLength = 24_000 } = {}) {
   if (agent?.memoryEnabled !== true) return "";
   const memory = String(agent?.memory || "").trim();
-  const visibleMemory = memory.length > maxLength ? `…${memory.slice(-maxLength)}` : memory;
+  const visibleMemory = memory.length > maxLength
+    ? `${memory.slice(0, Math.floor(maxLength * 0.35))}\n…（较早记忆中段已收起，原文仍完整保存）…\n${memory.slice(-Math.ceil(maxLength * 0.65))}`
+    : memory;
   return [
     `【只属于“${agent.name || "你"}”的角色私人记忆】`,
     "这是你自己留给自己的记忆，不是房间共同事实，其他嘉宾看不到，也不会自动知道。它可以带有你的个人偏向、私心、怀疑、误会和未说出口的感受；事实与猜测要在心里分清。你可以依照自己的角色和当下情境，决定是否把其中任何内容说出来。",

@@ -14,7 +14,8 @@ import {
 } from "./memory-prompt.js";
 import { bubbleSplitInstruction, formatChatBubbleReply } from "./chat-bubbles.js";
 import {
-  AUTO_PRIVATE_MEMORY_LIMIT,
+  PRIVATE_MEMORY_REVIEW_THRESHOLD,
+  PRIVATE_MEMORY_STORAGE_LIMIT,
   PRIVATE_MEMORY_TOKEN_ALLOWANCE,
   appendAgentMemory,
   compactAgentMemory,
@@ -1835,8 +1836,10 @@ function syncAgentMemoryField() {
 function updateAgentMemoryStatus(message = "") {
   const memory = byId("agent-memory").value.trim();
   const entries = memory ? memory.split(/\r?\n/).filter((line) => line.trim()).length : 0;
-  byId("agent-memory-status").textContent = message
-    || `${entries} 条 · ${memory.length.toLocaleString("zh-CN")} 字；自动新增只做基础去重，接近 ${AUTO_PRIVATE_MEMORY_LIMIT.toLocaleString("zh-CN")} 字时建议深度整理。`;
+  const sizeHint = memory.length >= PRIVATE_MEMORY_REVIEW_THRESHOLD
+    ? `已超过 ${PRIVATE_MEMORY_REVIEW_THRESHOLD.toLocaleString("zh-CN")} 字，建议找角色本人深度整理；不会自动删除旧事。`
+    : `可保存至约 ${PRIVATE_MEMORY_STORAGE_LIMIT.toLocaleString("zh-CN")} 字；接近 ${PRIVATE_MEMORY_REVIEW_THRESHOLD.toLocaleString("zh-CN")} 字时建议深度整理。`;
+  byId("agent-memory-status").textContent = message || `${entries} 条 · ${memory.length.toLocaleString("zh-CN")} 字；${sizeHint}`;
 }
 
 function contextExcerpt(value, maxLength) {

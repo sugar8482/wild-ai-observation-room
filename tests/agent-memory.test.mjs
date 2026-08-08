@@ -100,3 +100,17 @@ test("深度整理后的保守清理只删完全重复，不再次按相似主�
   assert.match(result, /请一周可乐/);
   assert.equal(result.split("\n").length, 2);
 });
+
+test("自动新增不会在九千字附近静默淘汰独立旧记忆", () => {
+  const existing = Array.from({ length: 260 }, (_, index) => (
+    `- [长篇群 · 8/8] 第${index}件彼此独立的旧事需要完整保留，细节编号${String(index).padStart(3, "0")}。`
+  )).join("\n");
+  assert.ok(existing.length > 9_000);
+  const result = appendAgentMemory(existing, ["我今天又记住了一件全新的事。"], {
+    roomName: "长篇群",
+    at: new Date(2026, 7, 9, 12, 0).getTime(),
+  });
+  assert.match(result, /第0件彼此独立的旧事/);
+  assert.match(result, /第259件彼此独立的旧事/);
+  assert.match(result, /我今天又记住了一件全新的事/);
+});

@@ -83,6 +83,28 @@ test("留空时保留旧 Key，明确清除时才删除", async (context) => {
   assert.equal((await store.credentials("guest-one")).apiKey, "");
 });
 
+test("角色私人记忆可以完整保存超过两万字的长记录", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({ filePath: join(directory, "state.json"), secret: "memory-size-secret" });
+  const memory = "记忆".repeat(20_000);
+  const saved = await store.save({
+    activeRoomId: "room-one",
+    agents: [{
+      id: "guest-one",
+      name: "谢知衡",
+      format: "anthropic",
+      authType: "x-api-key",
+      memoryEnabled: true,
+      memory,
+      memoryRevision: 1,
+    }],
+    rooms: [{ id: "room-one", name: "竹马群", participantIds: ["guest-one"], messages: [] }],
+  });
+  assert.equal(saved.agents[0].memory.length, memory.length);
+  assert.equal(saved.agents[0].memory, memory);
+});
+
 test("嘉宾副本可以在不暴露明文的情况下复制加密凭据并保持独立", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
