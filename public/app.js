@@ -14,8 +14,10 @@ import {
 } from "./memory-prompt.js";
 import { bubbleSplitInstruction, formatChatBubbleReply } from "./chat-bubbles.js";
 import {
+  AUTO_PRIVATE_MEMORY_LIMIT,
   PRIVATE_MEMORY_TOKEN_ALLOWANCE,
   appendAgentMemory,
+  compactAgentMemory,
   parseAgentReply,
   privateMemoryContext,
   privateMemoryOutputInstruction,
@@ -1827,6 +1829,14 @@ function syncAgentMemoryField() {
   const enabled = byId("agent-memory-enabled").checked;
   byId("agent-memory-editor").classList.toggle("is-hidden", !enabled);
   byId("agent-memory-editor").setAttribute("aria-hidden", String(!enabled));
+  updateAgentMemoryStatus();
+}
+
+function updateAgentMemoryStatus(message = "") {
+  const memory = byId("agent-memory").value.trim();
+  const entries = memory ? memory.split(/\r?\n/).filter((line) => line.trim()).length : 0;
+  byId("agent-memory-status").textContent = message
+    || `${entries} 条 · ${memory.length.toLocaleString("zh-CN")} 字；自动新增会在约 ${AUTO_PRIVATE_MEMORY_LIMIT.toLocaleString("zh-CN")} 字内先合并再淘汰。`;
 }
 
 function agentFromForm() {
@@ -2257,6 +2267,88 @@ byId("agent-memory-enabled").addEventListener("change", () => {
 });
 byId("agent-memory").addEventListener("input", () => {
   agentMemoryDraftDirty = true;
+  updateAgentMemoryStatus();
+});
+byId("compact-agent-memory-button").addEventListener("click", () => {
+  const editor = byId("agent-memory");
+  const before = editor.value.trim();
+  if (!before) {
+    updateAgentMemoryStatus("现在没有需要整理的私人记忆。");
+    return;
+  }
+  const beforeCount = before.split(/\r?\n/).filter((line) => line.trim()).length;
+  const after = compactAgentMemory(before);
+  const afterCount = after ? after.split(/\r?\n/).filter((line) => line.trim()).length : 0;
+  editor.value = after;
+  agentMemoryDraftDirty = true;
+  if (after === before) {
+    updateAgentMemoryStatus("本地检查完成：暂时没有可合并的重复内容。");
+  } else {
+    updateAgentMemoryStatus(`本地瘦身完成：${beforeCount} → ${afterCount} 条；保存嘉宾后生效。`);
+  }
+});
+byId("deep-compact-agent-memory-button").addEventListener("click", async () => {
+  const editor = byId("agent-memory");
+  const memory = editor.value.trim();
+  if (!memory) {
+    updateAgentMemoryStatus("现在没有需要深度整理的私人记忆。");
+    return;
+  }
+  if (!isConfigured(state.summarizer)) {
+    showToast("先在右上角设置里配置记忆整理员");
+    return;
+  }
+  if (!window.confirm([
+    "让记忆整理员深度归纳这位角色的私人记忆？",
+    "",
+    "这会产生 1 次 API 调用，并把私人记忆发送给你配置的整理模型。结果只会替换当前编辑草稿，检查后仍需点击“保存嘉宾”才生效。",
+  ].join("\n"))) return;
+
+  const button = byId("deep-compact-agent-memory-button");
+  button.disabled = true;
+  updateAgentMemoryStatus("记忆整理员正在合并同一事件，并保留秘密与关系变化……");
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent: state.summarizer,
+        temperature: 0.1,
+        maxTokens: 2400,
+        requestMode: "private-memory-summary",
+        messages: [
+          {
+            role: "system",
+            content: [
+              "你是角色私人记忆的档案编辑员。只整理给定原文，不补写事实，不评价角色，也不把猜测升级为事实。",
+              "把同一事件的重复情绪、重复等待和重复计划合并为一条，只保留最后的新变化。",
+              "优先保留重要误会、关系转折、未公开秘密、仍会影响后续判断的偏向或打算。普通复读可以删除。",
+              "修掉重复的房间与日期标签。保留第一人称；不确定内容继续使用“我怀疑／我猜／我以为”。",
+              "只输出精简后的逐条记忆，每行格式为：- [房间 · 月/日] 第一人称内容。不要标题、说明或代码块。",
+            ].join("\n"),
+          },
+          { role: "user", content: memory },
+        ],
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      await checkAccess();
+      throw new Error("局域网访问码已失效，请重新输入");
+    }
+    if (!response.ok) throw new Error(payload.error || `深度整理失败（${response.status}）`);
+    const compacted = compactAgentMemory(payload.text);
+    if (!compacted) throw new Error("整理员没有返回可保存的记忆");
+    const beforeCount = memory.split(/\r?\n/).filter((line) => line.trim()).length;
+    const afterCount = compacted.split(/\r?\n/).filter((line) => line.trim()).length;
+    editor.value = compacted;
+    agentMemoryDraftDirty = true;
+    updateAgentMemoryStatus(`深度整理完成：${beforeCount} → ${afterCount} 条；请检查后保存嘉宾。`);
+  } catch (error) {
+    updateAgentMemoryStatus(`深度整理没有完成：${error.message}`);
+  } finally {
+    button.disabled = false;
+  }
 });
 byId("summarizer-format").addEventListener("change", () => {
   const format = byId("summarizer-format").value;

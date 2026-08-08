@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   appendAgentMemory,
+  compactAgentMemory,
   parseAgentReply,
   privateMemoryContext,
   privateMemoryOutputInstruction,
@@ -54,4 +55,36 @@ test("角色记忆按房间和日期追加并跳过完全重复内容", () => {
   });
   assert.equal(next.match(/我其实有点在意她追问。/g)?.length, 1);
   assert.match(next, /\[竹马群 · 8\/7\] 我决定先不把截图的事说透。/);
+});
+
+test("本地整理会修掉重复日期标签并合并同一轮反复等待", () => {
+  const compacted = compactAgentMemory([
+    "- [竹马群 · 8/8] [竹马群 · 8/8] 晨曦换衣服太慢，我怀疑她还在楼上磨蹭。",
+    "- [竹马群 · 8/8] 晨曦这么久没下来，我决定再在楼下等一会儿。",
+    "- [竹马群 · 8/8] 晨曦还是没下来，我准备让老谢上楼看看。",
+  ].join("\n"));
+  assert.doesNotMatch(compacted, /\[竹马群 · 8\/8\]\s*\[竹马群 · 8\/8\]/);
+  assert.ok(compacted.split("\n").length < 3);
+});
+
+test("同一个未公开秘密会合并，但不同秘密不会被误删", () => {
+  const compacted = compactAgentMemory([
+    "- [竹马群 · 8/7] 其实那晚我并没有截图，只是随口一诈，这件事不能让他们知道。",
+    "- [竹马群 · 8/8] 截图这张牌还可以继续留着，我暂时不说破。",
+    "- [竹马群 · 8/8] 口红那次是他陪她去退的，这件事我还没告诉别人。",
+  ].join("\n"));
+  assert.equal(compacted.match(/截图/g)?.length, 1);
+  assert.match(compacted, /口红/);
+});
+
+test("本地整理优先保留手写内容、关系变化和未公开秘密并遵守长度上限", () => {
+  const source = [
+    "这行是我手动写的，请保留。",
+    "- [房间 · 8/1] 我决定暂时不公开这段关系，这是只属于我的秘密。",
+    ...Array.from({ length: 30 }, (_, index) => `- [房间 · 8/${(index % 9) + 1}] 第${index}次普通等待没有产生新变化，只是继续消磨时间。`),
+  ].join("\n");
+  const compacted = compactAgentMemory(source, { maxLength: 600 });
+  assert.ok(compacted.length <= 600);
+  assert.match(compacted, /手动写的/);
+  assert.match(compacted, /不公开这段关系/);
 });

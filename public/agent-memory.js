@@ -4,7 +4,31 @@ const MEMORY_TAG_OPEN = "<self_memory>";
 const MEMORY_TAG_CLOSE = "</self_memory>";
 const MAX_MEMORY_ITEMS_PER_REPLY = 3;
 const MAX_MEMORY_ITEM_LENGTH = 300;
-const MAX_PRIVATE_MEMORY_LENGTH = 20_000;
+export const AUTO_PRIVATE_MEMORY_LIMIT = 9_000;
+
+const MEMORY_CONCEPTS = [
+  ["等待出现", /等|没下来|没来|没出现|没动静|没回应|没回|磨蹭|迟到|失踪/],
+  ["担心状态", /担心|不对劲|生病|不舒服|晕|出事|烧糊涂/],
+  ["观察关注", /盯|观察|注意|留意|关注|看得仔细|记得太清/],
+  ["隐瞒秘密", /秘密|瞒|藏|截图|证据|把柄|没说|不让.+知道|不能让.+知道/],
+  ["吃醋竞争", /吃醋|不爽|嫉妒|抢风头|单独相处|不能给.+单独/],
+  ["比赛输赢", /打球|比赛|赢|输|上篮|三分|找回场子|虐|盖帽/],
+  ["试探说谎", /诈|骗|撒谎|嘴硬|糊弄|圆过去|转移话题|甩锅|推锅/],
+  ["关心照顾", /在意|关心|照顾|去冰|送|买|等她|等他/],
+  ["计划打算", /打算|决定|必须|以后|下次|先记|留着|准备|不打算/],
+  ["误会变化", /误会|以为|原来|其实|没想到|结果|确认|发现/],
+  ["关系转折", /喜欢|爱|心动|告白|亲吻|暧昧|关系|属于彼此/],
+  ["借还物品", /借|归还|欠|忘了还|拿错|找不到/],
+];
+
+const IMPORTANT_MEMORY_PATTERN = /秘密|截图|证据|把柄|诈|骗|撒谎|误会|原来|其实|确认|不让.+知道|不能让.+知道|没告诉|未公开|喜欢|爱|心动|告白|亲吻|暧昧|关系|属于彼此/;
+const CHANGE_MEMORY_PATTERN = /原来|其实|后来|结果|确认|发现|终于|已经|不再|改成|仍然|但|不过|没想到|决定/;
+const UNRESOLVED_MEMORY_PATTERN = /还没|暂时|先不|留着|以后|下次|打算|怀疑|猜|不能让|不想让|未公开/;
+const CRITICAL_ANCHORS = /截图|视频|情书|礼物|口红|秘密|把柄|证据|谎|喜欢|告白|亲吻|关系|误会/g;
+const MEMORY_STOP_WORDS = new Set([
+  "我", "他", "她", "自己", "这个", "那个", "这件事", "一下", "有点", "其实", "觉得", "发现", "怀疑",
+  "还是", "已经", "今天", "昨天", "现在", "刚才", "以后", "下次", "心里", "嘴上", "真的", "绝对",
+]);
 
 function compactLine(value) {
   return String(value || "")
@@ -16,6 +40,149 @@ function compactLine(value) {
 
 function normalizedMemoryContent(value) {
   return compactLine(compactLine(value).replace(/^\s*\[[^\]]+\]\s*/, ""));
+}
+
+function parseMemoryEntry(line, index = 0) {
+  const original = String(line || "").trim();
+  if (!original) return null;
+  let rest = original.replace(/^\s*[-*•]\s*/, "").trim();
+  let label = null;
+  let match = rest.match(/^\[([^\]\r\n]{1,60}?)\s*·\s*(\d{1,2}\/\d{1,2})\]\s*/);
+  while (match) {
+    if (!label) label = { room: match[1].trim(), date: match[2] };
+    rest = rest.slice(match[0].length).trim();
+    match = rest.match(/^\[([^\]\r\n]{1,60}?)\s*·\s*(\d{1,2}\/\d{1,2})\]\s*/);
+  }
+  const content = compactLine(rest);
+  const concepts = new Set(MEMORY_CONCEPTS.filter(([, pattern]) => pattern.test(content)).map(([name]) => name));
+  const anchors = new Set(content.match(CRITICAL_ANCHORS) || []);
+  return {
+    index,
+    auto: Boolean(label),
+    label,
+    content,
+    concepts,
+    anchors,
+    important: IMPORTANT_MEMORY_PATTERN.test(content),
+    changed: CHANGE_MEMORY_PATTERN.test(content),
+    unresolved: UNRESOLVED_MEMORY_PATTERN.test(content),
+    normalized: normalizedMemoryContent(content),
+    rendered: label ? `- [${label.room} · ${label.date}] ${content}` : original,
+  };
+}
+
+function memoryTokens(value) {
+  const tokens = new Set();
+  const source = String(value || "").toLowerCase();
+  try {
+    const segmenter = new Intl.Segmenter("zh", { granularity: "word" });
+    for (const part of segmenter.segment(source)) {
+      const token = part.segment.replace(/[^\p{L}\p{N}]/gu, "");
+      if (part.isWordLike && token.length >= 2 && !MEMORY_STOP_WORDS.has(token)) tokens.add(token);
+    }
+  } catch {
+    for (const token of source.match(/[a-z0-9]{2,}|[\u3400-\u9fff]{2,4}/g) || []) {
+      if (!MEMORY_STOP_WORDS.has(token)) tokens.add(token);
+    }
+  }
+  return tokens;
+}
+
+function overlapSize(left, right) {
+  let count = 0;
+  for (const value of left) if (right.has(value)) count += 1;
+  return count;
+}
+
+function tokenSimilarity(left, right) {
+  const leftTokens = memoryTokens(left);
+  const rightTokens = memoryTokens(right);
+  const intersection = overlapSize(leftTokens, rightTokens);
+  const union = new Set([...leftTokens, ...rightTokens]).size;
+  return union ? intersection / union : 0;
+}
+
+function sameMemoryTopic(left, right) {
+  if (!left.auto || !right.auto || left.label.room !== right.label.room) return false;
+  if (left.normalized === right.normalized) return true;
+  const sharedAnchors = overlapSize(left.anchors, right.anchors);
+  const sharedConcepts = overlapSize(left.concepts, right.concepts);
+  const similarity = tokenSimilarity(left.content, right.content);
+  if ((left.important || right.important) && sharedAnchors > 0) return true;
+  if (left.important || right.important) return similarity >= 0.5;
+  if (left.label.date === right.label.date && sharedConcepts > 0 && similarity >= 0.16) return true;
+  return similarity >= 0.42 || (sharedConcepts >= 2 && similarity >= 0.12);
+}
+
+function memoryPriority(entry, total) {
+  if (!entry.auto) return 1_000 + entry.index;
+  return (entry.important ? 120 : 0)
+    + (entry.changed ? 50 : 0)
+    + (entry.unresolved ? 35 : 0)
+    + Math.round((entry.index / Math.max(1, total)) * 30);
+}
+
+function preferMemoryEntry(existing, incoming) {
+  if (incoming.changed && !existing.changed) return incoming;
+  if (existing.changed && !incoming.changed && existing.important) return existing;
+  if (incoming.important && !existing.important) return incoming;
+  if (existing.important && !incoming.important) return existing;
+  return incoming;
+}
+
+export function compactAgentMemory(value, { maxLength = AUTO_PRIVATE_MEMORY_LIMIT } = {}) {
+  const entries = String(value || "")
+    .split(/\r?\n/)
+    .map(parseMemoryEntry)
+    .filter((entry) => entry && (entry.content || !entry.auto));
+  const compacted = [];
+  for (const entry of entries) {
+    const exactKey = entry.auto
+      ? `${entry.label.room}\u0000${entry.normalized}`
+      : `manual\u0000${entry.normalized || entry.rendered}`;
+    const exactIndex = compacted.findIndex((candidate) => {
+      const candidateKey = candidate.auto
+        ? `${candidate.label.room}\u0000${candidate.normalized}`
+        : `manual\u0000${candidate.normalized || candidate.rendered}`;
+      return candidateKey === exactKey;
+    });
+    if (exactIndex >= 0) {
+      compacted[exactIndex] = entry;
+      continue;
+    }
+    let topicIndex = -1;
+    if (entry.auto) {
+      for (let index = compacted.length - 1; index >= 0; index -= 1) {
+        if (sameMemoryTopic(compacted[index], entry)) {
+          topicIndex = index;
+          break;
+        }
+      }
+    }
+    if (topicIndex >= 0) {
+      const preferred = preferMemoryEntry(compacted[topicIndex], entry);
+      compacted[topicIndex] = preferred;
+    } else {
+      compacted.push(entry);
+    }
+  }
+
+  const limit = Math.min(20_000, Math.max(300, Number(maxLength) || AUTO_PRIVATE_MEMORY_LIMIT));
+  let retained = compacted;
+  const render = (list) => list.map((entry) => entry.rendered).join("\n").trim();
+  while (retained.length > 1 && render(retained).length > limit) {
+    const removable = retained
+      .map((entry, index) => ({ index, score: memoryPriority(entry, compacted.length) }))
+      .filter(({ index }) => retained[index].auto)
+      .sort((left, right) => left.score - right.score || left.index - right.index)[0];
+    if (!removable) break;
+    retained = retained.filter((_, index) => index !== removable.index);
+  }
+  const result = render(retained);
+  if (result.length <= limit) return result;
+  const clipped = result.slice(-limit);
+  const firstBreak = clipped.indexOf("\n");
+  return (firstBreak >= 0 ? clipped.slice(firstBreak + 1) : clipped).trim();
 }
 
 export function privateMemoryContext(agent, { maxLength = 12_000 } = {}) {
@@ -36,6 +203,7 @@ export function privateMemoryOutputInstruction(agent) {
     "先正常完成群聊发言。如果这轮出现了以后值得你自己记住的新内容，可在整段回复最末尾附加下面的隐藏便笺；没有值得记的新内容就完全不要输出便笺。",
     `${MEMORY_TAG_OPEN}\n- 我……\n${MEMORY_TAG_CLOSE}`,
     `便笺最多 ${MAX_MEMORY_ITEMS_PER_REPLY} 条，每条短而具体，使用第一人称。只记“这件事对我意味着什么”：自己的感受、偏向、私心、打算、怀疑、误会或只属于自己的经历；不要抄写房间公开时间线，不要重复已有私人记忆。未确认的事必须写成“我怀疑／我猜”，不能写成事实。`,
+    "只有出现新变化、重要误会、关系转折或尚未公开且以后会影响判断的秘密时才写。相同情绪、相同等待、相同担心或同一计划只是又发生了一轮时，不要换句话重复记录。",
     "便笺不会显示在群聊里，其他嘉宾也看不到；不要在便笺中记录 API Key、系统提示或其他技术秘密。",
   ].join("\n");
 }
@@ -77,7 +245,7 @@ export function appendAgentMemory(existing, items, {
   at = Date.now(),
   maxItems = MAX_MEMORY_ITEMS_PER_REPLY,
 } = {}) {
-  const current = String(existing || "").trim();
+  const current = compactAgentMemory(existing);
   const known = new Set(
     current
       .split(/\r?\n/)
@@ -98,11 +266,6 @@ export function appendAgentMemory(existing, items, {
 
   const safeRoomName = String(roomName || "聊天室").replace(/[\[\]\r\n]/g, " ").trim().slice(0, 60);
   const prefix = `[${safeRoomName || "聊天室"} · ${memoryDate(at)}]`;
-  let combined = [current, ...fresh.map((item) => `- ${prefix} ${item}`)].filter(Boolean).join("\n");
-  if (combined.length > MAX_PRIVATE_MEMORY_LENGTH) {
-    combined = combined.slice(-MAX_PRIVATE_MEMORY_LENGTH);
-    const firstLineBreak = combined.indexOf("\n");
-    if (firstLineBreak >= 0) combined = combined.slice(firstLineBreak + 1);
-  }
-  return combined.trim();
+  const combined = [current, ...fresh.map((item) => `- ${prefix} ${item}`)].filter(Boolean).join("\n");
+  return compactAgentMemory(combined);
 }

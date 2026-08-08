@@ -532,7 +532,13 @@
               </span>
             </label>
             <div class="agent-memory-editor is-hidden" id="agent-memory-editor">
-              <label for="agent-memory">角色记忆 <span>可以手动修改</span></label>
+              <div class="field-label-row">
+                <label for="agent-memory">角色记忆 <span>可以手动修改和删除</span></label>
+                <div class="field-text-actions">
+                  <button id="compact-agent-memory-button" type="button">本地瘦身</button>
+                  <button id="deep-compact-agent-memory-button" type="button">深度整理</button>
+                </div>
+              </div>
               <textarea
                 id="agent-memory"
                 name="memory"
@@ -540,7 +546,8 @@
                 maxlength="20000"
                 placeholder="开启后，角色会在回复末尾用第一人称悄悄记下值得保留的私心、感受、怀疑或打算。你也可以在这里亲手增删。"
               ></textarea>
-              <p class="field-help">只会交给这位角色本人；其他嘉宾看不到。角色可以自行判断以后要不要说出来。与房间总结不同，这里不抄公开剧情，只记“这件事对我意味着什么”。</p>
+              <p class="memory-status agent-memory-status" id="agent-memory-status">0 条 · 自动新增会先合并再淘汰。</p>
+              <p class="field-help">只会交给这位角色本人；其他嘉宾看不到。日常自动瘦身不调用 API；“深度整理”只在你确认后调用一次记忆整理员，并先停在草稿里等你检查。</p>
             </div>
           </div>
         </div>

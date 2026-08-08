@@ -119,12 +119,16 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
     readFile(new URL("../public/agent-memory.js", import.meta.url), "utf8"),
     readFile(new URL("../public/memory-prompt.js", import.meta.url), "utf8"),
   ]);
-  for (const id of ["agent-memory-enabled", "agent-memory-editor", "agent-memory"]) {
+  for (const id of ["agent-memory-enabled", "agent-memory-editor", "agent-memory", "compact-agent-memory-button", "deep-compact-agent-memory-button", "agent-memory-status"]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.match(html, /其他嘉宾看不到/);
   assert.match(script, /parseAgentReply\(reply\.text\)/);
   assert.match(script, /appendAgentMemory/);
+  assert.match(script, /compactAgentMemory/);
+  assert.match(script, /requestMode: "private-memory-summary"/);
+  assert.match(script, /这会产生 1 次 API 调用/);
+  assert.match(memoryModule, /只有出现新变化、重要误会、关系转折或尚未公开/);
   assert.match(script, /PRIVATE_MEMORY_TOKEN_ALLOWANCE/);
   assert.match(memoryModule, /<self_memory>/);
   assert.match(memoryModule, /不要抄写房间公开时间线/);
