@@ -1355,6 +1355,10 @@ html[data-theme="dark"] .agent-memory-field {
   background: #262626;
 }
 
+html[data-theme="dark"] .guest-copy-option {
+  background: #272727;
+}
+
 html[data-theme="dark"] .agent-readiness.is-ready,
 html[data-theme="dark"] .saved-key-row {
   color: #75d18b;
@@ -1669,6 +1673,32 @@ html[data-theme="dark"] .mobile-room-switcher {
   background: #fbfbf8;
 }
 
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.field-text-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.field-text-actions button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--quiet);
+  font-size: 10px;
+}
+
+.field-text-actions button:hover,
+.field-text-actions button:focus-visible {
+  color: var(--ink);
+}
+
 .agent-memory-field {
   padding: 13px 14px;
   border: 1px solid var(--soft-line);
@@ -1736,6 +1766,70 @@ html[data-theme="dark"] .mobile-room-switcher {
 .dialog-footer-right {
   gap: 8px;
   margin-left: auto;
+}
+
+.dialog-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.guest-copy-name-field {
+  margin-top: 20px;
+}
+
+.guest-copy-options {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.guest-copy-options legend {
+  margin-bottom: 9px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.guest-copy-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: flex-start;
+  padding: 11px 12px;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  background: var(--wash);
+  cursor: pointer;
+}
+
+.guest-copy-option input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  padding: 0;
+  accent-color: var(--ink);
+}
+
+.guest-copy-option span {
+  display: grid;
+  gap: 3px;
+}
+
+.guest-copy-option strong {
+  font-size: 12px;
+}
+
+.guest-copy-option small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.guest-copy-room-field {
+  margin-top: 18px;
 }
 
 .toast {

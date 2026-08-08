@@ -83,6 +83,63 @@ test("留空时保留旧 Key，明确清除时才删除", async (context) => {
   assert.equal((await store.credentials("guest-one")).apiKey, "");
 });
 
+test("嘉宾副本可以在不暴露明文的情况下复制加密凭据并保持独立", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = join(directory, "state.json");
+  const store = createStateStore({ filePath, secret: "duplicate-secret" });
+  const room = { id: "room-one", name: "狼人杀", participantIds: ["guest-one"], messages: [] };
+
+  await store.save({
+    activeRoomId: room.id,
+    agents: [{
+      id: "guest-one",
+      name: "Claude",
+      format: "anthropic",
+      authType: "x-api-key",
+      apiKey: "copy-me-securely",
+      extraHeaders: '{"X-Route":"fable"}',
+    }],
+    rooms: [room],
+  });
+
+  const duplicated = await store.save({
+    activeRoomId: room.id,
+    agents: [
+      { id: "guest-one", name: "Claude", format: "anthropic", authType: "x-api-key" },
+      {
+        id: "guest-werewolf",
+        name: "Claude · 狼人杀",
+        format: "anthropic",
+        authType: "x-api-key",
+        credentialSourceId: "guest-one",
+        memoryEnabled: true,
+        memory: "",
+      },
+    ],
+    rooms: [{ ...room, participantIds: ["guest-one", "guest-werewolf"] }],
+  });
+
+  assert.equal(duplicated.agents[1].hasApiKey, true);
+  assert.equal(duplicated.agents[1].apiKey, "");
+  assert.deepEqual(await store.credentials("guest-werewolf"), {
+    apiKey: "copy-me-securely",
+    extraHeaders: '{"X-Route":"fable"}',
+  });
+  assert.doesNotMatch(await readFile(filePath, "utf8"), /copy-me-securely|X-Route/);
+
+  await store.save({
+    activeRoomId: room.id,
+    agents: [
+      { id: "guest-one", name: "Claude", format: "anthropic", authType: "x-api-key", clearApiKey: true },
+      { id: "guest-werewolf", name: "Claude · 狼人杀", format: "anthropic", authType: "x-api-key" },
+    ],
+    rooms: [{ ...room, participantIds: ["guest-one", "guest-werewolf"] }],
+  });
+  assert.equal((await store.credentials("guest-one")).apiKey, "");
+  assert.equal((await store.credentials("guest-werewolf")).apiKey, "copy-me-securely");
+});
+
 test("给旧房间增加氛围提示时保留原聊天记录", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
   context.after(() => rm(directory, { recursive: true, force: true }));

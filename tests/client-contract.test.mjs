@@ -71,6 +71,39 @@ test("嘉宾席可只看本房成员并按聊天室或未分房筛选", async ()
   assert.match(styles, /\.agent-membership/);
 });
 
+test("嘉宾可以复制为凭据复用但人设与记忆独立的新副本", async () => {
+  const [html, script] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+  ]);
+  for (const id of [
+    "duplicate-agent-button",
+    "guest-copy-dialog",
+    "guest-copy-credentials",
+    "guest-copy-persona",
+    "guest-copy-memory",
+    "guest-copy-memory-enabled",
+    "guest-copy-room",
+  ]) assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(html, /接口配置与凭据/);
+  assert.match(html, /默认不复制/);
+  assert.match(script, /function createGuestCopyFromForm\(\)/);
+  assert.match(script, /credentialSourceId: copyCredentials \? source\.id : ""/);
+  assert.match(script, /memory: copyMemory \? source\.memory : ""/);
+  assert.match(script, /room\.participantIds\.push\(duplicate\.id\)/);
+});
+
+test("人设编辑器提供兼容 iPad 的复制文本与可撤销清空草稿", async () => {
+  const [html, script] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+  ]);
+  assert.match(html, /id="copy-persona-button"/);
+  assert.match(html, /id="clear-persona-button"/);
+  assert.match(script, /await copyText\(persona\)/);
+  assert.match(script, /已清空人设草稿，保存嘉宾后生效/);
+});
+
 test("房间氛围与个人设定在发言前按 Depth 0 顺序再次注入", async () => {
   const script = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(script, /function buildImmediatePrompt\(agent, room, visibleTokenTarget\)/);

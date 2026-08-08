@@ -114,6 +114,9 @@ const agentDialog = byId("agent-dialog");
 const agentForm = byId("agent-form");
 const connectionResult = byId("connection-result");
 const deleteAgentButton = byId("delete-agent-button");
+const duplicateAgentButton = byId("duplicate-agent-button");
+const guestCopyDialog = byId("guest-copy-dialog");
+const guestCopyForm = byId("guest-copy-form");
 const roomDialog = byId("room-dialog");
 const roomForm = byId("room-form");
 const roomParticipantList = byId("room-participant-list");
@@ -141,6 +144,7 @@ let loadPromise = null;
 let unseenMessageCount = 0;
 let agentListView = "room";
 let agentRoomFilter = "all";
+let guestCopyNameSuggestion = "";
 let accessProtectionEnabled = true;
 let agentMemoryDraftDirty = false;
 const summarizingRoomIds = new Set();
@@ -208,6 +212,7 @@ function hydrateAgent(profile) {
     extraHeaders: String(profile?.extraHeaders || ""),
     hasApiKey: Boolean(profile?.hasApiKey || profile?.apiKey),
     hasExtraHeaders: Boolean(profile?.hasExtraHeaders || profile?.extraHeaders),
+    credentialSourceId: String(profile?.credentialSourceId || ""),
     clearApiKey: false,
     clearExtraHeaders: false,
   };
@@ -445,6 +450,7 @@ function stateSnapshot() {
       memoryRevision: agent.memoryRevision,
       apiKey: agent.apiKey,
       extraHeaders: agent.extraHeaders,
+      credentialSourceId: agent.credentialSourceId,
       clearApiKey: agent.clearApiKey === true,
       clearExtraHeaders: agent.clearExtraHeaders === true,
     })),
@@ -500,6 +506,7 @@ function applySavedCredentialFlags(serverAgents, serverSummarizer) {
     agent.hasExtraHeaders = saved.hasExtraHeaders;
     agent.apiKey = "";
     agent.extraHeaders = "";
+    agent.credentialSourceId = "";
     agent.clearApiKey = false;
     agent.clearExtraHeaders = false;
   }
@@ -1661,10 +1668,88 @@ function openAgentDialog(agentId = null) {
   connectionResult.className = "connection-result is-hidden";
   connectionResult.textContent = "";
   deleteAgentButton.classList.toggle("is-hidden", !agent);
+  duplicateAgentButton.classList.toggle("is-hidden", !agent);
   syncAuthField();
   syncEndpointHelp();
   syncAgentMemoryField();
   agentDialog.showModal();
+}
+
+function suggestedGuestCopyName(source, roomId) {
+  const destination = state.rooms.find((room) => room.id === roomId)?.name || "副本";
+  return `${source.name} · ${destination}`.slice(0, 28);
+}
+
+function refreshGuestCopyName() {
+  const source = state.agents.find((agent) => agent.id === byId("guest-copy-source-id").value);
+  if (!source) return;
+  const input = byId("guest-copy-name");
+  const nextSuggestion = suggestedGuestCopyName(source, byId("guest-copy-room").value);
+  if (!input.value.trim() || input.value === guestCopyNameSuggestion) input.value = nextSuggestion;
+  guestCopyNameSuggestion = nextSuggestion;
+}
+
+function openGuestCopyDialog(sourceId) {
+  const source = state.agents.find((agent) => agent.id === sourceId);
+  if (!source) return;
+  guestCopyForm.reset();
+  byId("guest-copy-source-id").value = source.id;
+  byId("guest-copy-title").textContent = `复制 ${source.name}`;
+  byId("guest-copy-credentials").checked = true;
+  byId("guest-copy-persona").checked = false;
+  byId("guest-copy-memory").checked = false;
+  byId("guest-copy-memory-enabled").checked = false;
+  const roomSelect = byId("guest-copy-room");
+  roomSelect.replaceChildren();
+  const noRoom = document.createElement("option");
+  noRoom.value = "";
+  noRoom.textContent = "暂不加入房间";
+  roomSelect.append(noRoom);
+  for (const room of state.rooms) {
+    const option = document.createElement("option");
+    option.value = room.id;
+    option.textContent = room.name;
+    roomSelect.append(option);
+  }
+  roomSelect.value = activeRoom()?.id || "";
+  guestCopyNameSuggestion = "";
+  refreshGuestCopyName();
+  agentDialog.close();
+  guestCopyDialog.showModal();
+}
+
+function createGuestCopyFromForm() {
+  const data = new FormData(guestCopyForm);
+  const source = state.agents.find((agent) => agent.id === data.get("sourceId"));
+  if (!source) throw new Error("没有找到要复制的原嘉宾");
+  const name = String(data.get("name") || "").trim();
+  if (!name) throw new Error("先给副本起个名字");
+  const copyCredentials = data.get("copyCredentials") === "on";
+  const copyPersona = data.get("copyPersona") === "on";
+  const copyMemory = data.get("copyMemory") === "on";
+  const memoryEnabled = data.get("memoryEnabled") === "on";
+  const duplicate = hydrateAgent({
+    id: newId("guest"),
+    name,
+    format: copyCredentials ? source.format : "openai",
+    baseUrl: copyCredentials ? source.baseUrl : "",
+    model: copyCredentials ? source.model : "",
+    authType: copyCredentials ? source.authType : "bearer",
+    customHeader: copyCredentials ? source.customHeader : "",
+    apiKey: copyCredentials ? source.apiKey : "",
+    extraHeaders: copyCredentials ? source.extraHeaders : "",
+    hasApiKey: copyCredentials && source.hasApiKey,
+    hasExtraHeaders: copyCredentials && source.hasExtraHeaders,
+    credentialSourceId: copyCredentials ? source.id : "",
+    persona: copyPersona ? source.persona : "",
+    memoryEnabled,
+    memory: copyMemory ? source.memory : "",
+    memoryRevision: copyMemory ? source.memoryRevision : 0,
+  });
+  return {
+    duplicate,
+    roomId: String(data.get("roomId") || ""),
+  };
 }
 
 function syncAgentMemoryField() {
@@ -2113,11 +2198,62 @@ byId("summarizer-toggle-key").addEventListener("click", () => {
   byId("summarizer-toggle-key").textContent = shouldShow ? "隐藏" : "显示";
 });
 byId("close-dialog-button").addEventListener("click", () => agentDialog.close());
+byId("close-guest-copy-dialog").addEventListener("click", () => guestCopyDialog.close());
+byId("guest-copy-cancel").addEventListener("click", () => guestCopyDialog.close());
 byId("close-room-dialog").addEventListener("click", () => roomDialog.close());
 byId("close-summarizer-dialog").addEventListener("click", () => summarizerDialog.close());
 byId("add-agent-button").addEventListener("click", () => openAgentDialog());
 byId("add-room-button").addEventListener("click", () => openRoomDialog());
 byId("open-summarizer-button").addEventListener("click", openSummarizerDialog);
+duplicateAgentButton.addEventListener("click", () => {
+  const sourceId = String(new FormData(agentForm).get("id") || "");
+  openGuestCopyDialog(sourceId);
+});
+byId("guest-copy-room").addEventListener("change", refreshGuestCopyName);
+byId("guest-copy-memory").addEventListener("change", (event) => {
+  if (event.target.checked) byId("guest-copy-memory-enabled").checked = true;
+});
+guestCopyForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  try {
+    const { duplicate, roomId } = createGuestCopyFromForm();
+    state.agents.push(duplicate);
+    const room = state.rooms.find((item) => item.id === roomId);
+    if (room && !room.participantIds.includes(duplicate.id)) {
+      room.participantIds.push(duplicate.id);
+      room.updatedAt = Date.now();
+    }
+    if (room?.id === activeRoom()?.id) agentListView = "room";
+    renderAll();
+    queuePersist();
+    guestCopyDialog.close();
+    showToast(`${duplicate.name} 已成为独立嘉宾`);
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+byId("copy-persona-button").addEventListener("click", async () => {
+  const persona = byId("agent-persona").value;
+  if (!persona.trim()) {
+    showToast("人设框还是空的");
+    return;
+  }
+  if (await copyText(persona)) showToast("人设文本已复制");
+  else {
+    openCopyFallback(persona);
+    showToast("浏览器拦住了自动复制，已为你选中人设原文");
+  }
+});
+byId("clear-persona-button").addEventListener("click", () => {
+  const persona = byId("agent-persona");
+  if (!persona.value) {
+    showToast("人设框已经是空的");
+    return;
+  }
+  persona.value = "";
+  persona.focus();
+  showToast("已清空人设草稿，保存嘉宾后生效");
+});
 agentViewRoom.addEventListener("click", () => {
   agentListView = "room";
   renderAgents();

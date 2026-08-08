@@ -496,7 +496,13 @@
             </div>
           </details>
           <div class="field field-wide persona-field">
-            <label for="agent-persona">角色设定 <span>可留空</span></label>
+            <div class="field-label-row">
+              <label for="agent-persona">角色设定 <span>可留空</span></label>
+              <div class="field-text-actions">
+                <button id="copy-persona-button" type="button">复制文本</button>
+                <button id="clear-persona-button" type="button">清空</button>
+              </div>
+            </div>
             <textarea
               id="agent-persona"
               name="persona"
@@ -528,10 +534,76 @@
 
         <div class="connection-result is-hidden" id="connection-result" aria-live="polite"></div>
         <div class="dialog-footer">
-          <button class="button button-danger is-hidden" id="delete-agent-button" type="button">删除嘉宾</button>
+          <div class="dialog-footer-left">
+            <button class="button button-danger is-hidden" id="delete-agent-button" type="button">删除嘉宾</button>
+            <button class="button button-quiet is-hidden" id="duplicate-agent-button" type="button">复制嘉宾</button>
+          </div>
           <div class="dialog-footer-right">
             <button class="button button-quiet" id="test-agent-button" type="button">测试连接</button>
             <button class="button button-primary" type="submit">保存嘉宾</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="room-dialog guest-copy-dialog" id="guest-copy-dialog">
+      <form id="guest-copy-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="section-kicker">DUPLICATE GUEST</p>
+            <h2 id="guest-copy-title">复制嘉宾</h2>
+          </div>
+          <button class="icon-button" id="close-guest-copy-dialog" type="button" aria-label="关闭">×</button>
+        </div>
+
+        <input id="guest-copy-source-id" name="sourceId" type="hidden" />
+        <div class="field guest-copy-name-field">
+          <label for="guest-copy-name">副本名称</label>
+          <input id="guest-copy-name" name="name" required maxlength="28" />
+        </div>
+
+        <fieldset class="guest-copy-options">
+          <legend>复制哪些内容</legend>
+          <label class="guest-copy-option" for="guest-copy-credentials">
+            <input id="guest-copy-credentials" name="copyCredentials" type="checkbox" checked />
+            <span>
+              <strong>接口配置与凭据</strong>
+              <small>复制接口格式、地址、模型、鉴权、Key 和额外请求头。</small>
+            </span>
+          </label>
+          <label class="guest-copy-option" for="guest-copy-persona">
+            <input id="guest-copy-persona" name="copyPersona" type="checkbox" />
+            <span>
+              <strong>角色设定</strong>
+              <small>默认留空，避免把原房间的人设带进新游戏。</small>
+            </span>
+          </label>
+          <label class="guest-copy-option" for="guest-copy-memory">
+            <input id="guest-copy-memory" name="copyMemory" type="checkbox" />
+            <span>
+              <strong>现有私人记忆</strong>
+              <small>默认不复制；勾选后才会带走原角色的私心与经历。</small>
+            </span>
+          </label>
+          <label class="guest-copy-option" for="guest-copy-memory-enabled">
+            <input id="guest-copy-memory-enabled" name="memoryEnabled" type="checkbox" />
+            <span>
+              <strong>为副本开启私人记忆</strong>
+              <small>从副本加入房间后开始独立积累。</small>
+            </span>
+          </label>
+        </fieldset>
+
+        <div class="field guest-copy-room-field">
+          <label for="guest-copy-room">加入聊天室</label>
+          <select id="guest-copy-room" name="roomId"></select>
+          <p class="field-help">只加入这里选择的一个房间；以后仍可在嘉宾席调整。</p>
+        </div>
+
+        <div class="dialog-footer">
+          <div class="dialog-footer-right">
+            <button class="button button-quiet" id="guest-copy-cancel" type="button">取消</button>
+            <button class="button button-primary" type="submit">创建独立副本</button>
           </div>
         </div>
       </form>
