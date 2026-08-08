@@ -3,9 +3,11 @@ import test from "node:test";
 import {
   appendAgentMemory,
   compactAgentMemory,
+  numberedAgentMemory,
   parseAgentReply,
   privateMemoryContext,
   privateMemoryOutputInstruction,
+  validateDeepAgentMemoryResult,
 } from "../public/agent-memory.js";
 
 test("关闭角色记忆时不向模型透露这项功能", () => {
@@ -99,6 +101,38 @@ test("深度整理后的保守清理只删完全重复，不再次按相似主�
   assert.match(result, /等她下楼/);
   assert.match(result, /请一周可乐/);
   assert.equal(result.split("\n").length, 2);
+});
+
+test("深度整理必须逐项登记来源且每条最多合并两条旧记忆", () => {
+  const original = [
+    "- [竹马群 · 8/7] 我第一次怀疑截图并不存在。",
+    "- [竹马群 · 8/7] 我后来确认截图只是他诈我的。",
+    "- [竹马群 · 8/8] 我输掉球赛，答应请一周可乐。",
+    "- [竹马群 · 8/8] 她点了青柠可乐，我记住了。",
+  ].join("\n");
+  assert.match(numberedAgentMemory(original), /\[M001\]/);
+  const accepted = validateDeepAgentMemoryResult(original, [
+    "- [竹马群 · 8/7] 我先怀疑、后来确认截图只是他诈我的。 <!-- sources:M001,M002 -->",
+    "- [竹马群 · 8/8] 我输掉球赛，答应请一周可乐。 <!-- sources:M003 -->",
+    "- [竹马群 · 8/8] 她点了青柠可乐，我记住了。 <!-- sources:M004 -->",
+  ].join("\n"));
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.count, 3);
+  assert.doesNotMatch(accepted.text, /sources:/);
+
+  const missing = validateDeepAgentMemoryResult(original, [
+    "- [竹马群 · 8/7] 我只留下了截图。 <!-- sources:M001,M002 -->",
+    "- [竹马群 · 8/8] 我只留下了球赛。 <!-- sources:M003 -->",
+  ].join("\n"));
+  assert.equal(missing.ok, false);
+  assert.match(missing.error, /漏掉了 1 条/);
+
+  const overMerged = validateDeepAgentMemoryResult(original, [
+    "- [竹马群 · 8/7] 我把三件事揉成了一件。 <!-- sources:M001,M002,M003 -->",
+    "- [竹马群 · 8/8] 她点了青柠可乐，我记住了。 <!-- sources:M004 -->",
+  ].join("\n"));
+  assert.equal(overMerged.ok, false);
+  assert.match(overMerged.error, /超过保守上限/);
 });
 
 test("自动新增不会在九千字附近静默淘汰独立旧记忆", () => {

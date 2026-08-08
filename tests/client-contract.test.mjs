@@ -132,12 +132,15 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
   assert.match(script, /这会产生 1 次这位嘉宾自己的 API 调用/);
   assert.match(script, /所属房间上下文｜只供核对，不要照抄/);
   assert.match(script, /mergeTopics: false/);
-  assert.match(script, /已拦下过度瘦身/);
+  assert.match(script, /已拦下不合格的整理/);
+  assert.match(script, /validateDeepAgentMemoryResult/);
+  assert.match(script, /每条最终记忆最多对应两个来源编号/);
   assert.match(script, /不要只留最近发生的事情/);
   assert.match(html, />清理重复</);
   assert.match(html, /只删除完全相同的条目/);
   assert.match(html, /maxlength="100000"/);
   assert.match(html, /30,000 字只是建议整理线/);
+  assert.match(html, /每条最多合并两条旧记忆/);
   assert.doesNotMatch(script, /agent: state\.summarizer,[\s\S]{0,240}requestMode: "private-memory-summary"/);
   assert.match(memoryModule, /只有出现新变化、重要误会、关系转折或尚未公开/);
   assert.match(script, /PRIVATE_MEMORY_TOKEN_ALLOWANCE/);

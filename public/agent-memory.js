@@ -192,6 +192,73 @@ export function compactAgentMemory(value, {
   return (firstBreak >= 0 ? clipped.slice(firstBreak + 1) : clipped).trim();
 }
 
+function memorySourceId(index, total) {
+  const width = Math.max(3, String(Math.max(1, total)).length);
+  return `M${String(index + 1).padStart(width, "0")}`;
+}
+
+export function numberedAgentMemory(value) {
+  const lines = String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines
+    .map((line, index) => `[${memorySourceId(index, lines.length)}] ${line}`)
+    .join("\n");
+}
+
+export function validateDeepAgentMemoryResult(original, candidate, {
+  maxSourcesPerEntry = 2,
+} = {}) {
+  const originalLines = String(original || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const expected = new Set(originalLines.map((_, index) => memorySourceId(index, originalLines.length)));
+  const candidateLines = String(candidate || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!candidateLines.length) return { ok: false, error: "整理结果为空" };
+
+  const seen = new Set();
+  const cleanedLines = [];
+  const markerPattern = /\s*<!--\s*sources\s*:\s*([^>]+)-->\s*$/i;
+  for (const line of candidateLines) {
+    const marker = line.match(markerPattern);
+    if (!marker) return { ok: false, error: "有条目没有标明对应的旧记忆" };
+    const ids = marker[1].match(/M\d+/gi)?.map((id) => id.toUpperCase()) || [];
+    if (!ids.length) return { ok: false, error: "有条目没有可识别的旧记忆编号" };
+    if (ids.length > maxSourcesPerEntry) {
+      return { ok: false, error: `有一条同时吞并了 ${ids.length} 条旧记忆，超过保守上限` };
+    }
+    for (const id of ids) {
+      if (!expected.has(id)) return { ok: false, error: `出现了不存在的旧记忆编号 ${id}` };
+      if (seen.has(id)) return { ok: false, error: `旧记忆 ${id} 被重复处理` };
+      seen.add(id);
+    }
+    const cleaned = line.replace(markerPattern, "").trim();
+    if (!cleaned) return { ok: false, error: "有条目只剩编号，没有记忆内容" };
+    cleanedLines.push(cleaned);
+  }
+
+  const missing = [...expected].filter((id) => !seen.has(id));
+  if (missing.length) {
+    const sample = missing.slice(0, 4).join("、");
+    return { ok: false, error: `漏掉了 ${missing.length} 条旧记忆（${sample}${missing.length > 4 ? "……" : ""}）` };
+  }
+  const conservativeFloor = Math.ceil(originalLines.length / Math.max(1, maxSourcesPerEntry));
+  if (cleanedLines.length < conservativeFloor) {
+    return { ok: false, error: `整理结果只剩 ${cleanedLines.length} 条，低于保守下限 ${conservativeFloor} 条` };
+  }
+  const text = compactAgentMemory(cleanedLines.join("\n"), { mergeTopics: false });
+  const count = text ? text.split(/\r?\n/).filter((line) => line.trim()).length : 0;
+  if (count < conservativeFloor) {
+    return { ok: false, error: `清理后只剩 ${count} 条，低于保守下限 ${conservativeFloor} 条` };
+  }
+  return { ok: true, text, count };
+}
+
 export function privateMemoryContext(agent, { maxLength = 24_000 } = {}) {
   if (agent?.memoryEnabled !== true) return "";
   const memory = String(agent?.memory || "").trim();
