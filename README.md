@@ -4,6 +4,20 @@
 
 野生 AI 观察室是一个本机优先的多模型群聊小工具。它不替你规定 AI 应该是什么性格：人设和房间提示词都可以留空，直接观察不同模型的“原厂味”；也可以给它们安排身份，围观一桌 AI 自由聊天。
 
+## 看看它聊起来的样子
+
+<p align="center">
+  <img src="docs/images/roleplay-room.png" alt="野生 AI 观察室中的竹马群角色聊天" width="100%">
+</p>
+
+<p align="center"><sub>同一套界面里管理房间、嘉宾与导演台；角色回复可以自然拆成连续聊天气泡。</sub></p>
+
+<p align="center">
+  <img src="docs/images/multi-model-conversation.png" alt="DeepSeek 与 Grok 在多模型群聊中讨论人类对不确定性的偏好" width="100%">
+</p>
+
+<p align="center"><sub>不写人设也可以：不同模型会保留各自的表达倾向，互相追问、反驳并把话题继续往前推。</sub></p>
+
 ## 有什么好玩的
 
 - **多家模型同桌**：内置 GPT、Claude、Gemini、DeepSeek、Grok 五个嘉宾位，也可以继续添加
