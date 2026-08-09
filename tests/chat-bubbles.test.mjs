@@ -15,10 +15,10 @@ test("只有明确分隔符会拆成连续气泡", () => {
   assert.deepEqual(parseChatBubbleSegments("第一段\n\n第二段"), ["第一段\n\n第二段"]);
 });
 
-test("连续气泡最多三条，空段会被忽略", () => {
+test("连续气泡最多五条，空段会被忽略", () => {
   assert.deepEqual(
-    parseChatBubbleSegments(`一${CHAT_BUBBLE_SEPARATOR} ${CHAT_BUBBLE_SEPARATOR}二${CHAT_BUBBLE_SEPARATOR}三${CHAT_BUBBLE_SEPARATOR}四`),
-    ["一", "二", "三 四"],
+    parseChatBubbleSegments(`一${CHAT_BUBBLE_SEPARATOR} ${CHAT_BUBBLE_SEPARATOR}二${CHAT_BUBBLE_SEPARATOR}三${CHAT_BUBBLE_SEPARATOR}四${CHAT_BUBBLE_SEPARATOR}五${CHAT_BUBBLE_SEPARATOR}六`),
+    ["一", "二", "三", "四", "五 六"],
   );
 });
 
@@ -26,7 +26,8 @@ test("启用后清理分隔符并保留一条上下文文本", () => {
   const formatted = formatChatBubbleReply(`等等${CHAT_BUBBLE_SEPARATOR}我也去。`, true);
   assert.equal(formatted.text, "等等\n我也去。");
   assert.deepEqual(formatted.segments, ["等等", "我也去。"]);
-  assert.match(bubbleSplitInstruction(true), /1 至 3 条短消息/);
+  assert.match(bubbleSplitInstruction(true), /1 至 5 条短消息/);
+  assert.match(bubbleSplitInstruction(true), /不要默认写满三条/);
   assert.equal(bubbleSplitInstruction(false), "");
 });
 

@@ -262,7 +262,7 @@ test("每个房间可以用一次模型回复显示连续气泡", async () => {
   assert.match(script, /message-bubble-stack/);
   assert.match(styles, /\.message-bubble-stack/);
   assert.match(bubbles, /〔分条〕/);
-  assert.match(bubbles, /MAX_CHAT_BUBBLES = 3/);
+  assert.match(bubbles, /MAX_CHAT_BUBBLES = 5/);
 });
 
 test("iPad 顶部可以切换房间并温和提示新消息", async () => {

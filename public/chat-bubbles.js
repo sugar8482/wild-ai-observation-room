@@ -1,12 +1,13 @@
 export const CHAT_BUBBLE_SEPARATOR = "〔分条〕";
-export const MAX_CHAT_BUBBLES = 3;
+export const MAX_CHAT_BUBBLES = 5;
 
 export function bubbleSplitInstruction(enabled) {
   if (!enabled) return "";
   return [
-    "本房间开启了聊天软件式的连续气泡。一次回复仍是一次发言，但可以写成 1 至 3 条短消息。",
+    "本房间开启了聊天软件式的连续气泡。一次回复仍是一次发言，但可以自然写成 1 至 5 条短消息。",
     `需要连发时，只用“${CHAT_BUBBLE_SEPARATOR}”分隔每条消息；只发一条时不要使用分隔符。`,
-    "不要给小消息编号，不要解释分隔符，也不要把普通长段落机械拆开。",
+    "气泡数量和长短要跟着当下语气变化，不要默认写满三条，也不要让每条长度相近。有时只发一个“？”或一句很短的话；有时连续追问、改口或补两三句。",
+    "不要给小消息编号，不要解释分隔符，也不要把普通长段落机械拆开；每条都应像聊天软件里真的会单独按发送的内容。",
   ].join("\n");
 }
 
