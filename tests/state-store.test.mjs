@@ -356,6 +356,53 @@ test("后台定时发言不会被滞后的浏览器保存覆盖", async (context
   assert.equal(deleted.rooms[0].messages.some((message) => message.id === "message-scheduled"), false);
 });
 
+test("私聊收件人结构会持久化，未知收件人不会降级成公开消息", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({
+    filePath: join(directory, "state.json"),
+    secret: "private-chat-secret",
+  });
+  const saved = await store.save({
+    agents: [
+      { id: "guest-a", name: "A", format: "openai", authType: "none" },
+      { id: "guest-b", name: "B", format: "openai", authType: "none" },
+    ],
+    activeRoomId: "room-private",
+    rooms: [{
+      id: "room-private",
+      name: "私聊房间",
+      participantIds: ["guest-a", "guest-b"],
+      messages: [
+        {
+          id: "message-private",
+          kind: "agent",
+          author: "A",
+          text: "只给B",
+          agentId: "guest-a",
+          privacy: "private",
+          recipientIds: ["guest-b"],
+        },
+        {
+          id: "message-broken-private",
+          kind: "agent",
+          author: "A",
+          text: "不能意外公开",
+          agentId: "guest-a",
+          privacy: "private",
+          recipientIds: ["not-in-catalog"],
+        },
+      ],
+    }],
+  });
+  const privateMessage = saved.rooms[0].messages.find((message) => message.id === "message-private");
+  const brokenMessage = saved.rooms[0].messages.find((message) => message.id === "message-broken-private");
+  assert.equal(privateMessage.privacy, "private");
+  assert.deepEqual(privateMessage.recipientIds, ["guest-b"]);
+  assert.equal(brokenMessage.privacy, "private");
+  assert.deepEqual(brokenMessage.recipientIds, ["__room_user__"]);
+});
+
 test("手动关闭角色记忆时保留内容但后续可再次开启", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
   context.after(() => rm(directory, { recursive: true, force: true }));

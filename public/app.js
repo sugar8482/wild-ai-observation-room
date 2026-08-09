@@ -14,6 +14,17 @@ import {
 } from "./memory-prompt.js";
 import { bubbleSplitInstruction, formatChatBubbleReply } from "./chat-bubbles.js";
 import {
+  ROOM_USER_ID,
+  formatMessageForAgent,
+  isAgentToAgentPrivateMessage,
+  isPrivateMessage,
+  parsePrivateMessageReply,
+  privateMessageOutputInstruction,
+  privateRecipientLabel,
+  publicRoomMessages,
+  visibleMessagesForAgent,
+} from "./private-messages.js";
+import {
   PRIVATE_MEMORY_REVIEW_THRESHOLD,
   PRIVATE_MEMORY_STORAGE_LIMIT,
   PRIVATE_MEMORY_TOKEN_ALLOWANCE,
@@ -94,6 +105,8 @@ const newMessageJump = byId("new-message-jump");
 const emptyState = byId("empty-state");
 const composer = byId("composer");
 const messageInput = byId("message-input");
+const messageRecipient = byId("message-recipient");
+const composerPrivacyNote = byId("composer-privacy-note");
 const sendButton = byId("send-button");
 const stopButton = byId("stop-button");
 const speakingIndicator = byId("speaking-indicator");
@@ -820,6 +833,41 @@ function renderSpeakerOptions() {
   if (participants.some((agent) => agent.id === previous)) speakerSelect.value = previous;
 }
 
+function renderPrivateRecipientOptions() {
+  const previous = messageRecipient.value;
+  const room = activeRoom();
+  const participants = state.agents.filter((agent) => room?.participantIds.includes(agent.id));
+  messageRecipient.replaceChildren();
+  const publicOption = document.createElement("option");
+  publicOption.value = "public";
+  publicOption.textContent = "群聊";
+  messageRecipient.append(publicOption);
+  for (const agent of participants) {
+    const option = document.createElement("option");
+    option.value = agent.id;
+    option.textContent = `私聊 · ${agent.name}${isConfigured(agent) ? "" : "（未配置）"}`;
+    messageRecipient.append(option);
+  }
+  messageRecipient.value = participants.some((agent) => agent.id === previous) ? previous : "public";
+  renderComposerPrivacy();
+}
+
+function renderComposerPrivacy() {
+  const room = activeRoom();
+  const target = state.agents.find((agent) => (
+    agent.id === messageRecipient.value && room?.participantIds.includes(agent.id)
+  ));
+  const isPrivate = Boolean(target);
+  composer.classList.toggle("is-private-compose", isPrivate);
+  composerPrivacyNote.textContent = isPrivate
+    ? `只有你和 ${target.name} 能看到；发送后自动回到群聊`
+    : "群里所有成员都能看到";
+  messageInput.placeholder = isPrivate
+    ? `私聊给 ${target.name}……`
+    : "抛个话题，或者直接点名。";
+  sendButton.textContent = isPrivate ? "发送私聊" : MODE_META[state.mode].action;
+}
+
 function formatTime(timestamp) {
   return new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
@@ -834,15 +882,19 @@ function renderMessages({ scroll = false } = {}) {
   const messages = currentMessages();
   emptyState.classList.toggle("is-hidden", messages.length > 0);
   for (const message of messages) {
+    const privateMessage = isPrivateMessage(message);
+    const maskedForOwner = isAgentToAgentPrivateMessage(message);
     const article = createElement(
       "article",
-      `message${message.kind === "user" ? " is-user" : ""}${message.kind === "error" ? " is-error" : ""}`,
+      `message${message.kind === "user" ? " is-user" : ""}${message.kind === "error" ? " is-error" : ""}${privateMessage ? " is-private" : ""}${maskedForOwner ? " is-private-masked" : ""}`,
     );
     const meta = createElement("div", "message-meta");
-    meta.append(
-      createElement("span", "message-author", message.author),
-      createElement("time", "message-time", formatTime(message.timestamp)),
-    );
+    meta.append(createElement("span", "message-author", message.author));
+    if (privateMessage) {
+      const recipient = privateRecipientLabel(message, state.agents) || "未知对象";
+      meta.append(createElement("span", "private-route", `私聊 · ${message.author} → ${recipient}`));
+    }
+    meta.append(createElement("time", "message-time", formatTime(message.timestamp)));
     const segments = Array.isArray(message.segments) && message.segments.length > 1
       ? message.segments
       : [message.text];
@@ -876,7 +928,36 @@ function renderMessages({ scroll = false } = {}) {
     deleteButton.addEventListener("click", () => deleteMessage(message.id));
     actions.append(deleteButton);
     body.append(actions);
-    article.append(meta, stack);
+    if (maskedForOwner) {
+      stack.classList.add("is-concealed");
+      const mask = createElement("div", "private-message-mask");
+      const dots = createElement("span", "private-message-dots", "••••••••••••");
+      const revealButton = createElement("button", "private-message-reveal", "显示");
+      revealButton.type = "button";
+      revealButton.setAttribute("aria-label", `显示 ${message.author} 的私聊内容`);
+      revealButton.addEventListener("click", () => {
+        const revealed = stack.classList.toggle("is-revealed");
+        mask.classList.toggle("is-hidden", revealed);
+        revealButton.textContent = revealed ? "隐藏" : "显示";
+        revealButton.setAttribute("aria-label", `${revealed ? "隐藏" : "显示"} ${message.author} 的私聊内容`);
+        if (revealed) {
+          const hideButton = createElement("button", "private-message-hide", "隐藏");
+          hideButton.type = "button";
+          hideButton.addEventListener("click", () => {
+            stack.classList.remove("is-revealed");
+            mask.classList.remove("is-hidden");
+            revealButton.textContent = "显示";
+            revealButton.setAttribute("aria-label", `显示 ${message.author} 的私聊内容`);
+            hideButton.remove();
+          });
+          meta.append(hideButton);
+        }
+      });
+      mask.append(dots, revealButton);
+      article.append(meta, mask, stack);
+    } else {
+      article.append(meta, stack);
+    }
     messageFeed.append(article);
   }
   if (scroll) scrollToLatest({ revealOnSmallScreen: true });
@@ -954,35 +1035,52 @@ function renderMode() {
       : "一轮 = 每位启用的嘉宾发言一次。设了上限，不会无限烧额度。";
   const room = activeRoom();
   mobileRoomMeta.textContent = room ? `${room.messages.length} 条 · ${compactModeLabel()}` : "还没有房间";
+  renderComposerPrivacy();
 }
 
 function renderAll(options = {}) {
   renderRooms();
   renderAgents();
   renderSpeakerOptions();
+  renderPrivateRecipientOptions();
   renderRoomHeader();
   renderMode();
   renderSummarizerStatus();
   renderMessages(options);
 }
 
-function addMessage({ kind, author, text, agentId = null }) {
+function addMessage({
+  kind,
+  author,
+  text,
+  agentId = null,
+  privacy = null,
+  recipientIds = [],
+  source = null,
+}) {
   const room = activeRoom();
-  if (!room) return;
+  if (!room || !String(text || "").trim()) return null;
   const formatted = formatChatBubbleReply(text, room.bubbleSplit && kind === "agent");
-  room.messages.push({
+  const cleanRecipientIds = [...new Set((Array.isArray(recipientIds) ? recipientIds : []).map(String).filter(Boolean))];
+  const message = {
     id: newId("message"),
     kind,
     author,
     text: formatted.text,
     ...(formatted.segments.length ? { segments: formatted.segments } : {}),
     agentId,
+    ...(privacy === "private" && cleanRecipientIds.length
+      ? { privacy: "private", recipientIds: cleanRecipientIds }
+      : {}),
+    ...(source ? { source } : {}),
     timestamp: Date.now(),
-  });
+  };
+  room.messages.push(message);
   room.updatedAt = Date.now();
   renderMessages({ scroll: true });
   renderRooms();
   queuePersist();
+  return message;
 }
 
 function deleteMessage(messageId) {
@@ -1034,6 +1132,7 @@ function toggleRoomParticipant(agentId, shouldJoin) {
   room.updatedAt = Date.now();
   renderAgents();
   renderSpeakerOptions();
+  renderPrivateRecipientOptions();
   renderRooms();
   queuePersist();
 }
@@ -1041,6 +1140,7 @@ function toggleRoomParticipant(agentId, shouldJoin) {
 function setRunning(running, speaker = "", phase = "reply") {
   state.running = running;
   sendButton.disabled = running;
+  messageRecipient.disabled = running;
   byId("add-agent-button").disabled = running;
   byId("add-room-button").disabled = running;
   stopButton.classList.toggle("is-hidden", !running);
@@ -1053,7 +1153,7 @@ function setRunning(running, speaker = "", phase = "reply") {
   }
 }
 
-function buildSystemPrompt(agent, activeAgents, room, visibleTokenTarget) {
+function buildSystemPrompt(agent, activeAgents, room, visibleTokenTarget, options = {}) {
   const others = activeAgents.filter((item) => item.id !== agent.id).map((item) => item.name);
   const persona = agent.persona.trim()
     ? `你的角色设定如下：\n${agent.persona.trim()}`
@@ -1070,6 +1170,7 @@ function buildSystemPrompt(agent, activeAgents, room, visibleTokenTarget) {
     `这是群聊中的一次简短发言。最终正文尽量控制在约 ${visibleTokenTarget} tokens 以内；先说最想说的，保持句子完整，不要为了凑长度展开成小论文。`,
     bubbleSplitInstruction(room?.bubbleSplit),
     "直接输出你在群聊里要说的话，不加姓名前缀，不复述规则。使用群聊主要语言，自然交流。",
+    privateMessageOutputInstruction(agent, activeAgents, options),
     privateMemoryOutputInstruction(agent),
   ].filter(Boolean).join("\n\n");
 }
@@ -1088,22 +1189,22 @@ function buildImmediatePrompt(agent, room, visibleTokenTarget) {
   ].filter(Boolean).join("\n\n");
 }
 
-function isPrivateMemoryInitializationRequest(room) {
-  const latestUserMessage = [...(room?.messages || [])]
+function isPrivateMemoryInitializationRequest(room, agentId = "") {
+  const latestUserMessage = [...visibleMessagesForAgent(room?.messages || [], agentId)]
     .reverse()
     .find((message) => message.kind === "user");
   const text = String(latestUserMessage?.text || "");
   return /(?:初始化|写入|填写|建立|新增).{0,16}(?:私人记忆|角色记忆)|(?:私人记忆|角色记忆).{0,16}(?:初始化|写入|填写|建立|新增)/.test(text);
 }
 
-function transcriptForPrompt(room) {
+function transcriptForPrompt(room, agent) {
   const recentLimit = room.memory.enabled && room.memory.summary.trim()
     ? room.memory.recentMessages
     : 40;
-  return room.messages
+  return visibleMessagesForAgent(room.messages, agent.id)
     .filter((message) => message.kind !== "error")
     .slice(-recentLimit)
-    .map((message) => `${message.author}：${message.text}`)
+    .map((message) => formatMessageForAgent(message, agent, state.agents))
     .join("\n\n");
 }
 
@@ -1116,7 +1217,7 @@ function longTermMemoryForPrompt(room) {
   ].join("\n\n");
 }
 
-async function callAgent(agent, activeAgents, room, signal) {
+async function callAgent(agent, activeAgents, room, signal, options = {}) {
   const visibleTokenTarget = Math.min(4096, Math.max(64, Number(tokensInput.value) || 300));
   const requestTokenLimit = Math.min(
     4096,
@@ -1130,10 +1231,10 @@ async function callAgent(agent, activeAgents, room, signal) {
       temperature: Number(temperatureInput.value),
       maxTokens: requestTokenLimit,
       messages: [
-        { role: "system", content: buildSystemPrompt(agent, activeAgents, room, visibleTokenTarget) },
+        { role: "system", content: buildSystemPrompt(agent, activeAgents, room, visibleTokenTarget, options) },
         {
           role: "user",
-          content: `${longTermMemoryForPrompt(room) ? `${longTermMemoryForPrompt(room)}\n\n` : ""}以下是最近的群聊原文：\n\n${transcriptForPrompt(room)}\n\n${buildImmediatePrompt(agent, room, visibleTokenTarget)}\n\n现在轮到你发言。请延续这场真实的群聊。`,
+          content: `${longTermMemoryForPrompt(room) ? `${longTermMemoryForPrompt(room)}\n\n` : ""}以下是你有权看到的最近聊天原文：\n\n${transcriptForPrompt(room, agent)}\n\n${buildImmediatePrompt(agent, room, visibleTokenTarget)}\n\n现在轮到你发言。请延续这场真实的聊天。`,
         },
       ],
     }),
@@ -1149,13 +1250,13 @@ async function callAgent(agent, activeAgents, room, signal) {
   return payload;
 }
 
-function micScoringTranscript(room) {
-  return room.messages
+function micScoringTranscript(room, agent) {
+  return visibleMessagesForAgent(room.messages, agent.id)
     .filter((message) => message.kind !== "error")
     .slice(-8)
     .map((message) => {
       const compactText = message.text.length > 1_200 ? `…${message.text.slice(-1_200)}` : message.text;
-      return `${message.author}：${compactText}`;
+      return formatMessageForAgent({ ...message, text: compactText }, agent, state.agents);
     })
     .join("\n\n");
 }
@@ -1180,7 +1281,7 @@ function buildMicScoringMessages(agent, activeAgents, room) {
     },
     {
       role: "user",
-      content: `【最近群聊】\n${micScoringTranscript(room)}\n\n你现在有多想接话？只输出 0-10 的整数。`,
+      content: `【你有权看到的最近聊天】\n${micScoringTranscript(room, agent)}\n\n你现在有多想接话？只输出 0-10 的整数。`,
     },
   ];
 }
@@ -1241,12 +1342,12 @@ function micSnapshotText(scores, winner = null, roundNumber = 1, options = {}) {
   return `第 ${roundNumber} 轮｜${parts.join(" · ")} → 没人接话`;
 }
 
-async function deliverAgentTurn(speaker, activeAgents, room, controller) {
+async function deliverAgentTurn(speaker, activeAgents, room, controller, options = {}) {
   if (controller.signal.aborted) return false;
   setRunning(true, speaker.name);
   try {
     const memoryWasEmpty = speaker.memoryEnabled && !String(speaker.memory || "").trim();
-    const reply = await callAgent(speaker, activeAgents, room, controller.signal);
+    const reply = await callAgent(speaker, activeAgents, room, controller.signal, options);
     const parsedReply = speaker.memoryEnabled
       ? parseAgentReply(reply.text)
       : { visibleText: reply.text, memoryItems: [] };
@@ -1263,8 +1364,38 @@ async function deliverAgentTurn(speaker, activeAgents, room, controller) {
         );
       }
     }
-    addMessage({ kind: "agent", author: speaker.name, text: parsedReply.visibleText, agentId: speaker.id });
-    if (memoryWasEmpty && isPrivateMemoryInitializationRequest(room) && !parsedReply.memoryItems.length) {
+    const parsedMessages = parsePrivateMessageReply(parsedReply.visibleText, {
+      agentId: speaker.id,
+      recipients: activeAgents,
+    });
+    if (parsedMessages.publicText) {
+      addMessage({
+        kind: "agent",
+        author: speaker.name,
+        text: parsedMessages.publicText,
+        agentId: speaker.id,
+        ...(options.defaultPrivateToUser
+          ? { privacy: "private", recipientIds: [ROOM_USER_ID] }
+          : {}),
+      });
+    }
+    for (const privateMessage of parsedMessages.privateMessages) {
+      addMessage({
+        kind: "agent",
+        author: speaker.name,
+        text: privateMessage.text,
+        agentId: speaker.id,
+        privacy: "private",
+        recipientIds: privateMessage.recipientIds,
+      });
+    }
+    if (parsedMessages.invalidRecipients.length) {
+      showToast(`${speaker.name} 的一条私聊收件人无效，已拦下而没有公开`);
+    }
+    if (!parsedMessages.publicText && !parsedMessages.privateMessages.length) {
+      showToast(`${speaker.name} 这轮没有留下可显示的内容`);
+    }
+    if (memoryWasEmpty && isPrivateMemoryInitializationRequest(room, speaker.id) && !parsedReply.memoryItems.length) {
       showToast(`${speaker.name} 本轮没有实际写入私人记忆`);
     }
     if (reply.finishReason === "length") {
@@ -1394,7 +1525,8 @@ async function runMicGrabConversation(activeAgents, room, controller, rounds) {
 }
 
 function memoryMessages(room) {
-  return room.messages.filter((message) => message.kind !== "error" && message.text.trim());
+  return publicRoomMessages(room.messages)
+    .filter((message) => message.kind !== "error" && message.text.trim());
 }
 
 function pendingMemoryMessages(room, { rebuild = false } = {}) {
@@ -1678,15 +1810,30 @@ async function startConversation() {
   const room = activeRoom();
   const participants = state.agents.filter((agent) => room?.participantIds.includes(agent.id));
   const configuredAgents = participants.filter(isConfigured);
+  const privateTarget = participants.find((agent) => agent.id === messageRecipient.value) || null;
   if (!configuredAgents.length) {
     showToast("先给本房间至少一位嘉宾填好接口配置");
     return;
   }
 
+  const userText = messageInput.value.trim();
+  if (privateTarget) {
+    if (!userText) {
+      showToast("私聊要先写一句话，再发给对方");
+      return;
+    }
+    if (!isConfigured(privateTarget)) {
+      showToast(`${privateTarget.name} 还没有配好接口`);
+      return;
+    }
+  }
+
   let speakers = [];
   let micGrabRounds = 0;
   let lightMicRounds = 0;
-  if (state.mode === "point") {
+  if (privateTarget) {
+    speakers = [privateTarget];
+  } else if (state.mode === "point") {
     const target = participants.find((agent) => agent.id === speakerSelect.value);
     if (!target || !isConfigured(target)) {
       showToast("被点名的嘉宾还没有配好接口");
@@ -1702,15 +1849,25 @@ async function startConversation() {
     speakers = configuredAgents;
   }
 
-  const userText = messageInput.value.trim();
   if (userText) {
-    addMessage({ kind: "user", author: "晨曦", text: userText });
+    addMessage({
+      kind: "user",
+      author: "晨曦",
+      text: userText,
+      ...(privateTarget
+        ? { privacy: "private", recipientIds: [privateTarget.id] }
+        : {}),
+    });
     messageInput.value = "";
+    if (privateTarget) {
+      messageRecipient.value = "public";
+      renderComposerPrivacy();
+    }
   } else if (!room.messages.some((message) => message.kind !== "error")) {
     showToast("第一句话还是要由导演来：先给他们一个话题吧");
     return;
   }
-  if (configuredAgents.length < participants.length && state.mode !== "point") {
+  if (!privateTarget && configuredAgents.length < participants.length && state.mode !== "point") {
     showToast("未配好接口的嘉宾会先坐在旁听席");
   }
 
@@ -1724,7 +1881,9 @@ async function startConversation() {
     } else {
       for (const speaker of speakers) {
         if (controller.signal.aborted) break;
-        await deliverAgentTurn(speaker, configuredAgents, room, controller);
+        await deliverAgentTurn(speaker, configuredAgents, room, controller, {
+          defaultPrivateToUser: Boolean(privateTarget),
+        });
       }
     }
   } finally {
@@ -1893,16 +2052,21 @@ function privateMemoryDeepContext(agentId, { maxLength = 24_000 } = {}) {
     const longMemory = room.memory.enabled && !room.memory.stale
       ? contextExcerpt(room.memory.summary, 6_000)
       : "";
-    const recent = room.messages
+    const agent = state.agents.find((item) => item.id === agentId);
+    const recent = visibleMessagesForAgent(room.messages, agentId)
       .filter((message) => message.kind !== "error" && String(message.text || "").trim())
       .slice(-24)
-      .map((message) => `${message.author}：${contextExcerpt(message.text, 800)}`)
+      .map((message) => formatMessageForAgent(
+        { ...message, text: contextExcerpt(message.text, 800) },
+        agent,
+        state.agents,
+      ))
       .join("\n\n");
     const section = [
       `【房间：${room.name}】`,
       atmosphere ? `房间氛围：\n${atmosphere}` : "",
       longMemory ? `较早聊天的房间长期记忆：\n${longMemory}` : "",
-      recent ? `最近公开聊天：\n${recent}` : "（这个房间还没有公开聊天记录。）",
+      recent ? `最近有权看到的聊天：\n${recent}` : "（这个房间还没有可见聊天记录。）",
     ].filter(Boolean).join("\n\n");
     const visibleSection = contextExcerpt(section, remaining);
     sections.push(visibleSection);
@@ -2628,6 +2792,7 @@ composer.addEventListener("submit", (event) => {
   event.preventDefault();
   startConversation();
 });
+messageRecipient.addEventListener("change", renderComposerPrivacy);
 messageInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
@@ -2669,7 +2834,8 @@ byId("export-button").addEventListener("click", () => {
   if (room.memory.summary.trim()) {
     lines.push("## 房间长期记忆", "", room.memory.summary.trim(), "");
   }
-  for (const message of room.messages) {
+  const exportedMessages = publicRoomMessages(room.messages);
+  for (const message of exportedMessages) {
     lines.push(`## ${message.author} · ${new Date(message.timestamp).toLocaleString("zh-CN")}`, "", message.text, "");
   }
   const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
@@ -2678,6 +2844,7 @@ byId("export-button").addEventListener("click", () => {
   link.download = `${room.name}-${new Date().toISOString().slice(0, 10)}.md`;
   link.click();
   URL.revokeObjectURL(link.href);
+  if (exportedMessages.length < room.messages.length) showToast("已导出公开记录；私聊没有写进文件");
 });
 
 async function checkHealth(isLan = false) {

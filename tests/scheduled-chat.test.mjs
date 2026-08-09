@@ -176,6 +176,42 @@ test("定时聊天用同一次回复提取角色私人记忆", async () => {
   assert.deepEqual(outcome.privateMemoryItems["guest-a"], ["我有点在意B一直没说话。"]);
 });
 
+test("定时私聊只进入发送者与收件人的后续上下文", async () => {
+  const room = roomFixture(2);
+  room.participantIds.push("guest-c");
+  const privateAgents = [
+    ...agents,
+    { id: "guest-c", name: "C", format: "openai", baseUrl: "https://c.example/v1", model: "c", authType: "none", persona: "" },
+  ];
+  const scoreIndex = new Map();
+  const chat = async (payload) => {
+    if (payload.requestMode === "willingness-score") {
+      const index = scoreIndex.get(payload.agent.id) || 0;
+      scoreIndex.set(payload.agent.id, index + 1);
+      if (index === 1 && payload.agent.id === "guest-b") {
+        assert.match(payload.messages[1].content, /【A 私聊给你】今晚看旧仓库/);
+      }
+      if (index === 1 && payload.agent.id === "guest-c") {
+        assert.doesNotMatch(payload.messages[1].content, /今晚看旧仓库|私聊/);
+      }
+      if (index === 0) return { text: payload.agent.id === "guest-a" ? "9" : "0" };
+      return { text: payload.agent.id === "guest-b" ? "9" : "0" };
+    }
+    if (payload.agent.id === "guest-a") {
+      assert.match(payload.messages[0].content, /to="guest-b"（B）/);
+      return { text: '<private_message to="guest-b">今晚看旧仓库</private_message>' };
+    }
+    assert.match(payload.messages[1].content, /【A 私聊给你】今晚看旧仓库/);
+    return { text: "行，我知道了。" };
+  };
+
+  const outcome = await runScheduledRoom({ room, agents: privateAgents, chat, random: () => 0, at: 100 });
+  assert.equal(outcome.messages.length, 2);
+  assert.equal(outcome.messages[0].privacy, "private");
+  assert.deepEqual(outcome.messages[0].recipientIds, ["guest-b"]);
+  assert.equal(outcome.messages[1].privacy, undefined);
+});
+
 test("轻量定时抢麦不调用意愿评分，并可用一张不强制发生的生活事件卡", async () => {
   const room = roomFixture(1);
   room.schedule.strategy = "light-mic";

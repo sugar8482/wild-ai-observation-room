@@ -118,6 +118,13 @@
         </div>
 
         <form class="composer" id="composer">
+          <div class="composer-route">
+            <label for="message-recipient">发送到</label>
+            <select id="message-recipient" aria-describedby="composer-privacy-note">
+              <option value="public">群聊</option>
+            </select>
+            <span id="composer-privacy-note">群里所有成员都能看到</span>
+          </div>
           <label class="sr-only" for="message-input">输入想说的话</label>
           <textarea
             id="message-input"

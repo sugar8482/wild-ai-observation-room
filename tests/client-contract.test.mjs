@@ -125,7 +125,7 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
   assert.match(html, /其他嘉宾看不到/);
   assert.match(script, /parseAgentReply\(reply\.text\)/);
   assert.match(script, /privateMemoryOutputInstruction\(agent\)/);
-  assert.match(script, /function isPrivateMemoryInitializationRequest\(room\)/);
+  assert.match(script, /function isPrivateMemoryInitializationRequest\(room, agentId = ""\)/);
   assert.match(script, /本轮没有实际写入私人记忆/);
   assert.match(script, /appendAgentMemory/);
   assert.match(script, /compactAgentMemory/);
@@ -157,6 +157,26 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
   assert.match(memoryModule, /不要抄写房间公开时间线/);
   assert.match(memoryPrompt, /公开故事时间线/);
   assert.match(memoryPrompt, /不属于房间总结/);
+});
+
+test("群聊时间线支持真正隔离的私聊与房主遮罩查看", async () => {
+  const [html, script, styles, privateModule] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../public/private-messages.js", import.meta.url), "utf8"),
+  ]);
+  assert.match(html, /id="message-recipient"/);
+  assert.match(html, /id="composer-privacy-note"/);
+  assert.match(script, /defaultPrivateToUser/);
+  assert.match(script, /visibleMessagesForAgent\(room\.messages, agent\.id\)/);
+  assert.match(script, /publicRoomMessages\(room\.messages\)/);
+  assert.match(script, /私聊没有写进文件/);
+  assert.match(script, /isAgentToAgentPrivateMessage/);
+  assert.match(styles, /\.message\.is-private/);
+  assert.match(styles, /\.private-message-mask/);
+  assert.match(privateModule, /recipientIds/);
+  assert.match(privateModule, /其他嘉宾连这次私聊发生过都不会知道/);
 });
 
 test("房间长期记忆独立于聊天消息并注入最近原文之前", async () => {
