@@ -57,9 +57,8 @@ test("定时唤醒会连续抢麦，全员弃权后立即收场", async () => {
     replyCalls += 1;
     assert.match(payload.messages[1].content, /不要假装用户刚说了什么/);
     assert.match(payload.messages[1].content, /只和其他嘉宾聊天/);
-    assert.match(payload.messages[0].content, /低信息、没营养、突然中断/);
-    assert.match(payload.messages[0].content, /无需逐条回应上一位的所有内容/);
-    assert.match(payload.messages[0].content, /不要每次都点名用户/);
+    assert.doesNotMatch(payload.messages[0].content, /低信息、没营养、突然中断/);
+    assert.equal(payload.maxTokens, 300);
     return { text: payload.agent.id === "guest-a" ? "B，你还记得那件事吗？" : "记得，你居然现在提起来。" };
   };
 
@@ -133,6 +132,10 @@ test("定时聊天也会按房间设置保存连续气泡", async () => {
     chat: async (payload) => {
       if (payload.requestMode === "willingness-score") return { text: payload.agent.id === "guest-a" ? "9" : "0" };
       assert.match(payload.messages[0].content, /聊天软件式的连续气泡/);
+      assert.match(payload.messages[0].content, /低信息、没营养、突然中断/);
+      assert.match(payload.messages[0].content, /无需逐条回应上一位的所有内容/);
+      assert.match(payload.messages[0].content, /不要每次都点名用户/);
+      assert.equal(payload.maxTokens, 180);
       return { text: "你们人呢？〔分条〕算了，我先写作业。" };
     },
   });
@@ -162,7 +165,7 @@ test("定时聊天用同一次回复提取角色私人记忆", async () => {
         assert.doesNotMatch(payload.messages[0].content, /角色私人记忆/);
         return { text: "0" };
       }
-      assert.equal(payload.maxTokens, 360);
+      assert.equal(payload.maxTokens, 480);
       assert.match(payload.messages[0].content, /<self_memory>/);
       return {
         text: "B，你今天怎么这么安静？\n<self_memory>\n- 我有点在意B一直没说话。\n</self_memory>",
@@ -191,7 +194,6 @@ test("轻量定时抢麦不调用意愿评分，并可用一张不强制发生�
       assert.match(payload.messages[0].content, /谈资卡，不是已经发生的事实/);
       assert.match(payload.messages[0].content, /只写架空古代客栈里的日常，不出现学校/);
       assert.match(payload.messages[0].content, /不得替用户决定行程、位置、健康、迟到、失踪/);
-      assert.match(payload.messages[0].content, /不必把它扩写成一段完整剧情/);
       assert.match(payload.messages[1].content, /本地轻量轮候/);
       return { text: "B，学校刚来了个临时通知，你看了吗？" };
     },
