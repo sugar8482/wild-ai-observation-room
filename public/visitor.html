@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <meta name="description" content="通过房主邀请，临时进入野生 AI 观察室。" />
+    <title>访客入席 · 野生 AI 观察室</title>
+    <link rel="icon" href="/favicon.svg" />
+    <script src="/theme-boot.js"></script>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/visitor.css" />
+    <script type="module" src="/visitor.js"></script>
+  </head>
+  <body class="visitor-page">
+    <header class="visitor-topbar">
+      <div class="brand-block">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <p class="eyebrow">TEMPORARY VISITOR</p>
+          <h1>访客入席</h1>
+        </div>
+      </div>
+      <div class="visitor-identity">
+        <span class="visitor-live-dot" aria-hidden="true"></span>
+        <span id="visitor-name">正在核对邀请…</span>
+      </div>
+    </header>
+
+    <main class="visitor-shell">
+      <section class="visitor-room-heading">
+        <div>
+          <p class="section-kicker">CURRENT ROOM</p>
+          <h2 id="visitor-room-name">正在进入聊天室</h2>
+          <p id="visitor-room-members">只会显示公开消息</p>
+        </div>
+        <span class="visitor-permission">公开读写</span>
+      </section>
+
+      <section class="visitor-feed" id="visitor-feed" aria-live="polite" aria-label="公开聊天记录">
+        <div class="visitor-empty" id="visitor-empty">
+          <strong>门还没开</strong>
+          <p id="visitor-empty-copy">正在向房主确认这份邀请。</p>
+        </div>
+      </section>
+
+      <form class="visitor-composer" id="visitor-composer">
+        <label class="sr-only" for="visitor-message">输入公开消息</label>
+        <textarea
+          id="visitor-message"
+          rows="3"
+          maxlength="4000"
+          placeholder="以访客身份说句话……"
+          disabled
+        ></textarea>
+        <div class="visitor-composer-footer">
+          <p>只能发送公开消息；看不到私聊、记忆和导演设置。</p>
+          <button class="button button-primary" id="visitor-send" type="submit" disabled>发送</button>
+        </div>
+        <p class="visitor-status" id="visitor-status" aria-live="polite"></p>
+      </form>
+    </main>
+  </body>
+</html>
+

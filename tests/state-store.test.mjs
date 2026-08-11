@@ -301,7 +301,17 @@ test("后台定时发言不会被滞后的浏览器保存覆盖", async (context
       id: "room-timer",
       name: "定时房间",
       participantIds: ["guest-one"],
-      messages: [{ id: "message-user", kind: "user", author: "晨曦", text: "稍后见" }],
+      messages: [
+        { id: "message-user", kind: "user", author: "晨曦", text: "稍后见" },
+        {
+          id: "message-existing-private",
+          kind: "user",
+          author: "晨曦",
+          text: "这句话只给GPT",
+          privacy: "private",
+          recipientIds: ["guest-one"],
+        },
+      ],
       schedule: {
         enabled: true,
         intervalMinutes: 30,
@@ -341,6 +351,9 @@ test("后台定时发言不会被滞后的浏览器保存覆盖", async (context
 
   const merged = await store.save(stale);
   assert.equal(merged.rooms[0].messages.some((message) => message.id === "message-scheduled"), true);
+  const retainedPrivate = merged.rooms[0].messages.find((message) => message.id === "message-existing-private");
+  assert.equal(retainedPrivate.privacy, "private");
+  assert.deepEqual(retainedPrivate.recipientIds, ["guest-one"]);
   assert.equal(merged.rooms[0].schedule.dailyCount, 1);
   assert.deepEqual(merged.rooms[0].mic.scoreHistory["guest-one"], [3, 7]);
   assert.equal(merged.rooms[0].mic.revision, 2);
@@ -384,6 +397,14 @@ test("私聊收件人结构会持久化，未知收件人不会降级成公开�
           recipientIds: ["guest-b"],
         },
         {
+          id: "message-needs-repair",
+          kind: "agent",
+          author: "A",
+          text: "我私聊里再说。",
+          agentId: "guest-a",
+          privateRepairEligible: true,
+        },
+        {
           id: "message-broken-private",
           kind: "agent",
           author: "A",
@@ -397,10 +418,12 @@ test("私聊收件人结构会持久化，未知收件人不会降级成公开�
   });
   const privateMessage = saved.rooms[0].messages.find((message) => message.id === "message-private");
   const brokenMessage = saved.rooms[0].messages.find((message) => message.id === "message-broken-private");
+  const repairMessage = saved.rooms[0].messages.find((message) => message.id === "message-needs-repair");
   assert.equal(privateMessage.privacy, "private");
   assert.deepEqual(privateMessage.recipientIds, ["guest-b"]);
   assert.equal(brokenMessage.privacy, "private");
   assert.deepEqual(brokenMessage.recipientIds, ["__room_user__"]);
+  assert.equal(repairMessage.privateRepairEligible, true);
 });
 
 test("手动关闭角色记忆时保留内容但后续可再次开启", async (context) => {

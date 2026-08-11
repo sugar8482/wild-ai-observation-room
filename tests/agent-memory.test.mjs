@@ -6,6 +6,7 @@ import {
   numberedAgentMemory,
   parseAgentReply,
   privateMemoryContext,
+  privateMemoryImmediateReminder,
   privateMemoryOutputInstruction,
   validateDeepAgentMemoryResult,
 } from "../public/agent-memory.js";
@@ -13,6 +14,7 @@ import {
 test("关闭角色记忆时不向模型透露这项功能", () => {
   const agent = { name: "谢知衡", memoryEnabled: false, memory: "我在意晨曦。" };
   assert.equal(privateMemoryContext(agent), "");
+  assert.equal(privateMemoryImmediateReminder(agent), "");
   assert.equal(privateMemoryOutputInstruction(agent), "");
 });
 
@@ -22,6 +24,19 @@ test("开启后只把私人记忆交给角色本人并要求第一人称短记",
   assert.match(privateMemoryContext(agent), /其他嘉宾看不到/);
   assert.match(privateMemoryOutputInstruction(agent), /第一人称/);
   assert.match(privateMemoryOutputInstruction(agent), /不要抄写房间公开时间线/);
+});
+
+test("日常私人记忆会主动检查细小但持久的个人意义，而不是只等关系大事件", () => {
+  const instruction = privateMemoryOutputInstruction({
+    name: "GPT",
+    memoryEnabled: true,
+    memory: "- 我记得此前的一件事。",
+  });
+  assert.match(instruction, /如果遗忘它会让未来的反应少一层依据/);
+  assert.match(instruction, /一次被选择或被忽略/);
+  assert.match(instruction, /值得留下的不一定是大事件/);
+  assert.match(instruction, /都不满足才写 0 条/);
+  assert.match(instruction, /不要换句话重复记录/);
 });
 
 test("空白私人记忆在用户要求初始化时允许从既有对话实际写入", () => {
@@ -50,6 +65,37 @@ test("已有私人记忆时不会反复要求执行首次初始化", () => {
   assert.match(instruction, /不要为了证明自己有在记录而凑数/);
 });
 
+test("临场提醒把私聊和私人记忆拆成两个独立通道", () => {
+  const reminder = privateMemoryImmediateReminder({
+    name: "Kimi",
+    memoryEnabled: true,
+    memory: "- 我记得一件事。",
+  });
+  assert.match(reminder, /私聊 ≠ 私人记忆/);
+  assert.match(reminder, /<private_message> 只发送一次私聊，不会写进私人记忆/);
+  assert.match(reminder, /<self_memory> 才会写进你自己的长期私人记忆/);
+  assert.match(reminder, /公开正文 → <private_message> → <self_memory>/);
+  assert.match(reminder, /“我记了”“已经存档”“放进抽屉”都不算写入/);
+  assert.match(reminder, /不要因已发送私聊而跳过这次检查/);
+});
+
+test("直接回复用户私聊时仍提醒正文不等于私人记忆", () => {
+  const reminder = privateMemoryImmediateReminder(
+    { name: "Kimi", memoryEnabled: true, memory: "" },
+    { defaultPrivateToUser: true },
+  );
+  assert.match(reminder, /普通正文会自动作为你回复晨曦的私聊/);
+  assert.match(reminder, /仍然只是消息，不是私人记忆/);
+});
+
+test("私聊补交回合不再插入私人记忆提醒干扰修复", () => {
+  const reminder = privateMemoryImmediateReminder(
+    { name: "DeepSeek", memoryEnabled: true, memory: "" },
+    { privateRepairOnly: true },
+  );
+  assert.equal(reminder, "");
+});
+
 test("回复末尾的私人便笺会被剥离且最多保存三条", () => {
   const parsed = parseAgentReply(`先回答你：没有。\n<self_memory>\n- 我其实有点在意她追问。\n* 我怀疑江枫采也看出来了。\n3. 我暂时不想说明。\n- 第四条不应保存。\n</self_memory>`);
   assert.equal(parsed.visibleText, "先回答你：没有。");
@@ -58,6 +104,12 @@ test("回复末尾的私人便笺会被剥离且最多保存三条", () => {
     "我怀疑江枫采也看出来了。",
     "我暂时不想说明。",
   ]);
+});
+
+test("同一回复可先保留私聊标签再剥离末尾私人记忆", () => {
+  const parsed = parseAgentReply(`公开回复。\n<private_message to="guest-b">只告诉你。</private_message>\n<self_memory>\n- 我想记住这次私聊。\n</self_memory>`);
+  assert.equal(parsed.visibleText, `公开回复。\n<private_message to="guest-b">只告诉你。</private_message>`);
+  assert.deepEqual(parsed.memoryItems, ["我想记住这次私聊。"]);
 });
 
 test("截断的私人便笺不会漏进群聊，也不会误存", () => {

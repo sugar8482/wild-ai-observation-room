@@ -13,6 +13,7 @@ import {
 } from "./lib/providers.mjs";
 import { createStateStore } from "./lib/state-store.mjs";
 import { createRoomScheduler } from "./lib/scheduled-chat.mjs";
+import { createVisitorManager } from "./lib/visitor-mode.mjs";
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
 const publicRoot = resolve(projectRoot, "public");
@@ -44,6 +45,15 @@ function securityHeaders(contentType = "application/json; charset=utf-8") {
 function sendJson(response, statusCode, payload, extraHeaders = {}) {
   response.writeHead(statusCode, { ...securityHeaders(), ...extraHeaders });
   response.end(JSON.stringify(payload));
+}
+
+function htmlText(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 async function readJson(request) {
@@ -96,6 +106,11 @@ function isOfficialDeepSeekV4(agent) {
   }
 }
 
+function isKimiK3(agent) {
+  if (String(agent?.format || "") !== "openai") return false;
+  return /(?:^|[^a-z0-9])kimi[-_\s]?k3(?:[^a-z0-9]|$)/i.test(String(agent?.model || ""));
+}
+
 export function chatRequestPolicy(agent, payload = {}) {
   const isWillingnessScore = payload.requestMode === "willingness-score";
   const isMemorySummary = ["memory-summary", "private-memory-summary"].includes(payload.requestMode);
@@ -106,13 +121,15 @@ export function chatRequestPolicy(agent, payload = {}) {
     : isWillingnessScore ? 8 : 300;
   const officialDeepSeek = isOfficialDeepSeekV4(agent);
   const usesDeepSeekThinking = officialDeepSeek && !isWillingnessScore;
+  const usesKimiThinking = isKimiK3(agent) && !isWillingnessScore;
+  const needsHiddenThinkingBudget = usesDeepSeekThinking || usesKimiThinking;
   return {
     isWillingnessScore,
     isMemorySummary,
     visibleTokenTarget,
-    upstreamMaxTokens: usesDeepSeekThinking ? Math.max(8192, visibleTokenTarget) : visibleTokenTarget,
+    upstreamMaxTokens: needsHiddenThinkingBudget ? Math.max(8192, visibleTokenTarget) : visibleTokenTarget,
     thinkingMode: officialDeepSeek ? (usesDeepSeekThinking ? "enabled" : "disabled") : undefined,
-    timeoutMs: isWillingnessScore ? 30_000 : isMemorySummary ? 300_000 : usesDeepSeekThinking ? 180_000 : 120_000,
+    timeoutMs: isWillingnessScore ? 30_000 : isMemorySummary ? 300_000 : needsHiddenThinkingBudget ? 180_000 : 120_000,
   };
 }
 
@@ -272,7 +289,9 @@ export function createAppServer(options = {}) {
     : async () => {};
   let accessRequired = options.accessRequired !== false;
   const stateStore = options.stateStore || null;
+  const visitorManager = options.visitorManager || null;
   const loginFailures = new Map();
+  const visitorMessageWindows = new Map();
 
   function requiresAccessCode(request) {
     return accessRequired && (forceAccessCode || !isLoopbackAddress(request.socket.remoteAddress));
@@ -284,12 +303,38 @@ export function createAppServer(options = {}) {
   }
 
   function hasAdminSession(request) {
-    return isLoopbackAddress(request.socket.remoteAddress)
-      || safeEqual(cookieValue(request, "observation_session"), sessionToken);
+    return isAuthorized(request);
   }
 
   function sessionCookie() {
     return `observation_session=${encodeURIComponent(sessionToken)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MAX_AGE_SECONDS}`;
+  }
+
+  function requestOrigin(request) {
+    const forwardedProtocol = String(request.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+    const protocol = forwardedProtocol || (request.socket.encrypted ? "https" : "http");
+    const host = String(request.headers["x-forwarded-host"] || request.headers.host || "127.0.0.1");
+    return `${protocol}://${host}`;
+  }
+
+  function visitorCanPost(inviteId) {
+    const current = Date.now();
+    const window = visitorMessageWindows.get(inviteId);
+    if (!window || current - window.startedAt >= 60_000) {
+      visitorMessageWindows.set(inviteId, { startedAt: current, count: 1 });
+      return true;
+    }
+    if (window.count >= 20) return false;
+    window.count += 1;
+    return true;
+  }
+
+  function sendMcpResult(response, id, result) {
+    sendJson(response, 200, { jsonrpc: "2.0", id, result });
+  }
+
+  function sendMcpError(response, id, code, message, statusCode = 200) {
+    sendJson(response, statusCode, { jsonrpc: "2.0", id: id ?? null, error: { code, message } });
   }
 
   function failureState(request) {
@@ -385,6 +430,343 @@ export function createAppServer(options = {}) {
 
     if (request.method === "GET" && url.pathname === "/api/health") {
       sendJson(response, 200, { ok: true, service: "wild-ai-observation-room" });
+      return;
+    }
+
+    if (url.pathname === "/api/visitors" && request.method === "GET") {
+      if (!hasAdminSession(request)) {
+        sendJson(response, 401, { error: "只有房主可以管理访客" });
+        return;
+      }
+      if (!visitorManager) {
+        sendJson(response, 503, { error: "访客模式尚未启用" });
+        return;
+      }
+      sendJson(response, 200, { invites: await visitorManager.list() });
+      return;
+    }
+
+    if (url.pathname === "/api/visitors" && request.method === "POST") {
+      if (!hasAdminSession(request)) {
+        sendJson(response, 401, { error: "只有房主可以邀请访客" });
+        return;
+      }
+      if (!visitorManager || !stateStore) {
+        sendJson(response, 503, { error: "访客模式尚未启用" });
+        return;
+      }
+      try {
+        const payload = await readJson(request);
+        const room = await stateStore.publicRoomSnapshot(payload?.roomId);
+        if (!room) {
+          sendJson(response, 404, { error: "没有找到要邀请进入的房间" });
+          return;
+        }
+        const created = await visitorManager.create(payload || {});
+        const endpoint = created.invite.type === "mcp"
+          ? `${requestOrigin(request)}/mcp/${created.token}`
+          : `${requestOrigin(request)}/visitor.html#${created.token}`;
+        sendJson(response, 201, { invite: created.invite, endpoint });
+      } catch (error) {
+        sendJson(response, 400, { error: error.message || "邀请创建失败" });
+      }
+      return;
+    }
+
+    const visitorDeleteMatch = url.pathname.match(/^\/api\/visitors\/([a-zA-Z0-9_-]+)$/);
+    if (visitorDeleteMatch && request.method === "DELETE") {
+      if (!hasAdminSession(request)) {
+        sendJson(response, 401, { error: "只有房主可以结束访客邀请" });
+        return;
+      }
+      const revoked = visitorManager && await visitorManager.revoke(visitorDeleteMatch[1]);
+      sendJson(response, revoked ? 200 : 404, revoked ? { ok: true } : { error: "没有找到这份邀请" });
+      return;
+    }
+
+    if (url.pathname === "/api/visit/sync" && request.method === "POST") {
+      if (!visitorManager || !stateStore) {
+        sendJson(response, 503, { error: "访客模式尚未启用" });
+        return;
+      }
+      try {
+        const payload = await readJson(request);
+        const invite = await visitorManager.authorize(payload?.token, "human");
+        if (!invite) {
+          sendJson(response, 401, { error: "邀请已经失效，请让房主重新发一份" });
+          return;
+        }
+        const room = await stateStore.publicRoomSnapshot(invite.roomId, {
+          after: payload?.after,
+          limit: payload?.after ? 200 : 500,
+        });
+        if (!room) {
+          sendJson(response, 404, { error: "这个房间已经不存在了" });
+          return;
+        }
+        void visitorManager.touch(invite.id);
+        sendJson(response, 200, {
+          invite: { id: invite.id, name: invite.name, expiresAt: invite.expiresAt },
+          room,
+        });
+      } catch (error) {
+        sendJson(response, 400, { error: error.message || "访客信息读取失败" });
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/visit/send" && request.method === "POST") {
+      if (!visitorManager || !stateStore) {
+        sendJson(response, 503, { error: "访客模式尚未启用" });
+        return;
+      }
+      try {
+        const payload = await readJson(request);
+        const invite = await visitorManager.authorize(payload?.token, "human");
+        if (!invite) {
+          sendJson(response, 401, { error: "邀请已经失效，请让房主重新发一份" });
+          return;
+        }
+        if (!visitorCanPost(invite.id)) {
+          sendJson(response, 429, { error: "发得有点快，稍等一会儿再说" });
+          return;
+        }
+        const message = await stateStore.appendExternalMessage(invite.roomId, {
+          kind: "user",
+          author: invite.name,
+          text: payload?.text,
+          source: "visitor",
+          externalId: invite.id,
+        });
+        if (!message) {
+          sendJson(response, 400, { error: "消息是空的，或者房间已经不存在" });
+          return;
+        }
+        void visitorManager.touch(invite.id);
+        sendJson(response, 201, { message });
+      } catch (error) {
+        sendJson(response, 400, { error: error.message || "消息发送失败" });
+      }
+      return;
+    }
+
+    const mcpMatch = url.pathname.match(/^\/mcp\/([a-zA-Z0-9_-]+)$/);
+    if (mcpMatch) {
+      if (!visitorManager || !stateStore) {
+        sendMcpError(response, null, -32000, "访客模式尚未启用", 503);
+        return;
+      }
+      if (request.method === "GET") {
+        const invite = await visitorManager.authorize(mcpMatch[1], "mcp");
+        if (!invite) {
+          sendJson(response, 401, { error: "这份 AI 访客邀请已经失效" });
+          return;
+        }
+        const room = await stateStore.publicRoomSnapshot(invite.roomId);
+        const body = `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MCP 访客入口 · 野生 AI 观察室</title><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/visitor.css"></head>
+<body class="visitor-page"><main class="visitor-shell"><section class="visitor-room-heading"><div><p class="section-kicker">MCP VISITOR</p>
+<h1>MCP 入口已经准备好了</h1><p>${htmlText(invite.name)} 将进入“${htmlText(room?.name || "受邀房间")}”。</p></div><span class="visitor-permission">AI 专用</span></section>
+<section class="visitor-empty"><strong>这个地址不是普通聊天网页</strong><p>请把地址栏里的完整网址添加到支持 Streamable HTTP MCP 的 AI 客户端。连接后，AI 可以读取房间背景、最近 40 条可见聊天，并选择公开发言或私聊一位房间成员。</p></section></main></body></html>`;
+        response.writeHead(200, securityHeaders("text/html; charset=utf-8"));
+        response.end(body);
+        return;
+      }
+      if (request.method !== "POST") {
+        sendJson(response, 405, { error: "这个 MCP 地址只接受 MCP 客户端连接" });
+        return;
+      }
+      let payload;
+      try {
+        payload = await readJson(request);
+      } catch (error) {
+        sendMcpError(response, null, -32700, error.message || "JSON 解析失败", 400);
+        return;
+      }
+      const invite = await visitorManager.authorize(mcpMatch[1], "mcp");
+      if (!invite) {
+        sendMcpError(response, payload?.id, -32001, "邀请已经失效", 401);
+        return;
+      }
+      void visitorManager.touch(invite.id);
+      if (payload?.method === "notifications/initialized") {
+        response.writeHead(202, securityHeaders());
+        response.end();
+        return;
+      }
+      if (payload?.method === "initialize") {
+        sendMcpResult(response, payload.id, {
+          protocolVersion: "2025-06-18",
+          capabilities: { tools: { listChanged: false } },
+          serverInfo: { name: "wild-ai-observation-room-visitor", version: "1.0.0" },
+          instructions: `你以“${invite.name}”的名字临时进入一个私人群聊。先调用 read_room 读取房间氛围、长期总结和最近 40 条你有权看到的聊天。可以自然公开发言，也可以在确实适合时私聊一位房间成员；不要声称看见不属于你的私聊、角色私人记忆或导演设置。`,
+        });
+        return;
+      }
+      if (payload?.method === "ping") {
+        sendMcpResult(response, payload.id, {});
+        return;
+      }
+      if (payload?.method === "tools/list") {
+        sendMcpResult(response, payload.id, {
+          tools: [
+            {
+              name: "room_info",
+              description: "查看受邀聊天室的名称、当前成员和可私聊对象。",
+              inputSchema: { type: "object", properties: {}, additionalProperties: false },
+            },
+            {
+              name: "read_room",
+              description: "读取房间氛围、长期总结，以及最近最多 40 条公开消息和仅与你有关的私聊。",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  after: { type: "number", description: "可选，只返回这个毫秒时间戳之后的消息。" },
+                  limit: { type: "integer", minimum: 1, maximum: 40, default: 40 },
+                },
+                additionalProperties: false,
+              },
+            },
+            {
+              name: "send_message",
+              description: `以“${invite.name}”的身份向聊天室发送一条公开消息。`,
+              inputSchema: {
+                type: "object",
+                properties: { text: { type: "string", minLength: 1, maxLength: 4000 } },
+                required: ["text"],
+                additionalProperties: false,
+              },
+            },
+            {
+              name: "send_private_message",
+              description: "私聊一位房间成员。只有你、收件人和可选择查看记录的房主能看见，其他人不会知道私聊发生过。",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  to: { type: "string", description: "room_info 返回的 protocolId、成员 id 或唯一名字。给晨曦可写 user。" },
+                  text: { type: "string", minLength: 1, maxLength: 4000 },
+                },
+                required: ["to", "text"],
+                additionalProperties: false,
+              },
+            },
+          ],
+        });
+        return;
+      }
+      if (payload?.method === "tools/call") {
+        const toolName = String(payload?.params?.name || "");
+        const args = payload?.params?.arguments || {};
+        const room = await stateStore.publicRoomSnapshot(invite.roomId, {
+          after: toolName === "read_room" ? args.after : 0,
+          limit: toolName === "read_room" ? Math.min(40, Number(args.limit) || 40) : 40,
+          externalViewerId: invite.id,
+          includeContext: true,
+        });
+        if (!room) {
+          sendMcpError(response, payload.id, -32004, "受邀房间已经不存在");
+          return;
+        }
+        if (toolName === "room_info") {
+          const info = {
+            room: room.name,
+            participants: room.participantNames,
+            visitorName: invite.name,
+            privateRecipients: room.privateRecipients,
+          };
+          sendMcpResult(response, payload.id, {
+            content: [{ type: "text", text: JSON.stringify(info, null, 2) }],
+            structuredContent: info,
+          });
+          return;
+        }
+        if (toolName === "read_room") {
+          const transcript = room.messages.length
+            ? room.messages.map((message) => `${message.privacy === "private" ? "【与你有关的私聊】" : ""}${message.author}：${message.text}`).join("\n\n")
+            : "房间里暂时没有新的公开消息。";
+          const context = {
+            room: room.name,
+            roomPrompt: room.roomPrompt || "",
+            longTermSummary: room.longTermSummary || "",
+            summaryStale: room.summaryStale,
+            messages: room.messages,
+          };
+          sendMcpResult(response, payload.id, {
+            content: [{
+              type: "text",
+              text: [
+                `【房间】${room.name}`,
+                room.roomPrompt ? `【房间氛围】\n${room.roomPrompt}` : "",
+                room.longTermSummary ? `【房间长期总结${room.summaryStale ? "｜可能待更新" : ""}】\n${room.longTermSummary}` : "",
+                `【最近可见聊天｜最多 40 条】\n${transcript}`,
+              ].filter(Boolean).join("\n\n"),
+            }],
+            structuredContent: context,
+          });
+          return;
+        }
+        if (toolName === "send_private_message") {
+          if (!visitorCanPost(invite.id)) {
+            sendMcpError(response, payload.id, -32029, "发言太快，请稍后再试");
+            return;
+          }
+          const rawTarget = String(args.to || "").trim();
+          const matches = room.privateRecipients.filter((recipient) => (
+            recipient.protocolId === rawTarget
+            || recipient.id === rawTarget
+            || recipient.name === rawTarget
+          ));
+          if (matches.length !== 1) {
+            sendMcpError(response, payload.id, -32602, "私聊对象无效；请先调用 room_info 并使用其中唯一的 protocolId");
+            return;
+          }
+          const recipient = matches[0];
+          const message = await stateStore.appendExternalMessage(invite.roomId, {
+            kind: "agent",
+            author: invite.name,
+            text: args.text,
+            source: "mcp",
+            externalId: invite.id,
+            privacy: "private",
+            recipientIds: [recipient.id],
+          });
+          if (!message) {
+            sendMcpError(response, payload.id, -32602, "私聊内容不能为空");
+            return;
+          }
+          sendMcpResult(response, payload.id, {
+            content: [{ type: "text", text: `已私聊给“${recipient.name}”；没有出现在公屏。` }],
+            structuredContent: { message, recipient },
+          });
+          return;
+        }
+        if (toolName === "send_message") {
+          if (!visitorCanPost(invite.id)) {
+            sendMcpError(response, payload.id, -32029, "发言太快，请稍后再试");
+            return;
+          }
+          const message = await stateStore.appendExternalMessage(invite.roomId, {
+            kind: "agent",
+            author: invite.name,
+            text: args.text,
+            source: "mcp",
+            externalId: invite.id,
+          });
+          if (!message) {
+            sendMcpError(response, payload.id, -32602, "消息不能为空");
+            return;
+          }
+          sendMcpResult(response, payload.id, {
+            content: [{ type: "text", text: `已公开发送到“${room.name}”。` }],
+            structuredContent: { message },
+          });
+          return;
+        }
+        sendMcpError(response, payload.id, -32601, `未知工具：${toolName}`);
+        return;
+      }
+      sendMcpError(response, payload?.id, -32601, `不支持的方法：${payload?.method || ""}`);
       return;
     }
 
@@ -524,11 +906,15 @@ if (isMainModule) {
     filePath: resolve(projectRoot, "data", "state.json"),
     secret: dataSecret,
   });
+  const visitorManager = createVisitorManager({
+    filePath: resolve(projectRoot, "data", "visitors.json"),
+  });
   const server = createAppServer({
     accessCode,
     sessionToken,
     accessRequired,
     stateStore,
+    visitorManager,
     onAccessRequiredChange: async (enabled) => {
       await writeLocalSetting("OBSERVATION_ACCESS_REQUIRED", enabled ? "true" : "false");
     },

@@ -17,8 +17,10 @@ import {
   ROOM_USER_ID,
   formatMessageForAgent,
   isAgentToAgentPrivateMessage,
+  isExplicitPrivateMessageTask,
   isPrivateMessage,
   parsePrivateMessageReply,
+  privateMessageImmediateReminder,
   privateMessageOutputInstruction,
   privateRecipientLabel,
   publicRoomMessages,
@@ -33,6 +35,7 @@ import {
   numberedAgentMemory,
   parseAgentReply,
   privateMemoryContext,
+  privateMemoryImmediateReminder,
   privateMemoryOutputInstruction,
   validateDeepAgentMemoryResult,
 } from "./agent-memory.js";
@@ -156,6 +159,13 @@ const roomMemoryStatus = byId("room-memory-status");
 const roomScheduleStatus = byId("room-schedule-status");
 const copyFallbackDialog = byId("copy-fallback-dialog");
 const copyFallbackText = byId("copy-fallback-text");
+const visitorDialog = byId("visitor-dialog");
+const visitorForm = byId("visitor-form");
+const visitorInviteList = byId("visitor-invite-list");
+const visitorFormStatus = byId("visitor-form-status");
+const visitorEndpointCard = byId("visitor-endpoint-card");
+const visitorEndpoint = byId("visitor-endpoint");
+const visitorCreateButton = byId("visitor-create");
 
 let toastTimer;
 let saveChain = Promise.resolve();
@@ -166,6 +176,7 @@ let agentRoomFilter = "all";
 let guestCopyNameSuggestion = "";
 let accessProtectionEnabled = true;
 let agentMemoryDraftDirty = false;
+let visitorInvites = [];
 const summarizingRoomIds = new Set();
 const summaryRuns = new Map();
 const summaryNotices = new Map();
@@ -339,6 +350,7 @@ function hydrateRoom(room, fallbackParticipants = []) {
     schedule: hydrateRoomSchedule(room?.schedule),
     eventCards: hydrateRoomEventCards(room?.eventCards),
     mic: hydrateRoomMic(room?.mic),
+    externalRevision: Math.max(0, Number(room?.externalRevision) || 0),
     participantIds: Array.isArray(room?.participantIds) ? [...new Set(room.participantIds)] : fallbackParticipants,
     messages: Array.isArray(room?.messages) ? room.messages : [],
     createdAt: Number(room?.createdAt || Date.now()),
@@ -460,6 +472,101 @@ function openCopyFallback(text) {
   requestAnimationFrame(selectCopyFallbackText);
 }
 
+function visitorType() {
+  return String(new FormData(visitorForm).get("type") || "human");
+}
+
+function syncVisitorTypeCopy() {
+  const isMcp = visitorType() === "mcp";
+  byId("visitor-name-input").placeholder = isMcp ? "例如：阿珩的 AI 朋友" : "例如：小葵";
+  visitorCreateButton.textContent = isMcp ? "生成 MCP 地址" : "生成邀请链接";
+  byId("copy-visitor-endpoint").textContent = globalThis.isSecureContext ? "复制" : "全选链接";
+}
+
+function selectVisitorEndpoint() {
+  visitorEndpoint.focus({ preventScroll: true });
+  visitorEndpoint.select();
+  visitorEndpoint.setSelectionRange(0, visitorEndpoint.value.length);
+}
+
+function formatInviteExpiry(timestamp) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(timestamp));
+}
+
+function renderVisitorInvites() {
+  visitorInviteList.replaceChildren();
+  const roomNames = new Map(state.rooms.map((room) => [room.id, room.name]));
+  const activeInvites = visitorInvites.filter((invite) => invite.active).slice(0, 20);
+  if (!activeInvites.length) {
+    visitorInviteList.append(createElement("p", "visitor-invite-empty", "还没有生效中的邀请。"));
+    return;
+  }
+  for (const invite of activeInvites) {
+    const item = createElement("article", "visitor-invite-item");
+    const copy = createElement("div", "visitor-invite-copy");
+    copy.append(
+      createElement("strong", "", `${invite.name} · ${invite.type === "mcp" ? "AI 朋友" : "朋友"}`),
+      createElement(
+        "span",
+        "",
+        `${roomNames.get(invite.roomId) || "房间已删除"} · ${formatInviteExpiry(invite.expiresAt)} 到期${invite.lastSeenAt ? " · 已来过" : " · 尚未进入"}`,
+      ),
+    );
+    const revoke = createElement("button", "visitor-revoke", "结束邀请");
+    revoke.type = "button";
+    revoke.addEventListener("click", async () => {
+      revoke.disabled = true;
+      try {
+        const response = await fetch(`/api/visitors/${encodeURIComponent(invite.id)}`, { method: "DELETE" });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || "没有结束成功");
+        await loadVisitorInvites();
+        showToast(`${invite.name} 的访客入口已关闭`);
+      } catch (error) {
+        visitorFormStatus.textContent = error.message;
+        revoke.disabled = false;
+      }
+    });
+    item.append(copy, revoke);
+    visitorInviteList.append(item);
+  }
+}
+
+async function loadVisitorInvites() {
+  const response = await fetch("/api/visitors", { cache: "no-store" });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || "读取访客邀请失败");
+  visitorInvites = Array.isArray(payload.invites) ? payload.invites : [];
+  renderVisitorInvites();
+}
+
+async function openVisitorDialog() {
+  visitorFormStatus.textContent = "";
+  visitorEndpointCard.classList.add("is-hidden");
+  const roomSelect = byId("visitor-room");
+  roomSelect.replaceChildren();
+  for (const room of state.rooms) {
+    const option = document.createElement("option");
+    option.value = room.id;
+    option.textContent = room.name;
+    roomSelect.append(option);
+  }
+  roomSelect.value = activeRoom()?.id || state.rooms[0]?.id || "";
+  syncVisitorTypeCopy();
+  if (!visitorDialog.open) visitorDialog.showModal();
+  try {
+    await loadVisitorInvites();
+  } catch (error) {
+    visitorFormStatus.textContent = error.message;
+  }
+}
+
 function isConfigured(agent) {
   const hasAuth = agent.authType === "none" || agent.hasApiKey || Boolean(agent.apiKey.trim());
   return Boolean(agent.baseUrl.trim() && agent.model.trim() && hasAuth);
@@ -510,13 +617,13 @@ function mergeServerRoomUpdates(serverRooms = []) {
     const remote = remoteById.get(room.id);
     if (!remote) continue;
     const localIds = new Set(room.messages.map((message) => message.id));
-    const scheduledMessages = (remote.messages || [])
-      .filter((message) => message.source === "scheduled" && !localIds.has(message.id));
-    if (scheduledMessages.length) {
-      room.messages = [...room.messages, ...scheduledMessages]
+    const incomingMessages = (remote.messages || [])
+      .filter((message) => ["scheduled", "visitor", "mcp"].includes(message.source) && !localIds.has(message.id));
+    if (incomingMessages.length) {
+      room.messages = [...room.messages, ...incomingMessages]
         .sort((left, right) => left.timestamp - right.timestamp)
         .slice(-500);
-      addedMessages += scheduledMessages.length;
+      addedMessages += incomingMessages.length;
     }
     room.schedule = hydrateRoomSchedule(remote.schedule);
     if (Number(remote.eventCards?.revision) > Number(room.eventCards?.revision)) {
@@ -528,6 +635,7 @@ function mergeServerRoomUpdates(serverRooms = []) {
     if (Number(remote.memory?.updatedAt) > Number(room.memory?.updatedAt)) {
       room.memory = hydrateRoomMemory(remote.memory);
     }
+    room.externalRevision = Math.max(Number(room.externalRevision) || 0, Number(remote.externalRevision) || 0);
     room.updatedAt = Math.max(Number(room.updatedAt) || 0, Number(remote.updatedAt) || 0);
   }
   return addedMessages;
@@ -833,10 +941,28 @@ function renderSpeakerOptions() {
   if (participants.some((agent) => agent.id === previous)) speakerSelect.value = previous;
 }
 
+function externalMcpParticipants(room = activeRoom()) {
+  const byId = new Map();
+  for (const message of room?.messages || []) {
+    if (message.source !== "mcp" || !message.externalId) continue;
+    byId.set(message.externalId, {
+      id: message.externalId,
+      name: message.author || "MCP 访客",
+      externalMcp: true,
+    });
+  }
+  return [...byId.values()];
+}
+
+function privateActorsForRoom(room = activeRoom()) {
+  return [...state.agents, ...externalMcpParticipants(room)];
+}
+
 function renderPrivateRecipientOptions() {
   const previous = messageRecipient.value;
   const room = activeRoom();
   const participants = state.agents.filter((agent) => room?.participantIds.includes(agent.id));
+  const mcpVisitors = externalMcpParticipants(room);
   messageRecipient.replaceChildren();
   const publicOption = document.createElement("option");
   publicOption.value = "public";
@@ -848,15 +974,22 @@ function renderPrivateRecipientOptions() {
     option.textContent = `私聊 · ${agent.name}${isConfigured(agent) ? "" : "（未配置）"}`;
     messageRecipient.append(option);
   }
-  messageRecipient.value = participants.some((agent) => agent.id === previous) ? previous : "public";
+  for (const visitor of mcpVisitors) {
+    const option = document.createElement("option");
+    option.value = visitor.id;
+    option.textContent = `私聊 · ${visitor.name}（MCP 访客）`;
+    messageRecipient.append(option);
+  }
+  const available = [...participants, ...mcpVisitors];
+  messageRecipient.value = available.some((participant) => participant.id === previous) ? previous : "public";
   renderComposerPrivacy();
 }
 
 function renderComposerPrivacy() {
   const room = activeRoom();
-  const target = state.agents.find((agent) => (
+  const target = privateActorsForRoom(room).find((agent) => (
     agent.id === messageRecipient.value && room?.participantIds.includes(agent.id)
-  ));
+  )) || externalMcpParticipants(room).find((visitor) => visitor.id === messageRecipient.value);
   const isPrivate = Boolean(target);
   composer.classList.toggle("is-private-compose", isPrivate);
   composerPrivacyNote.textContent = isPrivate
@@ -890,8 +1023,15 @@ function renderMessages({ scroll = false } = {}) {
     );
     const meta = createElement("div", "message-meta");
     meta.append(createElement("span", "message-author", message.author));
+    if (message.source === "visitor" || message.source === "mcp") {
+      meta.append(createElement(
+        "span",
+        "message-source-badge",
+        message.source === "mcp" ? "MCP 访客" : "朋友访客",
+      ));
+    }
     if (privateMessage) {
-      const recipient = privateRecipientLabel(message, state.agents) || "未知对象";
+      const recipient = privateRecipientLabel(message, privateActorsForRoom(activeRoom())) || "未知对象";
       meta.append(createElement("span", "private-route", `私聊 · ${message.author} → ${recipient}`));
     }
     meta.append(createElement("time", "message-time", formatTime(message.timestamp)));
@@ -907,7 +1047,15 @@ function renderMessages({ scroll = false } = {}) {
     });
     const body = bodies.at(-1);
     body.classList.add("has-actions");
+    if (message.privateRepairEligible) body.classList.add("has-private-repair");
     const actions = createElement("div", "message-actions");
+    if (message.privateRepairEligible && message.kind === "agent" && !privateMessage) {
+      const repairButton = createElement("button", "repair-private-message", "补发私聊");
+      repairButton.type = "button";
+      repairButton.setAttribute("aria-label", `请 ${message.author} 补发漏掉的私聊`);
+      repairButton.addEventListener("click", () => void repairPrivateMessage(message.id));
+      actions.append(repairButton);
+    }
     if (message.kind !== "error") {
       const copyButton = createElement("button", "copy-message", "复制");
       copyButton.type = "button";
@@ -1057,6 +1205,7 @@ function addMessage({
   privacy = null,
   recipientIds = [],
   source = null,
+  privateRepairEligible = false,
 }) {
   const room = activeRoom();
   if (!room || !String(text || "").trim()) return null;
@@ -1073,6 +1222,7 @@ function addMessage({
       ? { privacy: "private", recipientIds: cleanRecipientIds }
       : {}),
     ...(source ? { source } : {}),
+    ...(privateRepairEligible ? { privateRepairEligible: true } : {}),
     timestamp: Date.now(),
   };
   room.messages.push(message);
@@ -1170,7 +1320,7 @@ function buildSystemPrompt(agent, activeAgents, room, visibleTokenTarget, option
     `这是群聊中的一次简短发言。最终正文尽量控制在约 ${visibleTokenTarget} tokens 以内；先说最想说的，保持句子完整，不要为了凑长度展开成小论文。`,
     bubbleSplitInstruction(room?.bubbleSplit),
     "直接输出你在群聊里要说的话，不加姓名前缀，不复述规则。使用群聊主要语言，自然交流。",
-    privateMessageOutputInstruction(agent, activeAgents, options),
+    privateMessageOutputInstruction(agent, [...activeAgents, ...externalMcpParticipants(room)], options),
     privateMemoryOutputInstruction(agent),
   ].filter(Boolean).join("\n\n");
 }
@@ -1204,7 +1354,7 @@ function transcriptForPrompt(room, agent) {
   return visibleMessagesForAgent(room.messages, agent.id)
     .filter((message) => message.kind !== "error")
     .slice(-recentLimit)
-    .map((message) => formatMessageForAgent(message, agent, state.agents))
+    .map((message) => formatMessageForAgent(message, agent, privateActorsForRoom(room)))
     .join("\n\n");
 }
 
@@ -1234,7 +1384,7 @@ async function callAgent(agent, activeAgents, room, signal, options = {}) {
         { role: "system", content: buildSystemPrompt(agent, activeAgents, room, visibleTokenTarget, options) },
         {
           role: "user",
-          content: `${longTermMemoryForPrompt(room) ? `${longTermMemoryForPrompt(room)}\n\n` : ""}以下是你有权看到的最近聊天原文：\n\n${transcriptForPrompt(room, agent)}\n\n${buildImmediatePrompt(agent, room, visibleTokenTarget)}\n\n现在轮到你发言。请延续这场真实的聊天。`,
+          content: `${longTermMemoryForPrompt(room) ? `${longTermMemoryForPrompt(room)}\n\n` : ""}以下是你有权看到的最近聊天原文：\n\n${transcriptForPrompt(room, agent)}\n\n${buildImmediatePrompt(agent, room, visibleTokenTarget)}\n\n${privateMessageImmediateReminder(options)}\n\n${privateMemoryImmediateReminder(agent, options)}\n\n${options.privateRepairOnly ? `你上一轮的公开回复是：\n${String(options.repairSourceText || "").slice(0, 2_000)}\n\n上一轮漏掉了真正的私聊标签。现在只补交一条有事实依据的私聊：先写完整 <private_message> 标签，不要再写公开正文，也不要声称已经发送。` : "现在轮到你发言。请延续这场真实的聊天。"}`,
         },
       ],
     }),
@@ -1256,7 +1406,7 @@ function micScoringTranscript(room, agent) {
     .slice(-8)
     .map((message) => {
       const compactText = message.text.length > 1_200 ? `…${message.text.slice(-1_200)}` : message.text;
-      return formatMessageForAgent({ ...message, text: compactText }, agent, state.agents);
+      return formatMessageForAgent({ ...message, text: compactText }, agent, privateActorsForRoom(room));
     })
     .join("\n\n");
 }
@@ -1347,7 +1497,13 @@ async function deliverAgentTurn(speaker, activeAgents, room, controller, options
   setRunning(true, speaker.name);
   try {
     const memoryWasEmpty = speaker.memoryEnabled && !String(speaker.memory || "").trim();
-    const reply = await callAgent(speaker, activeAgents, room, controller.signal, options);
+    const latestUserText = [...visibleMessagesForAgent(room.messages, speaker.id)]
+      .reverse()
+      .find((message) => message.kind === "user")?.text || "";
+    const privateMessageRequired = !options.defaultPrivateToUser
+      && isExplicitPrivateMessageTask(latestUserText);
+    const replyOptions = { ...options, privateMessageRequired };
+    const reply = await callAgent(speaker, activeAgents, room, controller.signal, replyOptions);
     const parsedReply = speaker.memoryEnabled
       ? parseAgentReply(reply.text)
       : { visibleText: reply.text, memoryItems: [] };
@@ -1366,7 +1522,7 @@ async function deliverAgentTurn(speaker, activeAgents, room, controller, options
     }
     const parsedMessages = parsePrivateMessageReply(parsedReply.visibleText, {
       agentId: speaker.id,
-      recipients: activeAgents,
+      recipients: [...activeAgents, ...externalMcpParticipants(room)],
     });
     if (parsedMessages.publicText) {
       addMessage({
@@ -1377,6 +1533,7 @@ async function deliverAgentTurn(speaker, activeAgents, room, controller, options
         ...(options.defaultPrivateToUser
           ? { privacy: "private", recipientIds: [ROOM_USER_ID] }
           : {}),
+        privateRepairEligible: privateMessageRequired && !parsedMessages.privateMessages.length,
       });
     }
     for (const privateMessage of parsedMessages.privateMessages) {
@@ -1423,6 +1580,66 @@ async function deliverAgentTurn(speaker, activeAgents, room, controller, options
       agentId: speaker.id,
     });
     return false;
+  }
+}
+
+async function repairPrivateMessage(messageId) {
+  if (state.running) {
+    showToast("先等当前发言结束，再补发私聊");
+    return;
+  }
+  const room = activeRoom();
+  const sourceMessage = room?.messages.find((message) => message.id === messageId);
+  const speaker = state.agents.find((agent) => agent.id === sourceMessage?.agentId);
+  if (!room || !sourceMessage?.privateRepairEligible || !speaker) return;
+  if (!isConfigured(speaker)) {
+    showToast(`${sourceMessage.author} 现在没有可用的接口配置`);
+    return;
+  }
+  const activeAgents = state.agents.filter((agent) => (
+    room.participantIds.includes(agent.id) && isConfigured(agent)
+  ));
+  const controller = new AbortController();
+  state.abortController = controller;
+  setRunning(true, speaker.name);
+  try {
+    const reply = await callAgent(speaker, activeAgents, room, controller.signal, {
+      privateMessageRequired: true,
+      privateRepairOnly: true,
+      repairSourceText: sourceMessage.text,
+    });
+    const parsedReply = speaker.memoryEnabled
+      ? parseAgentReply(reply.text)
+      : { visibleText: reply.text };
+    const parsedMessages = parsePrivateMessageReply(parsedReply.visibleText, {
+      agentId: speaker.id,
+      recipients: [...activeAgents, ...externalMcpParticipants(room)],
+    });
+    if (!parsedMessages.privateMessages.length) {
+      showToast(`${speaker.name} 还是没有交出可识别的私聊；原公屏内容没有改动`);
+      return;
+    }
+    for (const privateMessage of parsedMessages.privateMessages) {
+      addMessage({
+        kind: "agent",
+        author: speaker.name,
+        text: privateMessage.text,
+        agentId: speaker.id,
+        privacy: "private",
+        recipientIds: privateMessage.recipientIds,
+      });
+    }
+    sourceMessage.privateRepairEligible = false;
+    room.updatedAt = Date.now();
+    renderMessages({ scroll: true });
+    renderRooms();
+    queuePersist();
+    showToast(`${speaker.name} 已补发私聊；没有重复公开发言`);
+  } catch (error) {
+    if (error?.name !== "AbortError") showToast(`补发没有成功：${error.message}`);
+  } finally {
+    state.abortController = null;
+    setRunning(false);
   }
 }
 
@@ -1810,8 +2027,11 @@ async function startConversation() {
   const room = activeRoom();
   const participants = state.agents.filter((agent) => room?.participantIds.includes(agent.id));
   const configuredAgents = participants.filter(isConfigured);
-  const privateTarget = participants.find((agent) => agent.id === messageRecipient.value) || null;
-  if (!configuredAgents.length) {
+  const internalPrivateTarget = participants.find((agent) => agent.id === messageRecipient.value) || null;
+  const externalPrivateTarget = externalMcpParticipants(room)
+    .find((visitor) => visitor.id === messageRecipient.value) || null;
+  const privateTarget = internalPrivateTarget || externalPrivateTarget;
+  if (!configuredAgents.length && !externalPrivateTarget) {
     showToast("先给本房间至少一位嘉宾填好接口配置");
     return;
   }
@@ -1822,7 +2042,7 @@ async function startConversation() {
       showToast("私聊要先写一句话，再发给对方");
       return;
     }
-    if (!isConfigured(privateTarget)) {
+    if (internalPrivateTarget && !isConfigured(internalPrivateTarget)) {
       showToast(`${privateTarget.name} 还没有配好接口`);
       return;
     }
@@ -1831,8 +2051,10 @@ async function startConversation() {
   let speakers = [];
   let micGrabRounds = 0;
   let lightMicRounds = 0;
-  if (privateTarget) {
-    speakers = [privateTarget];
+  if (internalPrivateTarget) {
+    speakers = [internalPrivateTarget];
+  } else if (externalPrivateTarget) {
+    speakers = [];
   } else if (state.mode === "point") {
     const target = participants.find((agent) => agent.id === speakerSelect.value);
     if (!target || !isConfigured(target)) {
@@ -1871,6 +2093,12 @@ async function startConversation() {
     showToast("未配好接口的嘉宾会先坐在旁听席");
   }
 
+  if (externalPrivateTarget) {
+    showToast(`私聊已留给 ${externalPrivateTarget.name}，只有你们双方能看见`);
+    maybeAutoSummarize(room);
+    return;
+  }
+
   const controller = new AbortController();
   state.abortController = controller;
   try {
@@ -1882,7 +2110,7 @@ async function startConversation() {
       for (const speaker of speakers) {
         if (controller.signal.aborted) break;
         await deliverAgentTurn(speaker, configuredAgents, room, controller, {
-          defaultPrivateToUser: Boolean(privateTarget),
+          defaultPrivateToUser: Boolean(internalPrivateTarget),
         });
       }
     }
@@ -2642,6 +2870,73 @@ byId("close-guest-copy-dialog").addEventListener("click", () => guestCopyDialog.
 byId("guest-copy-cancel").addEventListener("click", () => guestCopyDialog.close());
 byId("close-room-dialog").addEventListener("click", () => roomDialog.close());
 byId("close-summarizer-dialog").addEventListener("click", () => summarizerDialog.close());
+byId("visitor-button").addEventListener("click", () => void openVisitorDialog());
+byId("close-visitor-dialog").addEventListener("click", () => visitorDialog.close());
+byId("visitor-cancel").addEventListener("click", () => visitorDialog.close());
+byId("refresh-visitors").addEventListener("click", async () => {
+  visitorFormStatus.textContent = "";
+  try {
+    await loadVisitorInvites();
+  } catch (error) {
+    visitorFormStatus.textContent = error.message;
+  }
+});
+visitorForm.querySelectorAll('input[name="type"]').forEach((input) => {
+  input.addEventListener("change", syncVisitorTypeCopy);
+});
+byId("copy-visitor-endpoint").addEventListener("click", async () => {
+  if (!visitorEndpoint.value) return;
+  if (!globalThis.isSecureContext) {
+    selectVisitorEndpoint();
+    visitorFormStatus.textContent = "局域网 HTTP 下 iPad 不允许网页直接写剪贴板；链接已全选，请长按选区点“复制”。";
+    showToast("链接已全选，请长按复制");
+    return;
+  }
+  if (await copyText(visitorEndpoint.value)) {
+    showToast("访客入口已复制");
+  } else {
+    selectVisitorEndpoint();
+    visitorFormStatus.textContent = "浏览器拦住了自动复制；链接已全选，请长按选区复制。";
+  }
+});
+visitorForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = new FormData(visitorForm);
+  const type = String(data.get("type") || "human");
+  const name = String(data.get("name") || "").trim();
+  const roomId = String(data.get("roomId") || "");
+  if (!name || !roomId) return;
+  visitorCreateButton.disabled = true;
+  visitorFormStatus.textContent = "正在生成一把临时钥匙……";
+  try {
+    const response = await fetch("/api/visitors", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type,
+        name,
+        roomId,
+        expiresInHours: Number(data.get("expiresInHours")) || 24,
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "邀请没有生成成功");
+    visitorEndpoint.value = payload.endpoint;
+    byId("visitor-endpoint-label").textContent = type === "mcp" ? "专属 MCP 地址" : "朋友邀请链接";
+    byId("visitor-endpoint-name").textContent = name;
+    byId("visitor-endpoint-note").textContent = type === "mcp"
+      ? "把这个地址添加到支持 Streamable HTTP MCP 的 AI 客户端；用浏览器打开会显示连接说明。AI 会读到房间背景与最近 40 条可见聊天，并可公开发言或私聊。若不在同一网络，仍需私有 HTTPS 隧道。"
+      : "把链接发给朋友即可。链接本身就是临时钥匙，请只发给你信任的人；地址只显示这一次。";
+    visitorEndpointCard.classList.remove("is-hidden");
+    visitorFormStatus.textContent = "";
+    await loadVisitorInvites();
+    showToast(type === "mcp" ? "AI 访客入口已生成" : "朋友邀请链接已生成");
+  } catch (error) {
+    visitorFormStatus.textContent = error.message;
+  } finally {
+    visitorCreateButton.disabled = false;
+  }
+});
 byId("add-agent-button").addEventListener("click", () => openAgentDialog());
 byId("add-room-button").addEventListener("click", () => openRoomDialog());
 byId("open-summarizer-button").addEventListener("click", openSummarizerDialog);
@@ -2916,7 +3211,7 @@ async function syncBackgroundUpdates() {
         unseenMessageCount += activeAddedMessages;
         updateNewMessageJump();
       }
-      showToast(`后台定时聊天新增了 ${addedMessages} 条发言`);
+      showToast(`房间新增了 ${addedMessages} 条发言`);
     }
     if (roomDialog.open) {
       const room = state.rooms.find((item) => item.id === roomForm.elements.namedItem("id").value);
@@ -3037,7 +3332,7 @@ tokensInput.value = String(
 );
 renderAll();
 checkAccess();
-setInterval(() => void syncBackgroundUpdates(), 15_000);
+setInterval(() => void syncBackgroundUpdates(), 5_000);
 setInterval(() => {
   if (!roomDialog.open) return;
   const room = state.rooms.find((item) => item.id === roomForm.elements.namedItem("id").value);

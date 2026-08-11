@@ -38,6 +38,26 @@ test("抢麦评分使用短输出并关闭 DeepSeek 隐藏思考", () => {
   assert.equal(privateSummaryPolicy.upstreamMaxTokens, 8192);
 });
 
+test("Kimi K3 正式发言有隐藏思考余量但抢麦评分仍保持短输出", () => {
+  const agent = {
+    format: "openai",
+    baseUrl: "https://example.com/v1",
+    model: "[乾坤按量]kimi-k3",
+  };
+  const replyPolicy = chatRequestPolicy(agent, { maxTokens: 480 });
+  assert.equal(replyPolicy.upstreamMaxTokens, 8192);
+  assert.equal(replyPolicy.thinkingMode, undefined);
+  assert.equal(replyPolicy.timeoutMs, 180_000);
+
+  const scorePolicy = chatRequestPolicy(agent, {
+    requestMode: "willingness-score",
+    maxTokens: 8,
+  });
+  assert.equal(scorePolicy.upstreamMaxTokens, 8);
+  assert.equal(scorePolicy.thinkingMode, undefined);
+  assert.equal(scorePolicy.timeoutMs, 30_000);
+});
+
 test("本地服务提供健康检查和主页面", async (context) => {
   const server = createAppServer();
   server.listen(0, "127.0.0.1");

@@ -54,6 +54,13 @@ test("局域网 HTTP 下复制消息有 iPad 兼容兜底", async () => {
   assert.match(script, /openCopyFallback\(message\.text\)/);
 });
 
+test("访客链接在局域网 iPad 上不会假装复制成功", async () => {
+  const script = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.match(script, /function selectVisitorEndpoint\(\)/);
+  assert.match(script, /局域网 HTTP 下 iPad 不允许网页直接写剪贴板/);
+  assert.match(script, /链接已全选，请长按复制/);
+});
+
 test("嘉宾席可只看本房成员并按聊天室或未分房筛选", async () => {
   const [html, script, styles] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
@@ -125,6 +132,7 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
   assert.match(html, /其他嘉宾看不到/);
   assert.match(script, /parseAgentReply\(reply\.text\)/);
   assert.match(script, /privateMemoryOutputInstruction\(agent\)/);
+  assert.match(script, /privateMemoryImmediateReminder\(agent, options\)/);
   assert.match(script, /function isPrivateMemoryInitializationRequest\(room, agentId = ""\)/);
   assert.match(script, /本轮没有实际写入私人记忆/);
   assert.match(script, /appendAgentMemory/);
@@ -151,7 +159,8 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
   assert.match(html, /日常每轮可认真选择写 0～2 条/);
   assert.match(html, /首次初始化可写 1～3 条/);
   assert.doesNotMatch(script, /agent: state\.summarizer,[\s\S]{0,240}requestMode: "private-memory-summary"/);
-  assert.match(memoryModule, /只有出现新变化、重要误会、关系转折或尚未公开/);
+  assert.match(memoryModule, /如果遗忘它会让未来的反应少一层依据/);
+  assert.match(memoryModule, /值得留下的不一定是大事件/);
   assert.match(script, /PRIVATE_MEMORY_TOKEN_ALLOWANCE/);
   assert.match(memoryModule, /<self_memory>/);
   assert.match(memoryModule, /不要抄写房间公开时间线/);
@@ -173,8 +182,11 @@ test("群聊时间线支持真正隔离的私聊与房主遮罩查看", async ()
   assert.match(script, /publicRoomMessages\(room\.messages\)/);
   assert.match(script, /私聊没有写进文件/);
   assert.match(script, /isAgentToAgentPrivateMessage/);
+  assert.match(script, /repairPrivateMessage/);
+  assert.match(script, /补发私聊/);
   assert.match(styles, /\.message\.is-private/);
   assert.match(styles, /\.private-message-mask/);
+  assert.match(styles, /\.repair-private-message/);
   assert.match(privateModule, /recipientIds/);
   assert.match(privateModule, /其他嘉宾连这次私聊发生过都不会知道/);
 });
@@ -305,6 +317,13 @@ test("iPad 顶部可以切换房间并温和提示新消息", async () => {
   assert.match(script, /unseenMessageCount \+= activeAddedMessages/);
   assert.match(styles, /\.mobile-room-switcher \{[\s\S]*position: sticky/);
   assert.match(styles, /\.new-message-jump/);
+});
+
+test("iPad 总工具栏与当前房间栏会按顺序吸顶而不互相遮挡", async () => {
+  const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
+  assert.match(styles, /@media \(max-width: 840px\)[\s\S]*?\.topbar\s*\{[\s\S]*?position:\s*sticky;[\s\S]*?top:\s*0;[\s\S]*?z-index:\s*17;/);
+  assert.match(styles, /@media \(max-width: 840px\)[\s\S]*?\.mobile-room-switcher\s*\{[\s\S]*?position:\s*sticky;[\s\S]*?top:\s*72px;/);
+  assert.match(styles, /@media \(max-width: 600px\)[\s\S]*?\.mobile-room-switcher\s*\{[\s\S]*?top:\s*66px;/);
 });
 
 test("自由聊可以选择轮流接话、轻量抢麦或并行评分抢麦", async () => {

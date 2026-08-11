@@ -4,8 +4,10 @@ import {
   ROOM_USER_ID,
   formatMessageForAgent,
   isAgentToAgentPrivateMessage,
+  isExplicitPrivateMessageTask,
   messageVisibleToAgent,
   parsePrivateMessageReply,
+  privateMessageImmediateReminder,
   privateMessageOutputInstruction,
   publicRoomMessages,
   visibleMessagesForAgent,
@@ -76,4 +78,32 @@ test("私聊协议列出稳定收件人并说明被用户私聊时正文默认�
   assert.match(instruction, /to="guest-b"（B）/);
   assert.doesNotMatch(instruction, /to="guest-a"（A）/);
   assert.match(instruction, /普通正文会自动作为你私聊给晨曦的回复/);
+});
+
+test("普通群聊允许角色按语境主动私聊，但不把私聊变成每轮任务", () => {
+  const instruction = privateMessageOutputInstruction(agents[0], agents);
+  assert.match(instruction, /自行发起私聊，不必等晨曦点名或要求/);
+  assert.match(instruction, /当前真实对话/);
+  assert.match(instruction, /大多数普通轮次不私聊完全正常/);
+  assert.match(instruction, /不要机械地一来一回/);
+  assert.match(instruction, /公开正文不必宣布自己另发了私聊/);
+});
+
+test("临场提醒明确口头声称不等于真正发送私聊", () => {
+  const publicReminder = privateMessageImmediateReminder();
+  assert.match(publicReminder, /<private_message to="user">/);
+  assert.match(publicReminder, /“我私聊了”“已经发了”不算发送/);
+
+  const directReminder = privateMessageImmediateReminder({ defaultPrivateToUser: true });
+  assert.match(directReminder, /普通正文会自动保密/);
+  assert.doesNotMatch(directReminder, /<private_message to="user">/);
+});
+
+test("明确私聊任务会要求先交标签，普通权限讨论不会误判", () => {
+  assert.equal(isExplicitPrivateMessageTask("每个人挑一个成员，发送一条私聊内容。"), true);
+  assert.equal(isExplicitPrivateMessageTask("公开回一句，并额外私聊给我一句。"), true);
+  assert.equal(isExplicitPrivateMessageTask("是不是只能看到自己的私聊内容？"), false);
+  const reminder = privateMessageImmediateReminder({ privateMessageRequired: true });
+  assert.match(reminder, /先输出一条完整的 <private_message>/);
+  assert.match(reminder, /私聊里说.*不算完成/);
 });

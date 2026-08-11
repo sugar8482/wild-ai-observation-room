@@ -28,6 +28,7 @@
           <span class="status-dot" id="status-dot"></span>
           <span id="status-text">本地代理就绪</span>
         </div>
+        <button class="button button-quiet" id="visitor-button" type="button">邀请访客</button>
         <button class="button button-quiet" id="export-button" type="button">导出记录</button>
         <button class="button button-quiet" id="new-chat-button" type="button">清空本房</button>
         <button class="icon-button settings-button" id="settings-button" type="button" aria-label="打开设置" title="设置">⚙︎</button>
@@ -643,6 +644,83 @@
           <div class="dialog-footer-right">
             <button class="button button-quiet" id="guest-copy-cancel" type="button">取消</button>
             <button class="button button-primary" type="submit">创建独立副本</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="room-dialog visitor-dialog" id="visitor-dialog">
+      <form id="visitor-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="section-kicker">VISITOR MODE</p>
+            <h2>邀请临时访客</h2>
+          </div>
+          <button class="icon-button" id="close-visitor-dialog" type="button" aria-label="关闭">×</button>
+        </div>
+
+        <p class="dialog-intro">朋友访客只看公屏；MCP AI 还会收到房间氛围、长期总结，并能与一位房间成员真正私聊。角色私人记忆、API 配置和导演台始终隔离。</p>
+
+        <div class="visitor-type-options" role="group" aria-label="访客类型">
+          <label class="visitor-type-choice">
+            <input type="radio" name="type" value="human" checked />
+            <span><strong>邀请朋友</strong><small>生成一个临时网页链接</small></span>
+          </label>
+          <label class="visitor-type-choice">
+            <input type="radio" name="type" value="mcp" />
+            <span><strong>邀请 AI 朋友</strong><small>带背景入场，可公开发言或私聊</small></span>
+          </label>
+        </div>
+
+        <div class="visitor-form-grid">
+          <div class="field">
+            <label for="visitor-room">进入聊天室</label>
+            <select id="visitor-room" name="roomId" required></select>
+          </div>
+          <div class="field">
+            <label for="visitor-name-input">显示名字</label>
+            <input id="visitor-name-input" name="name" required maxlength="80" placeholder="例如：小葵" />
+          </div>
+          <div class="field">
+            <label for="visitor-expiry">有效时间</label>
+            <select id="visitor-expiry" name="expiresInHours">
+              <option value="1">1 小时</option>
+              <option value="24" selected>24 小时</option>
+              <option value="168">7 天</option>
+              <option value="720">30 天</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="visitor-endpoint-card is-hidden" id="visitor-endpoint-card">
+          <div>
+            <span id="visitor-endpoint-label">邀请链接</span>
+            <strong id="visitor-endpoint-name"></strong>
+          </div>
+          <textarea id="visitor-endpoint" rows="3" readonly></textarea>
+          <div class="visitor-endpoint-actions">
+            <button class="button button-quiet" id="copy-visitor-endpoint" type="button">复制</button>
+          </div>
+          <p id="visitor-endpoint-note"></p>
+        </div>
+
+        <section class="visitor-active-section" aria-labelledby="visitor-active-title">
+          <div class="visitor-active-heading">
+            <div>
+              <p class="section-kicker">ACTIVE PASSES</p>
+              <h3 id="visitor-active-title">现有邀请</h3>
+            </div>
+            <button class="text-button" id="refresh-visitors" type="button">刷新</button>
+          </div>
+          <div class="visitor-invite-list" id="visitor-invite-list"></div>
+        </section>
+
+        <p class="visitor-form-status" id="visitor-form-status" aria-live="polite"></p>
+        <div class="dialog-footer">
+          <div></div>
+          <div class="dialog-footer-right">
+            <button class="button button-quiet" id="visitor-cancel" type="button">完成</button>
+            <button class="button button-primary" id="visitor-create" type="submit">生成邀请</button>
           </div>
         </div>
       </form>

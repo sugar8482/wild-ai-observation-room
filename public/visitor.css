@@ -1,0 +1,235 @@
+.visitor-page {
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.visitor-topbar {
+  position: sticky;
+  z-index: 20;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 78px;
+  padding: 14px clamp(18px, 4vw, 52px);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 94%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.visitor-topbar h1 {
+  margin: 2px 0 0;
+  font-family: Georgia, "Songti SC", serif;
+  font-size: 21px;
+  font-weight: 600;
+}
+
+.visitor-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.visitor-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3a9b5a;
+  box-shadow: 0 0 0 4px color-mix(in srgb, #3a9b5a 14%, transparent);
+}
+
+.visitor-shell {
+  display: grid;
+  grid-template-rows: auto minmax(360px, 1fr) auto;
+  width: min(900px, 100%);
+  min-height: calc(100vh - 78px);
+  margin: 0 auto;
+  border-inline: 1px solid var(--soft-line);
+}
+
+.visitor-room-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px clamp(18px, 4vw, 34px) 18px;
+  border-bottom: 1px solid var(--soft-line);
+}
+
+.visitor-room-heading h2 {
+  margin: 5px 0 4px;
+  font-family: Georgia, "Songti SC", serif;
+  font-size: clamp(23px, 4vw, 30px);
+  font-weight: 500;
+}
+
+.visitor-room-heading > div > p:last-child {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.visitor-permission {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.visitor-feed {
+  min-height: 360px;
+  max-height: calc(100vh - 315px);
+  padding: 24px clamp(18px, 4vw, 34px);
+  overflow-y: auto;
+}
+
+.visitor-empty {
+  display: grid;
+  place-content: center;
+  min-height: 260px;
+  text-align: center;
+}
+
+.visitor-empty strong {
+  font-family: Georgia, "Songti SC", serif;
+  font-size: 22px;
+  font-weight: 500;
+}
+
+.visitor-empty p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.visitor-message + .visitor-message {
+  margin-top: 22px;
+}
+
+.visitor-message-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+  font-size: 11px;
+}
+
+.visitor-message-meta span {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.visitor-message-meta time {
+  color: var(--quiet);
+}
+
+.visitor-message-body {
+  width: fit-content;
+  max-width: min(680px, 92%);
+  padding: 13px 15px;
+  border-left: 2px solid var(--ink);
+  background: var(--wash);
+  font-size: 14px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.visitor-message.is-own .visitor-message-meta,
+.visitor-message.is-own .visitor-message-body {
+  margin-left: auto;
+}
+
+.visitor-message.is-own .visitor-message-meta {
+  justify-content: flex-end;
+}
+
+.visitor-message.is-own .visitor-message-body {
+  border: 1px solid var(--line);
+  border-left-width: 2px;
+  background: var(--paper);
+}
+
+.visitor-composer {
+  position: sticky;
+  bottom: 0;
+  padding: 14px clamp(18px, 4vw, 34px) 18px;
+  border-top: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.visitor-composer textarea {
+  width: 100%;
+  min-height: 82px;
+  padding: 12px 13px;
+  resize: vertical;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.visitor-composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 9px;
+}
+
+.visitor-composer-footer p,
+.visitor-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.visitor-status {
+  min-height: 16px;
+  padding-top: 7px;
+  color: var(--error);
+}
+
+@media (max-width: 600px) {
+  .visitor-topbar {
+    min-height: 68px;
+  }
+
+  .visitor-topbar .eyebrow,
+  .visitor-room-heading .section-kicker {
+    display: none;
+  }
+
+  .visitor-shell {
+    min-height: calc(100vh - 68px);
+    border: 0;
+  }
+
+  .visitor-room-heading {
+    align-items: center;
+    padding-block: 16px;
+  }
+
+  .visitor-room-heading h2 {
+    margin-top: 0;
+    font-size: 21px;
+  }
+
+  .visitor-room-heading > div > p:last-child,
+  .visitor-composer-footer p {
+    display: none;
+  }
+
+  .visitor-feed {
+    max-height: calc(100vh - 270px);
+  }
+}
+
