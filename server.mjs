@@ -901,6 +901,7 @@ if (isMainModule) {
   const accessCode = process.env.OBSERVATION_ACCESS_CODE || settings.OBSERVATION_ACCESS_CODE || randomBytes(4).toString("hex");
   const sessionToken = process.env.OBSERVATION_SESSION_TOKEN || settings.OBSERVATION_SESSION_TOKEN || randomBytes(32).toString("hex");
   const accessRequired = String(process.env.OBSERVATION_ACCESS_REQUIRED || settings.OBSERVATION_ACCESS_REQUIRED || "true").toLowerCase() !== "false";
+  const forceAccessCode = String(process.env.OBSERVATION_FORCE_ACCESS_CODE || settings.OBSERVATION_FORCE_ACCESS_CODE || "false").toLowerCase() === "true";
   const dataSecret = process.env.OBSERVATION_DATA_KEY || settings.OBSERVATION_DATA_KEY || accessCode;
   const stateStore = createStateStore({
     filePath: resolve(projectRoot, "data", "state.json"),
@@ -913,6 +914,7 @@ if (isMainModule) {
     accessCode,
     sessionToken,
     accessRequired,
+    forceAccessCode,
     stateStore,
     visitorManager,
     onAccessRequiredChange: async (enabled) => {
