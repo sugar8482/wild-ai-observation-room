@@ -89,3 +89,36 @@ test("启用后会建表并在一个事务里镜像全部档案", async () => {
   assert.equal(queries.some((query) => /INSERT INTO room_summary_versions/.test(query.text)), true);
   await archive.close();
 });
+
+test("数据库暂时失败时保留最新快照，恢复后可以补存且不向聊天抛错", async () => {
+  let schemaShouldFail = true;
+  const client = {
+    async query() { return { rows: [] }; },
+    release() {},
+  };
+  const pool = {
+    async query() {
+      if (schemaShouldFail) throw new Error("database unavailable");
+      return { rows: [] };
+    },
+    async connect() { return client; },
+    async end() {},
+  };
+  const archive = createPostgresArchive({
+    pool,
+    retryMs: 60_000,
+    logger: { warn() {} },
+  });
+
+  assert.equal(archive.enqueue(snapshot), true);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(archive.status().state, "error");
+  assert.equal(archive.status().pending, true);
+
+  schemaShouldFail = false;
+  assert.equal(archive.enqueue(snapshot), true);
+  assert.equal(await archive.flush({ timeoutMs: 1_000 }), true);
+  assert.equal(archive.status().state, "ready");
+  assert.equal(archive.status().pending, false);
+  await archive.close();
+});
