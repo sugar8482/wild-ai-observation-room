@@ -129,7 +129,7 @@ export function chatRequestPolicy(agent, payload = {}) {
     visibleTokenTarget,
     upstreamMaxTokens: needsHiddenThinkingBudget ? Math.max(8192, visibleTokenTarget) : visibleTokenTarget,
     thinkingMode: officialDeepSeek ? (usesDeepSeekThinking ? "enabled" : "disabled") : undefined,
-    timeoutMs: isWillingnessScore ? 30_000 : isMemorySummary ? 300_000 : needsHiddenThinkingBudget ? 180_000 : 120_000,
+    timeoutMs: isWillingnessScore ? 30_000 : isMemorySummary ? 900_000 : needsHiddenThinkingBudget ? 180_000 : 120_000,
   };
 }
 
