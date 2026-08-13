@@ -14,6 +14,7 @@ import {
 import { createStateStore } from "./lib/state-store.mjs";
 import { createRoomScheduler } from "./lib/scheduled-chat.mjs";
 import { createRoomSummaryJobs } from "./lib/room-summary-jobs.mjs";
+import { createPostgresArchive } from "./lib/postgres-archive.mjs";
 import { createVisitorManager } from "./lib/visitor-mode.mjs";
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
@@ -292,6 +293,7 @@ export function createAppServer(options = {}) {
   const stateStore = options.stateStore || null;
   const visitorManager = options.visitorManager || null;
   const summaryJobs = options.summaryJobs || null;
+  const archive = options.archive || null;
   const loginFailures = new Map();
   const visitorMessageWindows = new Map();
 
@@ -796,6 +798,35 @@ export function createAppServer(options = {}) {
       }
     }
 
+    if (url.pathname === "/api/archive") {
+      if (!isAuthorized(request)) {
+        sendJson(response, 401, { error: "需要先输入访问码" });
+        return;
+      }
+      if (request.method === "GET") {
+        sendJson(response, 200, archive?.status?.() || { enabled: false, state: "disabled" });
+        return;
+      }
+    }
+
+    if (url.pathname === "/api/archive/sync" && request.method === "POST") {
+      if (!isAuthorized(request)) {
+        sendJson(response, 401, { error: "需要先输入访问码" });
+        return;
+      }
+      if (!archive?.status?.().enabled) {
+        sendJson(response, 409, { error: "PostgreSQL 档案馆尚未启用；当前仍由本地 JSON 正常保存" });
+        return;
+      }
+      if (!stateStore) {
+        sendJson(response, 503, { error: "持久化存储尚未启用" });
+        return;
+      }
+      archive.enqueue(await stateStore.clientState());
+      sendJson(response, 202, archive.status());
+      return;
+    }
+
     if (url.pathname === "/api/room-summary-jobs") {
       if (!isAuthorized(request)) {
         sendJson(response, 401, { error: "需要先输入访问码" });
@@ -952,9 +983,17 @@ if (isMainModule) {
   const accessRequired = String(process.env.OBSERVATION_ACCESS_REQUIRED || settings.OBSERVATION_ACCESS_REQUIRED || "true").toLowerCase() !== "false";
   const forceAccessCode = String(process.env.OBSERVATION_FORCE_ACCESS_CODE || settings.OBSERVATION_FORCE_ACCESS_CODE || "false").toLowerCase() === "true";
   const dataSecret = process.env.OBSERVATION_DATA_KEY || settings.OBSERVATION_DATA_KEY || accessCode;
+  const databaseUrl = process.env.OBSERVATION_DATABASE_URL || settings.OBSERVATION_DATABASE_URL || "";
+  const databaseSsl = String(process.env.OBSERVATION_DATABASE_SSL || settings.OBSERVATION_DATABASE_SSL || "false")
+    .toLowerCase() === "true";
+  const archive = createPostgresArchive({
+    connectionString: databaseUrl,
+    ssl: databaseSsl,
+  });
   const stateStore = createStateStore({
     filePath: resolve(projectRoot, "data", "state.json"),
     secret: dataSecret,
+    onStateChange: (snapshot) => archive.enqueue(snapshot),
   });
   const visitorManager = createVisitorManager({
     filePath: resolve(projectRoot, "data", "visitors.json"),
@@ -963,7 +1002,10 @@ if (isMainModule) {
   const serverChat = async (payload, { signal } = {}) => {
     const response = await fetch(`${schedulerOrigin}/api/chat`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        cookie: `observation_session=${encodeURIComponent(sessionToken)}`,
+      },
       body: JSON.stringify(payload),
       signal,
     });
@@ -981,6 +1023,7 @@ if (isMainModule) {
     stateStore,
     visitorManager,
     summaryJobs,
+    archive,
     onAccessRequiredChange: async (enabled) => {
       await writeLocalSetting("OBSERVATION_ACCESS_REQUIRED", enabled ? "true" : "false");
     },
@@ -993,9 +1036,11 @@ if (isMainModule) {
   server.on("close", () => {
     scheduler.stop();
     summaryJobs.stop();
+    void archive.close();
   });
   server.listen(port, host, () => {
     scheduler.start();
+    void stateStore.clientState().then((snapshot) => archive.enqueue(snapshot));
     console.log(`野生 AI 观察室已启动：http://127.0.0.1:${port}`);
     for (const address of lanAddresses()) console.log(`iPad 地址：http://${address}:${port}`);
     console.log(accessRequired ? `局域网访问码：${accessCode}` : "局域网访问码保护：已关闭");

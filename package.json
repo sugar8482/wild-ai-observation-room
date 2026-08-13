@@ -30,5 +30,8 @@
     "start": "node server.mjs",
     "build": "node scripts/build.mjs",
     "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
   }
 }

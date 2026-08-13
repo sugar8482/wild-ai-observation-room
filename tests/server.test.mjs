@@ -3,6 +3,30 @@ import { once } from "node:events";
 import test from "node:test";
 import { chatRequestPolicy, createAppServer } from "../server.mjs";
 
+test("数据库档案馆状态可查询并能手动触发补存", async (context) => {
+  let queued = null;
+  const archive = {
+    status: () => ({ enabled: true, state: queued ? "syncing" : "ready", counts: { rooms: 1, messages: 2 } }),
+    enqueue: (snapshot) => { queued = snapshot; return true; },
+  };
+  const stateStore = {
+    clientState: async () => ({ rooms: [{ id: "room-one" }], agents: [] }),
+  };
+  const server = createAppServer({ archive, stateStore });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${server.address().port}`;
+
+  const status = await fetch(`${origin}/api/archive`);
+  assert.equal(status.status, 200);
+  assert.equal((await status.json()).enabled, true);
+
+  const sync = await fetch(`${origin}/api/archive/sync`, { method: "POST" });
+  assert.equal(sync.status, 202);
+  assert.deepEqual(queued, { rooms: [{ id: "room-one" }], agents: [] });
+});
+
 test("后台总结任务接口可以提交、查询和取消任务", async (context) => {
   const job = {
     id: "summary-test",

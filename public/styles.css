@@ -1393,6 +1393,41 @@ input[type="range"] {
   margin-bottom: 14px;
 }
 
+.settings-archive .access-copy {
+  margin-bottom: 10px;
+}
+
+.archive-status-badge {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.archive-status-badge.is-ready {
+  border-color: color-mix(in srgb, var(--success) 42%, var(--line));
+  color: var(--success);
+}
+
+.archive-status-badge.is-error {
+  border-color: color-mix(in srgb, var(--error) 42%, var(--line));
+  color: var(--error);
+}
+
+.archive-counts {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.settings-archive #archive-sync {
+  width: 100%;
+  margin: 0;
+}
+
 .security-dialog .security-toggle input {
   width: 18px;
   height: 18px;

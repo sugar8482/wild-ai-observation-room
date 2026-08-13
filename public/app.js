@@ -3209,6 +3209,53 @@ async function checkAccess() {
   }
 }
 
+function renderArchiveStatus(status = {}) {
+  const badge = byId("archive-status-badge");
+  const copy = byId("archive-status-copy");
+  const counts = byId("archive-counts");
+  const syncButton = byId("archive-sync");
+  badge.className = "archive-status-badge";
+  counts.classList.toggle("is-hidden", !status.counts);
+  counts.textContent = status.counts
+    ? `房间 ${status.counts.rooms || 0} · 原文 ${status.counts.messages || 0} · 总结 ${status.counts.summaries || 0} · 私人记忆 ${status.counts.privateMemories || 0}`
+    : "";
+  syncButton.disabled = !status.enabled || status.syncing;
+
+  if (!status.enabled) {
+    badge.textContent = "本地模式";
+    copy.textContent = "没有配置数据库，聊天室仍会完整保存在本地 JSON；从 GitHub 下载后无需数据库也能正常使用。";
+    return;
+  }
+  if (status.state === "error") {
+    badge.classList.add("is-error");
+    badge.textContent = "等待补存";
+    copy.textContent = `数据库暂时没有接通，聊天不受影响；恢复后会自动补存。${status.lastError ? ` 最近错误：${status.lastError}` : ""}`;
+    return;
+  }
+  if (status.syncing || status.pending || status.state === "connecting") {
+    badge.textContent = "同步中";
+    copy.textContent = "本地 JSON 已经保存，档案馆正在后台补存，不用停在这个页面等待。";
+    return;
+  }
+  badge.classList.add("is-ready");
+  badge.textContent = "已归档";
+  const syncedAt = status.lastSuccessAt ? new Date(status.lastSuccessAt).toLocaleString("zh-CN") : "刚刚";
+  copy.textContent = `档案馆连接正常，最近一次完整同步：${syncedAt}。`;
+}
+
+async function refreshArchiveStatus() {
+  try {
+    const response = await fetch("/api/archive", { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "无法读取档案馆状态");
+    renderArchiveStatus(payload);
+    return payload;
+  } catch (error) {
+    renderArchiveStatus({ enabled: true, state: "error", lastError: error.message });
+    return null;
+  }
+}
+
 byId("settings-button").addEventListener("click", async () => {
   securityResult.textContent = "";
   byId("security-access-code").value = "";
@@ -3220,8 +3267,26 @@ byId("settings-button").addEventListener("click", async () => {
     accessProtectionEnabled = payload.protectionEnabled !== false;
     byId("security-access-enabled").checked = accessProtectionEnabled;
     securityDialog.showModal();
+    void refreshArchiveStatus();
   } catch (error) {
     showToast(error.message);
+  }
+});
+
+byId("archive-sync").addEventListener("click", async () => {
+  const button = byId("archive-sync");
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/archive/sync", { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "没有开始补存");
+    renderArchiveStatus(payload);
+    showToast("已交给 VPS 后台补存，可以关闭设置");
+    setTimeout(() => void refreshArchiveStatus(), 800);
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    button.disabled = false;
   }
 });
 
