@@ -13,6 +13,7 @@ import {
 } from "./lib/providers.mjs";
 import { createStateStore } from "./lib/state-store.mjs";
 import { createRoomScheduler } from "./lib/scheduled-chat.mjs";
+import { createRoomSummaryJobs } from "./lib/room-summary-jobs.mjs";
 import { createVisitorManager } from "./lib/visitor-mode.mjs";
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
@@ -290,6 +291,7 @@ export function createAppServer(options = {}) {
   let accessRequired = options.accessRequired !== false;
   const stateStore = options.stateStore || null;
   const visitorManager = options.visitorManager || null;
+  const summaryJobs = options.summaryJobs || null;
   const loginFailures = new Map();
   const visitorMessageWindows = new Map();
 
@@ -794,6 +796,53 @@ export function createAppServer(options = {}) {
       }
     }
 
+    if (url.pathname === "/api/room-summary-jobs") {
+      if (!isAuthorized(request)) {
+        sendJson(response, 401, { error: "需要先输入访问码" });
+        return;
+      }
+      if (!summaryJobs) {
+        sendJson(response, 503, { error: "后台记忆整理尚未启用" });
+        return;
+      }
+      try {
+        if (request.method === "GET") {
+          sendJson(response, 200, { jobs: summaryJobs.list({ roomId: url.searchParams.get("roomId") || "" }) });
+          return;
+        }
+        if (request.method === "POST") {
+          const job = await summaryJobs.start(await readJson(request));
+          sendJson(response, 202, { job });
+          return;
+        }
+      } catch (error) {
+        sendJson(response, Number(error?.statusCode) || 400, { error: error?.message || "后台整理任务启动失败" });
+        return;
+      }
+    }
+
+    const summaryJobMatch = url.pathname.match(/^\/api\/room-summary-jobs\/([a-zA-Z0-9_-]+)$/);
+    if (summaryJobMatch) {
+      if (!isAuthorized(request)) {
+        sendJson(response, 401, { error: "需要先输入访问码" });
+        return;
+      }
+      if (!summaryJobs) {
+        sendJson(response, 503, { error: "后台记忆整理尚未启用" });
+        return;
+      }
+      if (request.method === "GET") {
+        const job = summaryJobs.get(summaryJobMatch[1]);
+        sendJson(response, job ? 200 : 404, job ? { job } : { error: "没有找到这次整理任务" });
+        return;
+      }
+      if (request.method === "DELETE") {
+        const job = summaryJobs.cancel(summaryJobMatch[1]);
+        sendJson(response, job ? 200 : 404, job ? { job } : { error: "没有找到这次整理任务" });
+        return;
+      }
+    }
+
     if (request.method === "POST" && url.pathname === "/api/chat") {
       if (!isAuthorized(request)) {
         sendJson(response, 401, { error: "需要先输入访问码" });
@@ -910,6 +959,20 @@ if (isMainModule) {
   const visitorManager = createVisitorManager({
     filePath: resolve(projectRoot, "data", "visitors.json"),
   });
+  const schedulerOrigin = `http://127.0.0.1:${port}`;
+  const serverChat = async (payload, { signal } = {}) => {
+    const response = await fetch(`${schedulerOrigin}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `后台 AI 请求失败（${response.status}）`);
+    if (!result.text) throw new Error("接口没有返回文字");
+    return result;
+  };
+  const summaryJobs = createRoomSummaryJobs({ stateStore, chat: serverChat });
   const server = createAppServer({
     accessCode,
     sessionToken,
@@ -917,26 +980,20 @@ if (isMainModule) {
     forceAccessCode,
     stateStore,
     visitorManager,
+    summaryJobs,
     onAccessRequiredChange: async (enabled) => {
       await writeLocalSetting("OBSERVATION_ACCESS_REQUIRED", enabled ? "true" : "false");
     },
   });
-  const schedulerOrigin = `http://127.0.0.1:${port}`;
   const scheduler = createRoomScheduler({
     stateStore,
-    chat: async (payload) => {
-      const response = await fetch(`${schedulerOrigin}/api/chat`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || `定时聊天请求失败（${response.status}）`);
-      if (!result.text) throw new Error("接口没有返回文字");
-      return result;
-    },
+    chat: serverChat,
+    isSummaryRunning: (roomId) => summaryJobs.isActive(roomId),
   });
-  server.on("close", () => scheduler.stop());
+  server.on("close", () => {
+    scheduler.stop();
+    summaryJobs.stop();
+  });
   server.listen(port, host, () => {
     scheduler.start();
     console.log(`野生 AI 观察室已启动：http://127.0.0.1:${port}`);

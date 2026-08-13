@@ -6,12 +6,6 @@ import {
   rankMicCandidates,
   recordMicScores,
 } from "./mic-grab.js";
-import {
-  buildAppendSummaryMessages,
-  buildRebuildSectionMessages,
-  completeAutomaticSummaryBatch,
-  formatMemorySegment,
-} from "./memory-prompt.js";
 import { bubbleSplitInstruction, formatChatBubbleReply } from "./chat-bubbles.js";
 import {
   ROOM_USER_ID,
@@ -180,6 +174,7 @@ let visitorInvites = [];
 const summarizingRoomIds = new Set();
 const summaryRuns = new Map();
 const summaryNotices = new Map();
+const seenSummaryJobStates = new Map();
 
 function safeRead(key, fallback) {
   try {
@@ -634,6 +629,13 @@ function mergeServerRoomUpdates(serverRooms = []) {
     }
     if (Number(remote.memory?.updatedAt) > Number(room.memory?.updatedAt)) {
       room.memory = hydrateRoomMemory(remote.memory);
+      if (
+        roomDialog.open
+        && String(roomForm.elements.namedItem("id")?.value || "") === room.id
+        && document.activeElement !== roomForm.elements.namedItem("memorySummary")
+      ) {
+        roomForm.elements.namedItem("memorySummary").value = room.memory.summary;
+      }
     }
     room.externalRevision = Math.max(Number(room.externalRevision) || 0, Number(remote.externalRevision) || 0);
     room.updatedAt = Math.max(Number(room.updatedAt) || 0, Number(remote.updatedAt) || 0);
@@ -1251,6 +1253,7 @@ function deleteMessage(messageId) {
   const markerIndex = rememberedMessages.findIndex((item) => item.id === room.memory.summarizedThroughId);
   if (room.memory.summary.trim() && deletedMemoryIndex >= 0 && deletedMemoryIndex <= markerIndex) {
     room.memory.stale = true;
+    room.memory.updatedAt = Date.now();
   }
   room.messages = room.messages.filter((item) => item.id !== messageId);
   room.updatedAt = Date.now();
@@ -1847,60 +1850,68 @@ function previewRoomScheduleStatus() {
   }
 }
 
-function waitForSummaryRetry(signal, milliseconds = 1200) {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new DOMException("整理已取消", "AbortError"));
-      return;
-    }
-    const timeout = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, milliseconds);
-    const onAbort = () => {
-      clearTimeout(timeout);
-      reject(new DOMException("整理已取消", "AbortError"));
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
+function isActiveSummaryJob(job) {
+  return ["queued", "running", "cancelling"].includes(job?.status);
 }
 
-async function requestSummary(room, promptMessages, signal, maxTokens) {
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const response = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        agent: state.summarizer,
-        temperature: 0.2,
-        maxTokens,
-        requestMode: "memory-summary",
-        messages: promptMessages,
-      }),
-      signal,
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (response.status === 401) {
-      await checkAccess();
-      throw new Error("局域网访问码已失效，请重新输入");
-    }
-    if (response.ok) {
-      if (!payload.text?.trim()) throw new Error("总结模型没有返回文字");
-      return payload.text.trim();
-    }
+function applySummaryJobs(jobs = [], { notify = true } = {}) {
+  const remoteByRoom = new Map(jobs.map((job) => [job.roomId, job]));
+  for (const room of state.rooms) {
+    const job = remoteByRoom.get(room.id);
+    if (!job) continue;
+    const stateKey = `${job.id}:${job.status}`;
+    const isNewState = seenSummaryJobStates.get(room.id) !== stateKey;
+    seenSummaryJobStates.set(room.id, stateKey);
 
-    const error = new Error(payload.error || `总结请求失败（${response.status}）`);
-    error.status = response.status;
-    if (attempt === 1 && [502, 503].includes(response.status)) {
-      const run = summaryRuns.get(room.id);
-      if (run) run.phase = "整理接口刚才短暂失败，正在自动重试一次";
-      if (roomDialog.open && roomForm.elements.namedItem("id").value === room.id) updateRoomMemoryStatus(room);
-      await waitForSummaryRetry(signal);
+    if (isActiveSummaryJob(job)) {
+      summarizingRoomIds.add(room.id);
+      summaryRuns.set(room.id, {
+        id: job.id,
+        startedAt: Number(job.startedAt) || Date.now(),
+        phase: job.phase || "记忆整理员正在后台翻旧记录",
+        processedMessages: Number(job.processedMessages) || 0,
+        totalMessages: Number(job.totalMessages) || 0,
+      });
+      summaryNotices.delete(room.id);
       continue;
     }
-    throw error;
+
+    summarizingRoomIds.delete(room.id);
+    summaryRuns.delete(room.id);
+    if (job.status === "error") {
+      summaryNotices.set(room.id, {
+        kind: "error",
+        message: `上次后台整理停在 ${job.processedMessages || 0}/${job.totalMessages || 0} 条：${job.error || "未知错误"}。已经完成的批次仍然保留。`,
+      });
+      if (notify && isNewState) showToast(`后台整理没有完成：${job.error || "未知错误"}`);
+    } else if (job.status === "cancelled") {
+      summaryNotices.set(room.id, {
+        kind: "cancelled",
+        message: "上次后台整理已取消；已经完成的批次仍然保留。",
+      });
+      if (notify && isNewState) showToast("后台整理已取消，已完成的部分保留");
+    } else if (job.status === "completed") {
+      summaryNotices.delete(room.id);
+      if (notify && isNewState) {
+        showToast(job.totalMessages
+          ? `后台已经整理好 ${job.totalMessages} 条记录`
+          : "暂时没有新的聊天需要整理");
+      }
+    }
   }
-  throw new Error("总结接口连续两次没有接通");
+}
+
+async function syncSummaryJobs({ notify = true } = {}) {
+  const response = await fetch("/api/room-summary-jobs", { cache: "no-store" });
+  if (response.status === 401) {
+    await checkAccess();
+    return [];
+  }
+  if (!response.ok) return [];
+  const payload = await response.json().catch(() => ({}));
+  const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+  applySummaryJobs(jobs, { notify });
+  return jobs;
 }
 
 async function summarizeRoom(room, { rebuild = false, manual = false } = {}) {
@@ -1916,100 +1927,37 @@ async function summarizeRoom(room, { rebuild = false, manual = false } = {}) {
     if (manual) showToast("旧记忆已经变动，请使用“重新生成”");
     return false;
   }
-  const pendingSource = pendingMemoryMessages(room, { rebuild });
-  const source = rebuild || manual
-    ? pendingSource
-    : completeAutomaticSummaryBatch(pendingSource, room.memory.interval);
-  if (!source.length) {
+  const pending = pendingMemoryMessages(room, { rebuild });
+  if (!pending.length) {
     if (manual) showToast("暂时没有新的聊天需要整理");
     return false;
   }
-  const controller = new AbortController();
-  summarizingRoomIds.add(room.id);
-  summaryNotices.delete(room.id);
-  summaryRuns.set(room.id, {
-    controller,
-    startedAt: Date.now(),
-    phase: `记忆整理员正在翻 ${source.length} 条记录`,
-  });
-  updateRoomMemoryStatus(room);
-  renderRooms();
+  if (!manual && pending.length < Math.max(5, Number(room.memory.interval) || 20)) return false;
+
   try {
-    const previousSummary = room.memory.summary.trim();
-    let summary = previousSummary;
-    if (rebuild) {
-      const sections = [];
-      for (let index = 0; index < source.length; index += 40) {
-        const chunk = source.slice(index, index + 40);
-        const run = summaryRuns.get(room.id);
-        if (run) run.phase = `正在细读第 ${index + 1}–${index + chunk.length} 条记录`;
-        if (roomDialog.open && roomForm.elements.namedItem("id").value === room.id) updateRoomMemoryStatus(room);
-        const body = await requestSummary(
-          room,
-          buildRebuildSectionMessages(room, chunk),
-          controller.signal,
-          2200,
-        );
-        sections.push(formatMemorySegment(chunk, body, index + 1, index + chunk.length));
-      }
-      summary = `# 全篇时间记录\n\n${sections.join("\n\n---\n\n")}`;
-    } else {
-      const sections = [];
-      const chunkSize = Math.max(5, Number(room.memory.interval) || 20);
-      const startOffset = Math.max(0, Number(room.memory.summarizedMessageCount) || 0);
-      for (let index = 0; index < source.length; index += chunkSize) {
-        const chunk = source.slice(index, index + chunkSize);
-        const startNumber = startOffset + index + 1;
-        const endNumber = startOffset + index + chunk.length;
-        const run = summaryRuns.get(room.id);
-        if (run) run.phase = `正在整理新增的第 ${startNumber}–${endNumber} 条记录`;
-        if (roomDialog.open && roomForm.elements.namedItem("id").value === room.id) updateRoomMemoryStatus(room);
-        const body = await requestSummary(
-          room,
-          buildAppendSummaryMessages(room, chunk),
-          controller.signal,
-          1400,
-        );
-        sections.push(formatMemorySegment(chunk, body, startNumber, endNumber));
-      }
-      summary = [previousSummary, ...sections].filter(Boolean).join("\n\n---\n\n");
+    await saveChain;
+    const response = await fetch("/api/room-summary-jobs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roomId: room.id, rebuild: rebuild === true }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      await checkAccess();
+      throw new Error("访问码已失效，请重新输入");
     }
-    if (!state.rooms.some((item) => item.id === room.id)) return false;
-    const allMessages = memoryMessages(room);
-    const lastId = source.at(-1).id;
-    room.memory.summary = summary;
-    room.memory.summarizedThroughId = lastId;
-    room.memory.summarizedMessageCount = allMessages.findIndex((message) => message.id === lastId) + 1;
-    room.memory.updatedAt = Date.now();
-    room.memory.stale = false;
-    summaryNotices.delete(room.id);
-    room.updatedAt = Date.now();
-    if (roomDialog.open && roomForm.elements.namedItem("id").value === room.id) {
-      roomForm.elements.namedItem("memorySummary").value = summary;
-    }
+    if (!response.ok) throw new Error(payload.error || `后台整理任务没有启动（${response.status}）`);
+    if (!payload.job) throw new Error("服务器没有返回整理任务");
+    applySummaryJobs([payload.job], { notify: false });
+    updateRoomMemoryStatus(room);
     renderRooms();
-    await queuePersist();
-    showToast(rebuild
-      ? "已用现存聊天重建全篇记忆"
-      : manual
-        ? "新的记忆片段已追加，旧内容没有改动"
-        : "记忆整理员追加了一段新记忆");
+    showToast(`已交给 VPS 后台整理 ${payload.job.totalMessages} 条；现在可以切走`);
     return true;
   } catch (error) {
-    if (error?.name === "AbortError") {
-      summaryNotices.set(room.id, { kind: "cancelled", message: "上次整理已取消，原来的聊天和摘要都没有改动。" });
-      showToast("已经取消整理，没有改动房间记忆");
-    } else {
-      summaryNotices.set(room.id, { kind: "error", message: `上次整理失败：${error.message}。可以检查整理员连接后重试。` });
-      showToast(`长期记忆没有整理成功：${error.message}`);
-    }
+    summaryNotices.set(room.id, { kind: "error", message: `后台整理没有启动：${error.message}` });
+    showToast(`后台整理没有启动：${error.message}`);
+    updateRoomMemoryStatus(room);
     return false;
-  } finally {
-    summarizingRoomIds.delete(room.id);
-    summaryRuns.delete(room.id);
-    if (roomDialog.open && roomForm.elements.namedItem("id").value === room.id) {
-      updateRoomMemoryStatus(room);
-    }
   }
 }
 
@@ -2656,7 +2604,7 @@ roomForm.addEventListener("submit", (event) => {
     if (clearedSummary) {
       room.memory.summarizedThroughId = "";
       room.memory.summarizedMessageCount = 0;
-      room.memory.updatedAt = null;
+      room.memory.updatedAt = Date.now();
       room.memory.stale = false;
     } else if (memorySummary !== previousSummary) {
       room.memory.updatedAt = Date.now();
@@ -2701,9 +2649,20 @@ byId("memory-rebuild").addEventListener("click", () => {
   void summarizeRoom(room, { rebuild: true, manual: true });
 });
 
-byId("memory-cancel").addEventListener("click", () => {
+byId("memory-cancel").addEventListener("click", async () => {
   const roomId = String(roomForm.elements.namedItem("id").value || "");
-  summaryRuns.get(roomId)?.controller.abort();
+  const run = summaryRuns.get(roomId);
+  if (!run?.id) return;
+  try {
+    const response = await fetch(`/api/room-summary-jobs/${encodeURIComponent(run.id)}`, { method: "DELETE" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "取消失败");
+    if (payload.job) applySummaryJobs([payload.job], { notify: false });
+    const room = state.rooms.find((item) => item.id === roomId);
+    if (room) updateRoomMemoryStatus(room);
+  } catch (error) {
+    showToast(`没有取消成功：${error.message}`);
+  }
 });
 
 deleteRoomButton.addEventListener("click", () => {
@@ -3182,6 +3141,7 @@ async function loadServerState() {
     }
     state.ready = true;
     renderAll({ scroll: true });
+    await syncSummaryJobs({ notify: false });
   })().catch((error) => {
     state.ready = true;
     renderAll();
@@ -3201,6 +3161,7 @@ async function syncBackgroundUpdates() {
     const beforeActiveCount = activeRoom()?.messages.length || 0;
     const agentMemoriesChanged = mergeServerAgentMemories(payload.agents || []);
     const addedMessages = mergeServerRoomUpdates(payload.rooms || []);
+    await syncSummaryJobs();
     const activeAddedMessages = Math.max(0, (activeRoom()?.messages.length || 0) - beforeActiveCount);
     renderRooms();
     if (agentMemoriesChanged) renderAgents();

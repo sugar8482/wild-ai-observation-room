@@ -5,6 +5,55 @@ import { join } from "node:path";
 import test from "node:test";
 import { createStateStore } from "../lib/state-store.mjs";
 
+test("后台长期总结不会被滞后的浏览器状态覆盖", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({
+    filePath: join(directory, "state.json"),
+    secret: "background-summary-secret",
+  });
+  const stale = await store.save({
+    agents: [{ id: "guest-one", name: "GPT", format: "openai", authType: "none" }],
+    activeRoomId: "room-memory",
+    rooms: [{
+      id: "room-memory",
+      name: "记忆房间",
+      participantIds: ["guest-one"],
+      messages: [
+        { id: "message-one", kind: "user", author: "晨曦", text: "第一条" },
+        { id: "message-two", kind: "agent", agentId: "guest-one", author: "GPT", text: "第二条" },
+      ],
+      memory: {
+        enabled: true,
+        interval: 20,
+        recentMessages: 30,
+        focus: "旧重点",
+        summary: "旧总结",
+        summarizedThroughId: "message-one",
+        summarizedMessageCount: 1,
+        updatedAt: 100,
+      },
+    }],
+  });
+
+  assert.equal(await store.completeRoomSummary("room-memory", {
+    summary: "后台生成的新总结",
+    summarizedThroughId: "message-two",
+    summarizedMessageCount: 2,
+    expectedPreviousMarker: "message-one",
+    expectedPreviousUpdatedAt: 100,
+    at: 200,
+  }), true);
+
+  stale.rooms[0].memory.focus = "浏览器刚改的新重点";
+  const merged = await store.save(stale);
+  assert.equal(merged.rooms[0].memory.summary, "后台生成的新总结");
+  assert.equal(merged.rooms[0].memory.summarizedThroughId, "message-two");
+  assert.equal(merged.rooms[0].memory.summarizedMessageCount, 2);
+  assert.equal(merged.rooms[0].memory.updatedAt, 200);
+  assert.equal(merged.rooms[0].memory.focus, "浏览器刚改的新重点");
+});
+
 test("API Key 加密保存且不会返回给浏览器", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
   context.after(() => rm(directory, { recursive: true, force: true }));

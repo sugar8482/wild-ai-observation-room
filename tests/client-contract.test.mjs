@@ -192,10 +192,11 @@ test("群聊时间线支持真正隔离的私聊与房主遮罩查看", async ()
 });
 
 test("房间长期记忆独立于聊天消息并注入最近原文之前", async () => {
-  const [html, script, memoryPrompt] = await Promise.all([
+  const [html, script, memoryPrompt, summaryJobs] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
     readFile(new URL("../public/memory-prompt.js", import.meta.url), "utf8"),
+    readFile(new URL("../lib/room-summary-jobs.mjs", import.meta.url), "utf8"),
   ]);
   assert.match(html, /id="summarizer-dialog"/);
   const roomMemoryStart = html.indexOf('<details class="room-memory-field"');
@@ -211,10 +212,12 @@ test("房间长期记忆独立于聊天消息并注入最近原文之前", async
   assert.match(script, /function summarizeRoom\(room,/);
   assert.match(script, /recentMessages: Math\.min\(80, Math\.max\(10,/);
   assert.match(script, /longTermMemoryForPrompt\(room\)/);
-  assert.match(script, /requestMode: "memory-summary"/);
+  assert.match(script, /\/api\/room-summary-jobs/);
+  assert.match(script, /syncSummaryJobs/);
+  assert.match(summaryJobs, /requestMode: "memory-summary"/);
+  assert.match(summaryJobs, /stateStore\.completeRoomSummary/);
   assert.match(script, /summaryNotices\.set/);
-  assert.match(script, /\.controller\.abort\(\)/);
-  assert.match(script, /\[502, 503\]\.includes/);
+  assert.match(script, /method: "DELETE"/);
   assert.match(html, /留空使用默认的“记事、不定性”规则/);
   assert.match(memoryPrompt, /不是人物评委或角色编剧/);
   assert.match(memoryPrompt, /属于关系事实。只按原文含义记录/);
@@ -227,7 +230,7 @@ test("房间长期记忆独立于聊天消息并注入最近原文之前", async
   assert.match(memoryPrompt, /不得只写成“用户询问了某事”/);
   assert.match(memoryPrompt, /completeAutomaticSummaryBatch/);
   assert.match(memoryPrompt, /绝不能升级成已经确认的事实/);
-  assert.match(script, /completeAutomaticSummaryBatch\(pendingSource, room\.memory\.interval\)/);
+  assert.match(summaryJobs, /processedMessages: job\.processedMessages \+ chunk\.length/);
   assert.match(script, /这会清空并覆盖当前总结；聊天原文不会删除/);
   assert.doesNotMatch(script, /# 全篇概览/);
   assert.match(html, /立即或自动整理只会在末尾追加时间片段/);

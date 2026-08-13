@@ -3,6 +3,43 @@ import { once } from "node:events";
 import test from "node:test";
 import { chatRequestPolicy, createAppServer } from "../server.mjs";
 
+test("后台总结任务接口可以提交、查询和取消任务", async (context) => {
+  const job = {
+    id: "summary-test",
+    roomId: "room-one",
+    status: "running",
+    processedMessages: 0,
+    totalMessages: 12,
+  };
+  const summaryJobs = {
+    list: ({ roomId }) => roomId && roomId !== job.roomId ? [] : [job],
+    start: async ({ roomId }) => ({ ...job, roomId }),
+    get: (id) => id === job.id ? job : null,
+    cancel: (id) => id === job.id ? { ...job, status: "cancelling" } : null,
+  };
+  const server = createAppServer({ summaryJobs });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${server.address().port}`;
+
+  const accepted = await fetch(`${origin}/api/room-summary-jobs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ roomId: "room-one" }),
+  });
+  assert.equal(accepted.status, 202);
+  assert.equal((await accepted.json()).job.id, job.id);
+
+  const listed = await fetch(`${origin}/api/room-summary-jobs?roomId=room-one`);
+  assert.equal(listed.status, 200);
+  assert.equal((await listed.json()).jobs.length, 1);
+
+  const cancelled = await fetch(`${origin}/api/room-summary-jobs/${job.id}`, { method: "DELETE" });
+  assert.equal(cancelled.status, 200);
+  assert.equal((await cancelled.json()).job.status, "cancelling");
+});
+
 test("抢麦评分使用短输出并关闭 DeepSeek 隐藏思考", () => {
   const agent = {
     format: "openai",
