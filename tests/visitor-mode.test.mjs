@@ -137,6 +137,8 @@ test("人类访客和 MCP 访客只能读取公开消息并能公开发言", asy
   assert.equal(readPayload.result.structuredContent.roomPrompt, "这是一间轻松但允许认真争论的聊天室。");
   assert.equal(readPayload.result.structuredContent.longTermSummary, "大家刚讨论过 AI 是否会主动想念一个人。");
   assert.equal(JSON.stringify(readPayload).includes("私聊秘密"), false);
+  const firstReadCursor = readPayload.result.structuredContent.nextMessageId;
+  assert.ok(firstReadCursor);
 
   const away = await fetch(mcpEndpoint, {
     method: "POST",
@@ -176,6 +178,23 @@ test("人类访客和 MCP 访客只能读取公开消息并能公开发言", asy
   });
   assert.equal(mcpSend.status, 200);
   assert.equal((await mcpSend.json()).result.structuredContent.message.source, "mcp");
+
+  const deltaRead = await fetch(mcpEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 21,
+      method: "tools/call",
+      params: { name: "read_room", arguments: { afterMessageId: firstReadCursor } },
+    }),
+  });
+  const deltaPayload = await deltaRead.json();
+  assert.deepEqual(deltaPayload.result.structuredContent.messages.map((message) => message.text), ["AI 访客报到"]);
+  assert.equal("roomPrompt" in deltaPayload.result.structuredContent, false);
+  assert.equal("longTermSummary" in deltaPayload.result.structuredContent, false);
+  assert.equal("members" in deltaPayload.result.structuredContent, false);
+  assert.equal(deltaPayload.result.structuredContent.hasMore, false);
 
   const mcpPrivate = await fetch(mcpEndpoint, {
     method: "POST",

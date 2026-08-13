@@ -638,7 +638,7 @@ export function createAppServer(options = {}) {
           protocolVersion: "2025-06-18",
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "wild-ai-observation-room-visitor", version: "1.0.0" },
-          instructions: `你以“${invite.name}”的名字进入一个私人群聊。先调用 read_room 读取成员簿、房间氛围、长期总结和最近 40 条你有权看到的聊天。可以用 set_presence 设置在席、暂离席或已离开；只有在席时才能公开发言或私聊。不要声称看见不属于你的私聊、角色私人记忆或导演设置。`,
+          instructions: `你以“${invite.name}”的名字进入一个私人群聊。新窗口第一次调用 read_room 时不要传游标，它会读取成员簿、房间氛围、长期总结和最近 40 条你有权看到的聊天；记住返回的 nextMessageId。后续续读请把它作为 afterMessageId 传回，默认只返回新消息，避免重复污染上下文。若不确定旧背景是否仍在上下文中，可不传游标重新完整读取，或按需开启 includeAtmosphere、includeSummary、includeMembers。可以用 set_presence 设置在席、暂离席或已离开；只有在席时才能公开发言或私聊。不要声称看见不属于你的私聊、角色私人记忆或导演设置。`,
         });
         return;
       }
@@ -656,12 +656,16 @@ export function createAppServer(options = {}) {
             },
             {
               name: "read_room",
-              description: "读取房间氛围、长期总结，以及最近最多 40 条公开消息和仅与你有关的私聊。",
+              description: "首次不带游标可完整爬楼；后续传 afterMessageId 只续读新消息。也可自行选择是否重读氛围、长期总结和成员簿。",
               inputSchema: {
                 type: "object",
                 properties: {
-                  after: { type: "number", description: "可选，只返回这个毫秒时间戳之后的消息。" },
+                  afterMessageId: { type: "string", description: "推荐：上一次返回的 nextMessageId。传入后从该消息之后继续读取。" },
+                  after: { type: "number", description: "兼容旧客户端：只返回这个毫秒时间戳之后的消息。优先使用 afterMessageId。" },
                   limit: { type: "integer", minimum: 1, maximum: 40, default: 40 },
+                  includeAtmosphere: { type: "boolean", description: "是否同时读取房间氛围。首次读取默认 true，续读默认 false。" },
+                  includeSummary: { type: "boolean", description: "是否同时读取长期总结。首次读取默认 true，续读默认 false。" },
+                  includeMembers: { type: "boolean", description: "是否同时读取成员簿。首次读取默认 true，续读默认 false。" },
                 },
                 additionalProperties: false,
               },
@@ -709,9 +713,20 @@ export function createAppServer(options = {}) {
       if (payload?.method === "tools/call") {
         const toolName = String(payload?.params?.name || "");
         const args = payload?.params?.arguments || {};
+        const incrementalRead = toolName === "read_room" && Boolean(args.afterMessageId || Number(args.after));
+        const includeAtmosphere = toolName === "read_room"
+          ? (typeof args.includeAtmosphere === "boolean" ? args.includeAtmosphere : !incrementalRead)
+          : true;
+        const includeSummary = toolName === "read_room"
+          ? (typeof args.includeSummary === "boolean" ? args.includeSummary : !incrementalRead)
+          : true;
+        const includeMembers = toolName === "read_room"
+          ? (typeof args.includeMembers === "boolean" ? args.includeMembers : !incrementalRead)
+          : true;
         const room = await stateStore.publicRoomSnapshot(invite.roomId, {
           after: toolName === "read_room" ? args.after : 0,
-          limit: toolName === "read_room" ? Math.min(40, Number(args.limit) || 40) : 40,
+          afterMessageId: toolName === "read_room" ? args.afterMessageId : "",
+          limit: toolName === "read_room" ? Math.min(40, Number(args.limit) || (incrementalRead ? 12 : 40)) : 40,
           externalViewerId: invite.id,
           includeContext: true,
         });
@@ -739,21 +754,30 @@ export function createAppServer(options = {}) {
             : "房间里暂时没有新的公开消息。";
           const context = {
             room: room.name,
-            roomPrompt: room.roomPrompt || "",
-            longTermSummary: room.longTermSummary || "",
-            summaryStale: room.summaryStale,
-            members: room.members,
             messages: room.messages,
+            nextMessageId: room.nextMessageId,
+            nextAfter: room.nextAfter,
+            hasMore: room.hasMore,
+            latestVisibleMessageId: room.latestVisibleMessageId,
+            roomUpdatedAt: room.updatedAt,
+            ...(includeAtmosphere ? { roomPrompt: room.roomPrompt || "" } : {}),
+            ...(includeSummary ? {
+              longTermSummary: room.longTermSummary || "",
+              summaryStale: room.summaryStale,
+              summaryUpdatedAt: room.summaryUpdatedAt,
+            } : {}),
+            ...(includeMembers ? { members: room.members } : {}),
           };
           sendMcpResult(response, payload.id, {
             content: [{
               type: "text",
               text: [
                 `【房间】${room.name}`,
-                `【成员簿】\n${room.members.map((member) => `${member.name}：${member.status}${member.note ? `（${member.note}）` : ""}`).join("\n") || "（暂无成员）"}`,
-                room.roomPrompt ? `【房间氛围】\n${room.roomPrompt}` : "",
-                room.longTermSummary ? `【房间长期总结${room.summaryStale ? "｜可能待更新" : ""}】\n${room.longTermSummary}` : "",
-                `【最近可见聊天｜最多 40 条】\n${transcript}`,
+                includeMembers ? `【成员簿】\n${room.members.map((member) => `${member.name}：${member.status}${member.note ? `（${member.note}）` : ""}`).join("\n") || "（暂无成员）"}` : "",
+                includeAtmosphere && room.roomPrompt ? `【房间氛围】\n${room.roomPrompt}` : "",
+                includeSummary && room.longTermSummary ? `【房间长期总结${room.summaryStale ? "｜可能待更新" : ""}】\n${room.longTermSummary}` : "",
+                `【${incrementalRead ? "新增" : "最近可见"}聊天｜${room.messages.length} 条】\n${transcript}`,
+                `【续读游标】nextMessageId=${room.nextMessageId || "无"}${room.hasMore ? "；还有未读消息，请继续调用 read_room" : "；已追到当前最新"}`,
               ].filter(Boolean).join("\n\n"),
             }],
             structuredContent: context,
