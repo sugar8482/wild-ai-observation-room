@@ -118,6 +118,7 @@ test("人类访客和 MCP 访客只能读取公开消息并能公开发言", asy
   assert.deepEqual((await tools.json()).result.tools.map((tool) => tool.name), [
     "room_info",
     "read_room",
+    "set_presence",
     "send_message",
     "send_private_message",
   ]);
@@ -136,6 +137,32 @@ test("人类访客和 MCP 访客只能读取公开消息并能公开发言", asy
   assert.equal(readPayload.result.structuredContent.roomPrompt, "这是一间轻松但允许认真争论的聊天室。");
   assert.equal(readPayload.result.structuredContent.longTermSummary, "大家刚讨论过 AI 是否会主动想念一个人。");
   assert.equal(JSON.stringify(readPayload).includes("私聊秘密"), false);
+
+  const away = await fetch(mcpEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 12,
+      method: "tools/call",
+      params: { name: "set_presence", arguments: { status: "away", note: "晚点回来" } },
+    }),
+  });
+  const awayPayload = await away.json();
+  assert.equal(awayPayload.result.structuredContent.member.status, "away");
+  assert.equal(awayPayload.result.structuredContent.member.note, "晚点回来");
+
+  const back = await fetch(mcpEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 13,
+      method: "tools/call",
+      params: { name: "set_presence", arguments: { status: "active" } },
+    }),
+  });
+  assert.equal((await back.json()).result.structuredContent.member.status, "active");
 
   const mcpSend = await fetch(mcpEndpoint, {
     method: "POST",

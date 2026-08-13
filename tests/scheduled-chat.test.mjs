@@ -37,6 +37,27 @@ test("跨零点的免打扰时段可以正确延后", () => {
   assert.equal(new Date(nextQuietEnd(schedule, late)).getHours(), 8);
 });
 
+test("暂离席嘉宾不会参与后台抢麦，但仍保留在房间成员簿", async () => {
+  const room = roomFixture(1);
+  room.members = [
+    { id: "guest-a", name: "A", type: "agent", status: "away", note: "休息一下", joinedAt: 1, statusChangedAt: 2 },
+    { id: "guest-b", name: "B", type: "agent", status: "active", note: "", joinedAt: 1, statusChangedAt: 1 },
+  ];
+  const called = [];
+  const outcome = await runScheduledRoom({
+    room,
+    agents,
+    random: () => 0,
+    chat: async (payload) => {
+      called.push(payload.agent.id);
+      if (payload.requestMode === "willingness-score") return { text: "0" };
+      return { text: "不会执行" };
+    },
+  });
+  assert.deepEqual(called, ["guest-b"]);
+  assert.equal(outcome.messages.length, 0);
+});
+
 test("定时唤醒会连续抢麦，全员弃权后立即收场", async () => {
   const scorePlan = new Map([
     ["guest-a", [8, 2, 0]],

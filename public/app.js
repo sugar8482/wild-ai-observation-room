@@ -33,6 +33,14 @@ import {
   privateMemoryOutputInstruction,
   validateDeepAgentMemoryResult,
 } from "./agent-memory.js";
+import {
+  ROOM_MEMBER_STATUS_LABELS,
+  activeRoomAgents,
+  availableRoomMembers,
+  roomMember,
+  roomMembers,
+  roomPresenceContext,
+} from "./room-presence.js";
 
 const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
 const LEGACY_MESSAGE_KEY = "wild-ai-observation-room.messages.v1";
@@ -335,8 +343,8 @@ function hydrateRoomMic(mic) {
   };
 }
 
-function hydrateRoom(room, fallbackParticipants = []) {
-  return {
+function hydrateRoom(room, fallbackParticipants = [], agents = []) {
+  const hydrated = {
     id: room?.id || newId("room"),
     name: String(room?.name || "未命名观察间"),
     roomPrompt: String(room?.roomPrompt || ""),
@@ -351,6 +359,8 @@ function hydrateRoom(room, fallbackParticipants = []) {
     createdAt: Number(room?.createdAt || Date.now()),
     updatedAt: Number(room?.updatedAt || Date.now()),
   };
+  hydrated.members = roomMembers({ ...room, ...hydrated }, agents);
+  return hydrated;
 }
 
 function legacyInitialState() {
@@ -370,7 +380,7 @@ function legacyInitialState() {
     name: "一号观察间",
     participantIds: agents.filter((agent) => agent.enabled !== false).map((agent) => agent.id),
     messages: Array.isArray(legacyMessages) ? legacyMessages : [],
-  });
+  }, [], agents);
   return { agents, summarizer: hydrateSummarizer(), rooms: [room], activeRoomId: room.id };
 }
 
@@ -627,6 +637,10 @@ function mergeServerRoomUpdates(serverRooms = []) {
     if (Number(remote.mic?.revision) > Number(room.mic?.revision)) {
       room.mic = hydrateRoomMic(remote.mic);
     }
+    if (Number(remote.externalRevision) > Number(room.externalRevision)) {
+      room.members = roomMembers(remote, state.agents);
+      room.participantIds = [...new Set((remote.participantIds || []).map(String))];
+    }
     if (Number(remote.memory?.updatedAt) > Number(room.memory?.updatedAt)) {
       room.memory = hydrateRoomMemory(remote.memory);
       if (
@@ -720,6 +734,8 @@ function queuePersist() {
 function renderRooms() {
   roomList.replaceChildren();
   for (const room of state.rooms) {
+    const members = roomMembers(room, state.agents);
+    const activeCount = members.filter((member) => member.status === "active").length;
     const card = createElement("article", `room-card${room.id === state.activeRoomId ? " is-active" : ""}`);
     const main = createElement("button", "room-card-main");
     main.type = "button";
@@ -728,7 +744,7 @@ function renderRooms() {
       createElement(
         "span",
         "",
-        `${room.participantIds.length} 位嘉宾 · ${room.messages.length} 条记录${room.roomPrompt.trim() ? " · 有氛围" : ""}${room.bubbleSplit ? " · 连发气泡" : ""}${room.memory.summary.trim() ? " · 有记忆" : ""}${room.schedule.enabled ? ` · 定时 ${room.schedule.intervalMinutes}m${room.schedule.strategy === "light-mic" ? " 轻量" : ""}` : ""}${room.eventCards.enabled ? " · 事件卡" : ""}`,
+        `${activeCount} 位在席 · ${members.length} 位来过 · ${room.messages.length} 条记录${room.roomPrompt.trim() ? " · 有氛围" : ""}${room.bubbleSplit ? " · 连发气泡" : ""}${room.memory.summary.trim() ? " · 有记忆" : ""}${room.schedule.enabled ? ` · 定时 ${room.schedule.intervalMinutes}m${room.schedule.strategy === "light-mic" ? " 轻量" : ""}` : ""}${room.eventCards.enabled ? " · 事件卡" : ""}`,
       ),
     );
     main.addEventListener("click", () => switchRoom(room.id));
@@ -763,13 +779,15 @@ function renderMobileRoomSwitcher() {
   mobileRoomMenu.replaceChildren();
 
   for (const room of state.rooms) {
+    const members = roomMembers(room, state.agents);
+    const activeCount = members.filter((member) => member.status === "active").length;
     const row = createElement("div", `mobile-room-option${room.id === state.activeRoomId ? " is-active" : ""}`);
     const open = createElement("button", "mobile-room-option-main");
     open.type = "button";
     if (room.id === state.activeRoomId) open.setAttribute("aria-current", "page");
     open.append(
       createElement("strong", "", room.name),
-      createElement("span", "", `${room.messages.length} 条记录 · ${room.participantIds.length} 位嘉宾`),
+      createElement("span", "", `${room.messages.length} 条记录 · ${activeCount} 位在席 · ${members.length} 位来过`),
     );
     open.addEventListener("click", () => {
       closeMobileRoomMenu();
@@ -813,8 +831,11 @@ function renderAgents() {
   const room = activeRoom();
   if (!room) return;
 
-  const roomMemberIds = new Set(room.participantIds);
-  const membershipsFor = (agentId) => state.rooms.filter((item) => item.participantIds.includes(agentId));
+  const currentMembers = roomMembers(room, state.agents);
+  const memberById = new Map(currentMembers.map((member) => [member.id, member]));
+  const roomMemberIds = new Set(currentMembers.map((member) => member.id));
+  const activeCount = currentMembers.filter((member) => member.status === "active").length;
+  const membershipsFor = (agentId) => state.rooms.filter((item) => roomMembers(item, state.agents).some((member) => member.id === agentId));
   const unassignedCount = state.agents.filter((agent) => membershipsFor(agent.id).length === 0).length;
   const validRoomFilter = agentRoomFilter.startsWith("room:")
     ? state.rooms.some((item) => `room:${item.id}` === agentRoomFilter)
@@ -822,7 +843,7 @@ function renderAgents() {
   if (!validRoomFilter) agentRoomFilter = "all";
 
   const roomView = agentListView === "room";
-  agentViewRoom.textContent = `本房成员 ${room.participantIds.length}`;
+  agentViewRoom.textContent = `本房成员 ${currentMembers.length} · 在席 ${activeCount}`;
   agentViewAll.textContent = `全部嘉宾 ${state.agents.length}`;
   agentViewRoom.setAttribute("aria-pressed", String(roomView));
   agentViewAll.setAttribute("aria-pressed", String(!roomView));
@@ -835,7 +856,7 @@ function renderAgents() {
       { value: "all", label: `全部 ${state.agents.length}` },
       ...state.rooms.map((item) => ({
         value: `room:${item.id}`,
-        label: `${item.name} ${state.agents.filter((agent) => item.participantIds.includes(agent.id)).length}`,
+        label: `${item.name} ${roomMembers(item, state.agents).length}`,
       })),
       ...(unassignedCount ? [{ value: "unassigned", label: `未分房 ${unassignedCount}` }] : []),
     ];
@@ -855,13 +876,16 @@ function renderAgents() {
     visibleAgents = visibleAgents.filter((agent) => membershipsFor(agent.id).length === 0);
   } else if (!roomView && agentRoomFilter.startsWith("room:")) {
     const filterRoomId = agentRoomFilter.slice("room:".length);
-    visibleAgents = visibleAgents.filter((agent) => state.rooms
-      .find((item) => item.id === filterRoomId)?.participantIds.includes(agent.id));
+    visibleAgents = visibleAgents.filter((agent) => {
+      const filteredRoom = state.rooms.find((item) => item.id === filterRoomId);
+      return roomMembers(filteredRoom, state.agents).some((member) => member.id === agent.id);
+    });
   } else if (!roomView) {
     visibleAgents.sort((left, right) => Number(roomMemberIds.has(right.id)) - Number(roomMemberIds.has(left.id)));
   }
 
-  if (!visibleAgents.length) {
+  const hasExternalMembers = roomView && currentMembers.some((member) => member.type !== "agent" || !state.agents.some((agent) => agent.id === member.id));
+  if (!visibleAgents.length && !hasExternalMembers) {
     const empty = createElement(
       "div",
       "agent-list-empty",
@@ -872,8 +896,9 @@ function renderAgents() {
   }
 
   for (const agent of visibleAgents) {
-    const participating = Boolean(room?.participantIds.includes(agent.id));
-    const card = createElement("article", `agent-card${participating ? "" : " is-disabled"}`);
+    const membership = memberById.get(agent.id) || null;
+    const participating = Boolean(membership && membership.status !== "left");
+    const card = createElement("article", `agent-card${participating ? "" : " is-disabled"}${membership?.status === "away" ? " is-away" : ""}${membership?.status === "left" ? " is-left" : ""}`);
     const top = createElement("div", "agent-card-top");
     const initial = createElement("span", "agent-initial", agent.name.trim().slice(0, 1).toUpperCase() || "?");
     const identity = createElement("div", "agent-identity");
@@ -881,6 +906,7 @@ function renderAgents() {
       createElement("strong", "", agent.name),
       createElement("span", "", agent.model || FORMAT_META[agent.format].label),
     );
+    if (membership) identity.append(createElement("span", `member-status is-${membership.status}`, ROOM_MEMBER_STATUS_LABELS[membership.status]));
     const editButton = createElement("button", "agent-edit", "编辑");
     editButton.type = "button";
     editButton.addEventListener("click", () => openAgentDialog(agent.id));
@@ -910,22 +936,63 @@ function renderAgents() {
     } else {
       membershipRow.append(createElement("span", "agent-membership is-unassigned", "尚未加入房间"));
     }
-    const toggleLabel = createElement("label", "switch");
-    toggleLabel.setAttribute("aria-label", `${participating ? "移出" : "邀请"}${agent.name}`);
-    const toggle = document.createElement("input");
-    toggle.type = "checkbox";
-    toggle.checked = participating;
-    toggle.addEventListener("change", () => toggleRoomParticipant(agent.id, toggle.checked));
-    toggleLabel.append(toggle, createElement("span", "switch-track"));
     const status = createElement("div", "agent-status");
     status.append(readiness, personaLabel);
     const roomToggle = createElement("div", "agent-room-toggle");
-    roomToggle.append(createElement("span", "agent-room-toggle-text", participating ? "已在本房" : "加入本房"), toggleLabel);
+    if (membership) {
+      const presenceSelect = document.createElement("select");
+      presenceSelect.className = "member-presence-select";
+      presenceSelect.setAttribute("aria-label", `${agent.name}在本房的状态`);
+      for (const memberStatus of ["active", "away", "left"]) {
+        const option = document.createElement("option");
+        option.value = memberStatus;
+        option.textContent = ROOM_MEMBER_STATUS_LABELS[memberStatus];
+        presenceSelect.append(option);
+      }
+      presenceSelect.value = membership.status;
+      presenceSelect.addEventListener("change", () => changeRoomMemberPresence(agent.id, presenceSelect.value));
+      roomToggle.append(createElement("span", "agent-room-toggle-text", "本房状态"), presenceSelect);
+    } else {
+      const join = createElement("button", "member-join-button", "邀请入席");
+      join.type = "button";
+      join.addEventListener("click", () => toggleRoomParticipant(agent.id, true));
+      roomToggle.append(join);
+    }
     bottom.append(status, roomToggle);
     card.append(top);
     if (!roomView) card.append(membershipRow);
+    if (membership?.note) card.append(createElement("p", "member-note", `门牌：${membership.note}`));
     card.append(bottom);
     agentList.append(card);
+  }
+
+  if (roomView) {
+    for (const member of currentMembers.filter((item) => item.type !== "agent" || !state.agents.some((agent) => agent.id === item.id))) {
+      const card = createElement("article", `agent-card external-member-card${member.status === "away" ? " is-away" : ""}${member.status === "left" ? " is-left is-disabled" : ""}`);
+      const top = createElement("div", "agent-card-top");
+      const initial = createElement("span", "agent-initial", member.name.trim().slice(0, 1).toUpperCase() || "?");
+      const identity = createElement("div", "agent-identity");
+      identity.append(
+        createElement("strong", "", member.name),
+        createElement("span", "", member.type === "mcp" ? "MCP 访客" : member.type === "human" ? "人类访客" : "已从嘉宾库移除"),
+        createElement("span", `member-status is-${member.status}`, ROOM_MEMBER_STATUS_LABELS[member.status]),
+      );
+      top.append(initial, identity);
+      const presenceSelect = document.createElement("select");
+      presenceSelect.className = "member-presence-select";
+      for (const memberStatus of ["active", "away", "left"]) {
+        const option = document.createElement("option");
+        option.value = memberStatus;
+        option.textContent = ROOM_MEMBER_STATUS_LABELS[memberStatus];
+        presenceSelect.append(option);
+      }
+      presenceSelect.value = member.status;
+      presenceSelect.addEventListener("change", () => changeRoomMemberPresence(member.id, presenceSelect.value));
+      top.append(presenceSelect);
+      card.append(top);
+      if (member.note) card.append(createElement("p", "member-note", `门牌：${member.note}`));
+      agentList.append(card);
+    }
   }
 }
 
@@ -933,7 +1000,7 @@ function renderSpeakerOptions() {
   const previous = speakerSelect.value;
   speakerSelect.replaceChildren();
   const room = activeRoom();
-  const participants = state.agents.filter((agent) => room?.participantIds.includes(agent.id));
+  const participants = activeRoomAgents(room, state.agents);
   for (const agent of participants) {
     const option = document.createElement("option");
     option.value = agent.id;
@@ -944,9 +1011,17 @@ function renderSpeakerOptions() {
 }
 
 function externalMcpParticipants(room = activeRoom()) {
-  const byId = new Map();
+  const members = roomMembers(room, state.agents);
+  const byId = new Map(members
+    .filter((member) => member.type === "mcp" && member.status === "active")
+    .map((member) => [member.id, {
+      id: member.id,
+      name: member.name,
+      externalMcp: true,
+    }]));
   for (const message of room?.messages || []) {
     if (message.source !== "mcp" || !message.externalId) continue;
+    if (members.some((member) => member.id === message.externalId)) continue;
     byId.set(message.externalId, {
       id: message.externalId,
       name: message.author || "MCP 访客",
@@ -963,7 +1038,7 @@ function privateActorsForRoom(room = activeRoom()) {
 function renderPrivateRecipientOptions() {
   const previous = messageRecipient.value;
   const room = activeRoom();
-  const participants = state.agents.filter((agent) => room?.participantIds.includes(agent.id));
+  const participants = activeRoomAgents(room, state.agents);
   const mcpVisitors = externalMcpParticipants(room);
   messageRecipient.replaceChildren();
   const publicOption = document.createElement("option");
@@ -989,8 +1064,11 @@ function renderPrivateRecipientOptions() {
 
 function renderComposerPrivacy() {
   const room = activeRoom();
+  const activeIds = new Set(roomMembers(room, state.agents)
+    .filter((member) => member.status === "active")
+    .map((member) => member.id));
   const target = privateActorsForRoom(room).find((agent) => (
-    agent.id === messageRecipient.value && room?.participantIds.includes(agent.id)
+    agent.id === messageRecipient.value && activeIds.has(agent.id)
   )) || externalMcpParticipants(room).find((visitor) => visitor.id === messageRecipient.value);
   const isPrivate = Boolean(target);
   composer.classList.toggle("is-private-compose", isPrivate);
@@ -1280,14 +1358,110 @@ function switchRoom(roomId) {
 function toggleRoomParticipant(agentId, shouldJoin) {
   const room = activeRoom();
   if (!room) return;
-  if (shouldJoin && !room.participantIds.includes(agentId)) room.participantIds.push(agentId);
-  if (!shouldJoin) room.participantIds = room.participantIds.filter((id) => id !== agentId);
+  const agent = state.agents.find((item) => item.id === agentId);
+  updateLocalMemberPresence(room, {
+    id: agentId,
+    name: agent?.name || "未命名嘉宾",
+    type: "agent",
+    status: shouldJoin ? "active" : "left",
+    note: "",
+  });
   room.updatedAt = Date.now();
   renderAgents();
   renderSpeakerOptions();
   renderPrivateRecipientOptions();
   renderRooms();
   queuePersist();
+}
+
+function updateLocalMemberPresence(room, { id, name, type = "agent", status = "active", note = "" }) {
+  const timestamp = Date.now();
+  room.members = roomMembers(room, state.agents);
+  let member = room.members.find((item) => item.id === id);
+  if (!member) {
+    member = {
+      id,
+      name,
+      type,
+      status,
+      note,
+      joinedAt: timestamp,
+      statusChangedAt: timestamp,
+      lastSeenAt: null,
+    };
+    room.members.push(member);
+  } else {
+    member.name = name || member.name;
+    member.type = type || member.type;
+    member.status = status;
+    member.note = note;
+    member.statusChangedAt = timestamp;
+  }
+  if (member.type === "agent") {
+    if (status === "left") room.participantIds = room.participantIds.filter((agentId) => agentId !== id);
+    else if (!room.participantIds.includes(id)) room.participantIds.push(id);
+  }
+  return member;
+}
+
+function reconcileInternalRoomMembers(room, selectedIds = []) {
+  const selected = new Set(selectedIds.map(String));
+  const existing = new Map(roomMembers(room, state.agents).map((member) => [member.id, member]));
+  for (const agent of state.agents) {
+    const member = existing.get(agent.id);
+    if (selected.has(agent.id)) {
+      if (!member || member.status === "left") {
+        updateLocalMemberPresence(room, {
+          id: agent.id,
+          name: agent.name,
+          type: "agent",
+          status: "active",
+          note: "",
+        });
+      }
+    } else if (member && member.status !== "left") {
+      updateLocalMemberPresence(room, {
+        ...member,
+        name: agent.name,
+        status: "left",
+        note: member.note,
+      });
+    }
+  }
+  room.participantIds = state.agents
+    .filter((agent) => selected.has(agent.id))
+    .map((agent) => agent.id);
+}
+
+function changeRoomMemberPresence(memberId, nextStatus) {
+  const room = activeRoom();
+  if (!room) return;
+  const current = roomMember(room, memberId, state.agents);
+  const agent = state.agents.find((item) => item.id === memberId);
+  if (!current && !agent) return;
+  let note = current?.note || "";
+  if (nextStatus === "away") {
+    const answer = window.prompt(`给 ${current?.name || agent?.name || "这位嘉宾"} 的暂离席门牌留一句话（可以留空）`, note);
+    if (answer === null) return;
+    note = answer.trim().slice(0, 240);
+  } else if (nextStatus === "left") {
+    const answer = window.prompt(`给 ${current?.name || agent?.name || "这位嘉宾"} 留一句离席说明（可以留空）`, "");
+    if (answer === null) return;
+    note = answer.trim().slice(0, 240);
+  } else {
+    note = "";
+  }
+  updateLocalMemberPresence(room, {
+    id: memberId,
+    name: current?.name || agent?.name || "未命名嘉宾",
+    type: current?.type || "agent",
+    status: nextStatus,
+    note,
+  });
+  room.updatedAt = Date.now();
+  renderAll();
+  queuePersist();
+  showToast(`${current?.name || agent?.name || "嘉宾"} · ${ROOM_MEMBER_STATUS_LABELS[nextStatus]}`);
 }
 
 function setRunning(running, speaker = "", phase = "reply") {
@@ -1317,6 +1491,7 @@ function buildSystemPrompt(agent, activeAgents, room, visibleTokenTarget, option
   return [
     `你是群聊嘉宾“${agent.name}”。`,
     others.length ? `同桌还有：${others.join("、")}。` : "当前只有你一位 AI 嘉宾。",
+    roomPresenceContext(room, state.agents),
     roomAtmosphere,
     persona,
     "只代表自己发言，不要代替其他嘉宾或用户说话。可以回应、赞同、质疑或追问刚才的内容。",
@@ -1599,9 +1774,7 @@ async function repairPrivateMessage(messageId) {
     showToast(`${sourceMessage.author} 现在没有可用的接口配置`);
     return;
   }
-  const activeAgents = state.agents.filter((agent) => (
-    room.participantIds.includes(agent.id) && isConfigured(agent)
-  ));
+  const activeAgents = activeRoomAgents(room, state.agents).filter(isConfigured);
   const controller = new AbortController();
   state.abortController = controller;
   setRunning(true, speaker.name);
@@ -1973,7 +2146,7 @@ async function startConversation() {
     return;
   }
   const room = activeRoom();
-  const participants = state.agents.filter((agent) => room?.participantIds.includes(agent.id));
+  const participants = activeRoomAgents(room, state.agents);
   const configuredAgents = participants.filter(isConfigured);
   const internalPrivateTarget = participants.find((agent) => agent.id === messageRecipient.value) || null;
   const externalPrivateTarget = externalMcpParticipants(room)
@@ -2418,7 +2591,7 @@ agentForm.addEventListener("submit", (event) => {
     else {
       state.agents.push(draft);
       const room = activeRoom();
-      if (room && !room.participantIds.includes(draft.id)) room.participantIds.push(draft.id);
+      if (room) updateLocalMemberPresence(room, { id: draft.id, name: draft.name, type: "agent", status: "active" });
     }
     renderAll();
     queuePersist();
@@ -2484,8 +2657,17 @@ deleteAgentButton.addEventListener("click", () => {
   const agent = state.agents.find((item) => item.id === id);
   if (!agent) return;
   if (!window.confirm(`让 ${agent.name} 永久离席？已产生的聊天记录仍会保留。`)) return;
+  for (const room of state.rooms) {
+    const member = roomMember(room, id, state.agents);
+    if (!member) continue;
+    updateLocalMemberPresence(room, {
+      ...member,
+      name: agent.name,
+      status: "left",
+      note: member.note || "已离开嘉宾库",
+    });
+  }
   state.agents = state.agents.filter((item) => item.id !== id);
-  for (const room of state.rooms) room.participantIds = room.participantIds.filter((item) => item !== id);
   renderAll();
   queuePersist();
   agentDialog.close();
@@ -2609,7 +2791,7 @@ roomForm.addEventListener("submit", (event) => {
     } else if (memorySummary !== previousSummary) {
       room.memory.updatedAt = Date.now();
     }
-    room.participantIds = participantIds;
+    reconcileInternalRoomMembers(room, participantIds);
     room.updatedAt = Date.now();
   } else {
     const created = hydrateRoom({
@@ -2621,7 +2803,7 @@ roomForm.addEventListener("submit", (event) => {
       memory: { enabled: memoryEnabled, interval: memoryInterval, focus: memoryFocus, summary: memorySummary },
       schedule: scheduleConfig,
       eventCards: eventCardsConfig,
-    });
+    }, [], state.agents);
     state.rooms.push(created);
     state.activeRoomId = created.id;
   }
@@ -2913,8 +3095,8 @@ guestCopyForm.addEventListener("submit", (event) => {
     const { duplicate, roomId } = createGuestCopyFromForm();
     state.agents.push(duplicate);
     const room = state.rooms.find((item) => item.id === roomId);
-    if (room && !room.participantIds.includes(duplicate.id)) {
-      room.participantIds.push(duplicate.id);
+    if (room) {
+      updateLocalMemberPresence(room, { id: duplicate.id, name: duplicate.name, type: "agent", status: "active" });
       room.updatedAt = Date.now();
     }
     if (room?.id === activeRoom()?.id) agentListView = "room";
@@ -3127,12 +3309,13 @@ async function loadServerState() {
         }
         safeWrite(GUEST_CATALOG_KEY, 2);
       }
-      state.rooms = payload.rooms.map((room) => hydrateRoom(room));
+      state.rooms = payload.rooms.map((room) => hydrateRoom(room, [], state.agents));
       state.activeRoomId = payload.activeRoomId || state.rooms[0].id;
       if (shouldAddNewGuests) {
         const room = activeRoom();
         for (const profile of DEFAULT_AGENTS.slice(3)) {
-          if (room && !room.participantIds.includes(profile.id)) room.participantIds.push(profile.id);
+          const agent = state.agents.find((item) => item.id === profile.id);
+          if (room && agent) updateLocalMemberPresence(room, { id: agent.id, name: agent.name, type: "agent", status: "active" });
         }
         queuePersist();
       }
@@ -3217,7 +3400,7 @@ function renderArchiveStatus(status = {}) {
   badge.className = "archive-status-badge";
   counts.classList.toggle("is-hidden", !status.counts);
   counts.textContent = status.counts
-    ? `房间 ${status.counts.rooms || 0} · 原文 ${status.counts.messages || 0} · 总结 ${status.counts.summaries || 0} · 私人记忆 ${status.counts.privateMemories || 0}`
+    ? `房间 ${status.counts.rooms || 0} · 成员 ${status.counts.members || 0} · 原文 ${status.counts.messages || 0} · 总结 ${status.counts.summaries || 0} · 私人记忆 ${status.counts.privateMemories || 0}`
     : "";
   syncButton.disabled = !status.enabled || status.syncing;
 

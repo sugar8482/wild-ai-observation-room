@@ -97,7 +97,7 @@ test("嘉宾可以复制为凭据复用但人设与记忆独立的新副本", as
   assert.match(script, /function createGuestCopyFromForm\(\)/);
   assert.match(script, /credentialSourceId: copyCredentials \? source\.id : ""/);
   assert.match(script, /memory: copyMemory \? source\.memory : ""/);
-  assert.match(script, /room\.participantIds\.push\(duplicate\.id\)/);
+  assert.match(script, /updateLocalMemberPresence\(room, \{ id: duplicate\.id, name: duplicate\.name, type: "agent", status: "active" \}\)/);
 });
 
 test("人设编辑器提供兼容 iPad 的复制文本与可撤销清空草稿", async () => {

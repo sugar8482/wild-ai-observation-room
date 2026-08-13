@@ -43,6 +43,7 @@ const snapshot = {
 test("档案快照保留房间原文、私聊收件人与 AI 私人记忆", () => {
   const rows = snapshotToArchiveRows(snapshot);
   assert.equal(rows.rooms[0].name, "客厅");
+  assert.equal(rows.members[0].status, "active");
   assert.equal(rows.messages[0].privacy, "private");
   assert.deepEqual(rows.messages[0].recipient_ids, ["gpt"]);
   assert.equal(rows.summaries[0].summary, "长期总结");
@@ -80,11 +81,12 @@ test("启用后会建表并在一个事务里镜像全部档案", async () => {
   const archive = createPostgresArchive({ pool, now: () => ++clock });
   const counts = await archive.syncSnapshot(snapshot);
 
-  assert.deepEqual(counts, { rooms: 1, messages: 1, summaries: 1, privateMemories: 1 });
+  assert.deepEqual(counts, { rooms: 1, members: 1, messages: 1, summaries: 1, privateMemories: 1 });
   assert.match(queries[0].text, /CREATE TABLE IF NOT EXISTS room_messages/);
   assert.equal(queries.some((query) => query.text === "BEGIN"), true);
   assert.equal(queries.some((query) => query.text === "COMMIT"), true);
   assert.equal(queries.some((query) => /INSERT INTO room_messages/.test(query.text)), true);
+  assert.equal(queries.some((query) => /INSERT INTO room_member_events/.test(query.text)), true);
   assert.equal(queries.some((query) => /INSERT INTO agent_private_memories/.test(query.text)), true);
   assert.equal(queries.some((query) => /INSERT INTO room_summary_versions/.test(query.text)), true);
   await archive.close();

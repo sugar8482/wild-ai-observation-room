@@ -5,6 +5,44 @@ import { join } from "node:path";
 import test from "node:test";
 import { createStateStore } from "../lib/state-store.mjs";
 
+test("成员簿会迁移旧房间、保留暂离席，并抵抗滞后浏览器覆盖", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-presence-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({ filePath: join(directory, "state.json"), secret: "presence-secret" });
+  const stale = await store.save({
+    agents: [{ id: "guest-one", name: "GPT", format: "openai", authType: "none" }],
+    activeRoomId: "room-one",
+    rooms: [{ id: "room-one", name: "房间", participantIds: ["guest-one"], messages: [] }],
+  });
+  assert.equal(stale.rooms[0].members[0].status, "active");
+
+  const future = Date.now() + 10_000;
+  await store.setRoomMemberPresence("room-one", {
+    memberId: "guest-one",
+    name: "GPT",
+    type: "agent",
+    status: "away",
+    note: "暂时离开",
+    at: future,
+  });
+  const merged = await store.save(stale);
+  assert.equal(merged.rooms[0].members[0].status, "away");
+  assert.equal(merged.rooms[0].members[0].note, "暂时离开");
+  assert.deepEqual(merged.rooms[0].participantIds, ["guest-one"]);
+
+  await store.setRoomMemberPresence("room-one", {
+    memberId: "guest-one",
+    name: "GPT",
+    type: "agent",
+    status: "left",
+    note: "不会再回来",
+    at: future + 1,
+  });
+  const left = await store.clientState();
+  assert.equal(left.rooms[0].members[0].status, "left");
+  assert.deepEqual(left.rooms[0].participantIds, []);
+});
+
 test("后台长期总结不会被滞后的浏览器状态覆盖", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
   context.after(() => rm(directory, { recursive: true, force: true }));

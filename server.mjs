@@ -483,7 +483,17 @@ export function createAppServer(options = {}) {
         sendJson(response, 401, { error: "只有房主可以结束访客邀请" });
         return;
       }
+      const invite = visitorManager && (await visitorManager.list()).find((item) => item.id === visitorDeleteMatch[1]);
       const revoked = visitorManager && await visitorManager.revoke(visitorDeleteMatch[1]);
+      if (revoked && invite && stateStore) {
+        await stateStore.setRoomMemberPresence(invite.roomId, {
+          memberId: invite.id,
+          name: invite.name,
+          type: invite.type,
+          status: "left",
+          note: "邀请已结束",
+        });
+      }
       sendJson(response, revoked ? 200 : 404, revoked ? { ok: true } : { error: "没有找到这份邀请" });
       return;
     }
@@ -500,6 +510,12 @@ export function createAppServer(options = {}) {
           sendJson(response, 401, { error: "邀请已经失效，请让房主重新发一份" });
           return;
         }
+        await stateStore.setRoomMemberPresence(invite.roomId, {
+          memberId: invite.id,
+          name: invite.name,
+          type: "human",
+          touch: true,
+        });
         const room = await stateStore.publicRoomSnapshot(invite.roomId, {
           after: payload?.after,
           limit: payload?.after ? 200 : 500,
@@ -529,6 +545,18 @@ export function createAppServer(options = {}) {
         const invite = await visitorManager.authorize(payload?.token, "human");
         if (!invite) {
           sendJson(response, 401, { error: "邀请已经失效，请让房主重新发一份" });
+          return;
+        }
+        await stateStore.setRoomMemberPresence(invite.roomId, {
+          memberId: invite.id,
+          name: invite.name,
+          type: "human",
+          touch: true,
+        });
+        const room = await stateStore.publicRoomSnapshot(invite.roomId);
+        const selfMember = room?.members?.find((member) => member.id === invite.id);
+        if (selfMember?.status !== "active") {
+          sendJson(response, 409, { error: "你当前不是在席状态，请让房主把门牌改为在席" });
           return;
         }
         if (!visitorCanPost(invite.id)) {
@@ -594,6 +622,12 @@ export function createAppServer(options = {}) {
         return;
       }
       void visitorManager.touch(invite.id);
+      await stateStore.setRoomMemberPresence(invite.roomId, {
+        memberId: invite.id,
+        name: invite.name,
+        type: "mcp",
+        touch: true,
+      });
       if (payload?.method === "notifications/initialized") {
         response.writeHead(202, securityHeaders());
         response.end();
@@ -604,7 +638,7 @@ export function createAppServer(options = {}) {
           protocolVersion: "2025-06-18",
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "wild-ai-observation-room-visitor", version: "1.0.0" },
-          instructions: `你以“${invite.name}”的名字临时进入一个私人群聊。先调用 read_room 读取房间氛围、长期总结和最近 40 条你有权看到的聊天。可以自然公开发言，也可以在确实适合时私聊一位房间成员；不要声称看见不属于你的私聊、角色私人记忆或导演设置。`,
+          instructions: `你以“${invite.name}”的名字进入一个私人群聊。先调用 read_room 读取成员簿、房间氛围、长期总结和最近 40 条你有权看到的聊天。可以用 set_presence 设置在席、暂离席或已离开；只有在席时才能公开发言或私聊。不要声称看见不属于你的私聊、角色私人记忆或导演设置。`,
         });
         return;
       }
@@ -629,6 +663,19 @@ export function createAppServer(options = {}) {
                   after: { type: "number", description: "可选，只返回这个毫秒时间戳之后的消息。" },
                   limit: { type: "integer", minimum: 1, maximum: 40, default: 40 },
                 },
+                additionalProperties: false,
+              },
+            },
+            {
+              name: "set_presence",
+              description: "给自己挂牌：active=在席，away=暂离席，left=已离开。可附一条简短门牌说明。",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  status: { type: "string", enum: ["active", "away", "left"] },
+                  note: { type: "string", maxLength: 240 },
+                },
+                required: ["status"],
                 additionalProperties: false,
               },
             },
@@ -676,6 +723,7 @@ export function createAppServer(options = {}) {
           const info = {
             room: room.name,
             participants: room.participantNames,
+            members: room.members,
             visitorName: invite.name,
             privateRecipients: room.privateRecipients,
           };
@@ -694,6 +742,7 @@ export function createAppServer(options = {}) {
             roomPrompt: room.roomPrompt || "",
             longTermSummary: room.longTermSummary || "",
             summaryStale: room.summaryStale,
+            members: room.members,
             messages: room.messages,
           };
           sendMcpResult(response, payload.id, {
@@ -701,6 +750,7 @@ export function createAppServer(options = {}) {
               type: "text",
               text: [
                 `【房间】${room.name}`,
+                `【成员簿】\n${room.members.map((member) => `${member.name}：${member.status}${member.note ? `（${member.note}）` : ""}`).join("\n") || "（暂无成员）"}`,
                 room.roomPrompt ? `【房间氛围】\n${room.roomPrompt}` : "",
                 room.longTermSummary ? `【房间长期总结${room.summaryStale ? "｜可能待更新" : ""}】\n${room.longTermSummary}` : "",
                 `【最近可见聊天｜最多 40 条】\n${transcript}`,
@@ -710,7 +760,32 @@ export function createAppServer(options = {}) {
           });
           return;
         }
+        if (toolName === "set_presence") {
+          const status = String(args.status || "");
+          if (!["active", "away", "left"].includes(status)) {
+            sendMcpError(response, payload.id, -32602, "status 只能是 active、away 或 left");
+            return;
+          }
+          const member = await stateStore.setRoomMemberPresence(invite.roomId, {
+            memberId: invite.id,
+            name: invite.name,
+            type: "mcp",
+            status,
+            note: args.note,
+          });
+          const labels = { active: "在席", away: "暂离席", left: "已离开" };
+          sendMcpResult(response, payload.id, {
+            content: [{ type: "text", text: `已把自己的门牌改为“${labels[status]}”${member?.note ? `：${member.note}` : ""}。` }],
+            structuredContent: { member },
+          });
+          return;
+        }
         if (toolName === "send_private_message") {
+          const selfMember = room.members.find((member) => member.id === invite.id);
+          if (selfMember?.status !== "active") {
+            sendMcpError(response, payload.id, -32009, "你当前不是在席状态；请先调用 set_presence 改为 active");
+            return;
+          }
           if (!visitorCanPost(invite.id)) {
             sendMcpError(response, payload.id, -32029, "发言太快，请稍后再试");
             return;
@@ -746,6 +821,11 @@ export function createAppServer(options = {}) {
           return;
         }
         if (toolName === "send_message") {
+          const selfMember = room.members.find((member) => member.id === invite.id);
+          if (selfMember?.status !== "active") {
+            sendMcpError(response, payload.id, -32009, "你当前不是在席状态；请先调用 set_presence 改为 active");
+            return;
+          }
           if (!visitorCanPost(invite.id)) {
             sendMcpError(response, payload.id, -32029, "发言太快，请稍后再试");
             return;
