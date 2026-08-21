@@ -110,6 +110,13 @@ test("Kimi K3 正式发言有隐藏思考余量但抢麦评分仍保持短输出
   assert.equal(replyPolicy.thinkingMode, undefined);
   assert.equal(replyPolicy.timeoutMs, 600_000);
 
+  const gamePolicy = chatRequestPolicy(agent, {
+    requestMode: "werewolf-game",
+    maxTokens: 300,
+  });
+  assert.equal(gamePolicy.upstreamMaxTokens, 4096);
+  assert.equal(gamePolicy.timeoutMs, 300_000);
+
   const scorePolicy = chatRequestPolicy(agent, {
     requestMode: "willingness-score",
     maxTokens: 8,

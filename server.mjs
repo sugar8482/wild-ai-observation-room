@@ -120,6 +120,7 @@ function isClaudeAgent(agent) {
 export function chatRequestPolicy(agent, payload = {}) {
   const isWillingnessScore = payload.requestMode === "willingness-score";
   const isMemorySummary = ["memory-summary", "private-memory-summary"].includes(payload.requestMode);
+  const isWerewolfGame = payload.requestMode === "werewolf-game";
   const minimumTokens = isWillingnessScore ? 1 : 64;
   const maximumTokens = isWillingnessScore ? 64 : 4096;
   const visibleTokenTarget = Number.isFinite(Number(payload.maxTokens))
@@ -130,13 +131,14 @@ export function chatRequestPolicy(agent, payload = {}) {
   const usesKimiThinking = isKimiK3(agent) && !isWillingnessScore;
   const usesClaude = isClaudeAgent(agent) && !isWillingnessScore;
   const needsHiddenThinkingBudget = usesDeepSeekThinking || usesKimiThinking;
+  const hiddenThinkingBudget = usesKimiThinking && isWerewolfGame ? 4096 : 8192;
   return {
     isWillingnessScore,
     isMemorySummary,
     visibleTokenTarget,
-    upstreamMaxTokens: needsHiddenThinkingBudget ? Math.max(8192, visibleTokenTarget) : visibleTokenTarget,
+    upstreamMaxTokens: needsHiddenThinkingBudget ? Math.max(hiddenThinkingBudget, visibleTokenTarget) : visibleTokenTarget,
     thinkingMode: officialDeepSeek ? (usesDeepSeekThinking ? "enabled" : "disabled") : undefined,
-    timeoutMs: isWillingnessScore ? 30_000 : isMemorySummary ? 900_000 : usesKimiThinking ? 600_000 : usesClaude ? 300_000 : needsHiddenThinkingBudget ? 180_000 : 120_000,
+    timeoutMs: isWillingnessScore ? 30_000 : isMemorySummary ? 900_000 : usesKimiThinking && isWerewolfGame ? 300_000 : usesKimiThinking ? 600_000 : usesClaude ? 300_000 : needsHiddenThinkingBudget ? 180_000 : 120_000,
   };
 }
 

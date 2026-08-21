@@ -138,6 +138,7 @@ async function chatRequest(agent, game, player, task, userContent, signal, maxTo
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       agent,
+      requestMode: "werewolf-game",
       temperature: 0.9,
       maxTokens,
       messages: [
