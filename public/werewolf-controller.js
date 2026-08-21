@@ -538,6 +538,9 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
       if (!vote) throw new Error("先投出平票重投这一票");
       currentDay(current).tieVotes[user.id] = vote;
       current.pending.userTieVoteReady = true;
+    } else if (current.phase === "last_words" && current.pending?.eliminatedId === user.id && !current.pending.userLastWordsReady) {
+      current.pending.userLastWords = byId("werewolf-user-last-words")?.value.trim() || "晨曦没有留下遗言。";
+      current.pending.userLastWordsReady = true;
     }
   }
 
@@ -795,7 +798,9 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
     }
     let words = "";
     if (eliminated.type === "user") {
-      words = byId("werewolf-user-last-words")?.value.trim() || "晨曦没有留下遗言。";
+      words = current.pending.userLastWords
+        || byId("werewolf-user-last-words")?.value.trim()
+        || "晨曦没有留下遗言。";
     } else {
       const agent = agentFor(eliminated.id);
       if (agent) {
@@ -827,6 +832,13 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
   async function advance() {
     const current = game();
     if (!current || running || current.status === "ended") return;
+    try {
+      // Read the human player's controls before renderGame rebuilds the action panel.
+      captureUserAction(current);
+    } catch (error) {
+      setGameStatus(error.message, true);
+      return;
+    }
     running = true;
     abortController = new AbortController();
     setGameStatus("法官正在收这一阶段的行动……");
