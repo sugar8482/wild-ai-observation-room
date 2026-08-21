@@ -119,6 +119,23 @@ test("Kimi K3 正式发言有隐藏思考余量但抢麦评分仍保持短输出
   assert.equal(scorePolicy.timeoutMs, 30_000);
 });
 
+test("Claude 正式发言允许更长思考但抢麦评分仍保持短超时", () => {
+  const agent = {
+    name: "Claude",
+    format: "openai",
+    baseUrl: "https://example.com/v1",
+    model: "claude-opus-4-6-thinking",
+  };
+  const replyPolicy = chatRequestPolicy(agent, { maxTokens: 300 });
+  assert.equal(replyPolicy.timeoutMs, 300_000);
+
+  const scorePolicy = chatRequestPolicy(agent, {
+    requestMode: "willingness-score",
+    maxTokens: 8,
+  });
+  assert.equal(scorePolicy.timeoutMs, 30_000);
+});
+
 test("本地服务提供健康检查和主页面", async (context) => {
   const server = createAppServer();
   server.listen(0, "127.0.0.1");

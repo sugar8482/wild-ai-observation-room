@@ -113,6 +113,10 @@ function isKimiK3(agent) {
   return /(?:^|[^a-z0-9])kimi[-_\s]?k3(?:[^a-z0-9]|$)/i.test(String(agent?.model || ""));
 }
 
+function isClaudeAgent(agent) {
+  return /claude|opus|sonnet/i.test(`${agent?.name || ""} ${agent?.model || ""}`);
+}
+
 export function chatRequestPolicy(agent, payload = {}) {
   const isWillingnessScore = payload.requestMode === "willingness-score";
   const isMemorySummary = ["memory-summary", "private-memory-summary"].includes(payload.requestMode);
@@ -124,6 +128,7 @@ export function chatRequestPolicy(agent, payload = {}) {
   const officialDeepSeek = isOfficialDeepSeekV4(agent);
   const usesDeepSeekThinking = officialDeepSeek && !isWillingnessScore;
   const usesKimiThinking = isKimiK3(agent) && !isWillingnessScore;
+  const usesClaude = isClaudeAgent(agent) && !isWillingnessScore;
   const needsHiddenThinkingBudget = usesDeepSeekThinking || usesKimiThinking;
   return {
     isWillingnessScore,
@@ -131,7 +136,7 @@ export function chatRequestPolicy(agent, payload = {}) {
     visibleTokenTarget,
     upstreamMaxTokens: needsHiddenThinkingBudget ? Math.max(8192, visibleTokenTarget) : visibleTokenTarget,
     thinkingMode: officialDeepSeek ? (usesDeepSeekThinking ? "enabled" : "disabled") : undefined,
-    timeoutMs: isWillingnessScore ? 30_000 : isMemorySummary ? 900_000 : needsHiddenThinkingBudget ? 180_000 : 120_000,
+    timeoutMs: isWillingnessScore ? 30_000 : isMemorySummary ? 900_000 : usesClaude ? 300_000 : needsHiddenThinkingBudget ? 180_000 : 120_000,
   };
 }
 
