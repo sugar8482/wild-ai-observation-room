@@ -233,6 +233,18 @@ h2 {
   background: #2d2d29;
 }
 
+.button-werewolf {
+  border-color: #d9c3c3;
+  background: #fff8f7;
+  color: #6d2424;
+}
+
+html[data-theme="dark"] .button-werewolf {
+  border-color: #694444;
+  background: #342424;
+  color: #ffd6d1;
+}
+
 .button-danger {
   color: var(--error);
   border-color: #e8c9c4;
@@ -255,6 +267,40 @@ h2 {
   min-height: calc(100vh - 73px);
   display: grid;
   grid-template-columns: minmax(205px, 250px) minmax(380px, 1fr) minmax(250px, 310px);
+}
+
+.werewolf-room-stage {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  padding: 42px 24px;
+  text-align: center;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(116, 62, 86, 0.14), transparent 32%),
+    var(--paper);
+}
+
+.werewolf-room-stage h3 {
+  margin: 12px 0 8px;
+  font-family: Georgia, "Songti SC", serif;
+  font-size: clamp(25px, 4vw, 42px);
+  font-weight: 520;
+}
+
+.werewolf-room-stage > p:not(.section-kicker) {
+  max-width: 520px;
+  margin-bottom: 22px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.werewolf-room-moon {
+  font-size: 58px;
+  line-height: 1;
+  color: #6d5060;
 }
 
 .panel,
@@ -1236,6 +1282,319 @@ input[type="range"] {
 .agent-dialog::backdrop,
 .room-dialog::backdrop {
   background: rgba(17, 17, 15, 0.38);
+}
+
+.werewolf-dialog {
+  width: min(900px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  background: var(--paper);
+}
+
+.werewolf-shell {
+  padding: 22px;
+}
+
+.werewolf-heading {
+  margin-bottom: 14px;
+}
+
+.werewolf-heading h2 {
+  font-family: Georgia, "Songti SC", serif;
+  font-size: 24px;
+  font-weight: 550;
+}
+
+.werewolf-setup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.werewolf-choice-group,
+.werewolf-participant-group {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.werewolf-participant-group {
+  margin-top: 12px;
+}
+
+.werewolf-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.werewolf-radio:hover,
+.werewolf-radio:has(input:checked) {
+  background: var(--wash);
+}
+
+.werewolf-radio input {
+  margin-top: 3px;
+}
+
+.werewolf-radio span {
+  display: grid;
+  gap: 2px;
+}
+
+.werewolf-radio small,
+.werewolf-small-note,
+.werewolf-mode-copy,
+#werewolf-mode-copy {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.werewolf-participant-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.werewolf-participant {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  background: var(--wash);
+  font-size: 13px;
+}
+
+.werewolf-participant span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.werewolf-status {
+  min-height: 20px;
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.werewolf-status.is-error {
+  color: var(--error);
+}
+
+.werewolf-game-bar,
+.werewolf-game-actions,
+.werewolf-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.werewolf-game-bar {
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--wash);
+}
+
+.werewolf-game-bar p {
+  margin: 3px 0 0;
+}
+
+.werewolf-phase {
+  font-weight: 760;
+  font-size: 14px;
+}
+
+.danger-text {
+  color: var(--error);
+}
+
+.werewolf-role-card {
+  margin-top: 12px;
+  padding: 13px 15px;
+  border-radius: 10px;
+  background: #171719;
+  color: #fff;
+  line-height: 1.55;
+}
+
+.werewolf-role-card strong {
+  font-size: 15px;
+}
+
+.werewolf-role-card p {
+  margin: 4px 0 0;
+  color: #d1d1d1;
+  font-size: 12px;
+}
+
+.werewolf-player-board {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.werewolf-player-chip {
+  min-width: 0;
+  padding: 8px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-align: center;
+  background: var(--paper);
+}
+
+.werewolf-player-chip strong,
+.werewolf-player-chip span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.werewolf-player-chip strong {
+  font-size: 11px;
+}
+
+.werewolf-player-chip span {
+  min-height: 16px;
+  margin-top: 3px;
+  color: var(--quiet);
+  font-size: 10px;
+}
+
+.werewolf-player-chip.is-dead {
+  opacity: 0.52;
+  text-decoration: line-through;
+}
+
+.werewolf-player-chip.is-wolf {
+  border-color: #b76464;
+  background: #fff4f3;
+}
+
+html[data-theme="dark"] .werewolf-player-chip.is-wolf {
+  background: #352525;
+}
+
+.werewolf-log {
+  height: min(42vh, 390px);
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--wash);
+  scroll-behavior: smooth;
+}
+
+.werewolf-log-entry {
+  max-width: 82%;
+  margin: 0 0 9px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: var(--paper);
+  border: 1px solid var(--soft-line);
+}
+
+.werewolf-log-entry.is-system {
+  max-width: 100%;
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.werewolf-log-entry.is-secret {
+  margin-left: auto;
+  border-color: #ab8fba;
+  background: #fbf6ff;
+}
+
+html[data-theme="dark"] .werewolf-log-entry.is-secret {
+  background: #312936;
+}
+
+.werewolf-log-entry header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+  color: var(--quiet);
+  font-size: 10px;
+}
+
+.werewolf-log-entry p {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.62;
+}
+
+.werewolf-action-panel {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.werewolf-action-panel:empty {
+  display: none;
+}
+
+.werewolf-action-panel label,
+.werewolf-action-panel .werewolf-action-title {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.werewolf-action-panel textarea,
+.werewolf-action-panel select {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.werewolf-action-panel textarea {
+  min-height: 76px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.werewolf-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.werewolf-vote-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.werewolf-vote-results span {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: var(--warm);
+  font-size: 10px;
+}
+
+.werewolf-footer {
+  margin-top: 12px;
 }
 
 .access-dialog {
@@ -2402,6 +2761,14 @@ html[data-theme="dark"] .mobile-room-switcher {
 }
 
 @media (max-width: 840px) {
+  .werewolf-shell {
+    padding: 16px;
+  }
+
+  .werewolf-player-board {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .topbar {
     position: sticky;
     top: 0;
@@ -2585,6 +2952,25 @@ html[data-theme="dark"] .mobile-room-switcher {
 }
 
 @media (max-width: 600px) {
+  .werewolf-setup-grid,
+  .werewolf-action-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .werewolf-participant-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .werewolf-game-bar,
+  .werewolf-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .werewolf-log {
+    height: 38vh;
+  }
+
   .topbar {
     min-height: 66px;
   }

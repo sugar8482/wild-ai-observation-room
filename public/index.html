@@ -28,6 +28,7 @@
           <span class="status-dot" id="status-dot"></span>
           <span id="status-text">本地代理就绪</span>
         </div>
+        <button class="button button-werewolf" id="werewolf-button" type="button">🐺 狼人杀</button>
         <button class="button button-quiet" id="visitor-button" type="button">邀请访客</button>
         <button class="button button-quiet" id="export-button" type="button">导出记录</button>
         <button class="button button-quiet" id="new-chat-button" type="button">清空本房</button>
@@ -101,6 +102,14 @@
           <span class="mode-badge" id="room-mode-label">圆桌 · 每人一轮</span>
         </div>
 
+        <section class="werewolf-room-stage is-hidden" id="werewolf-room-stage">
+          <div class="werewolf-room-moon" aria-hidden="true">☾</div>
+          <p class="section-kicker">TEMPORARY GAME TABLE</p>
+          <h3>身份只活一局，散场不记仇。</h3>
+          <p>曦曦可以坐上帝席发牌围观，也可以亲自下场，让他们连群主一起盘、一起投。</p>
+          <button class="button button-primary" id="open-werewolf-room" type="button">进入狼人杀房</button>
+        </section>
+
         <section class="message-feed" id="message-feed" aria-live="polite" aria-label="聊天记录">
           <div class="empty-state" id="empty-state">
             <p class="empty-index">OBSERVATION 001</p>
@@ -143,7 +152,7 @@
         </form>
       </main>
 
-      <aside class="panel director-panel" aria-labelledby="director-title">
+      <aside class="panel director-panel" id="director-panel" aria-labelledby="director-title">
         <div class="panel-heading">
           <div>
             <p class="section-kicker">DIRECTOR</p>
@@ -224,6 +233,14 @@
         <div class="field room-name-field">
           <label for="room-name">聊天室名称</label>
           <input id="room-name" name="name" required maxlength="60" placeholder="例如：五人恋综观察间" />
+        </div>
+        <div class="field room-type-field">
+          <label for="room-type">房间模式</label>
+          <select id="room-type" name="roomType">
+            <option value="chat">普通聊天室</option>
+            <option value="werewolf">🐺 狼人杀游戏房</option>
+          </select>
+          <p class="field-help" id="room-type-help">普通聊天、私聊、记忆与后台定时都照常使用。</p>
         </div>
         <div class="field room-prompt-field">
           <label for="room-prompt">房间氛围提示词 <span>可留空</span></label>
@@ -724,6 +741,71 @@
           </div>
         </div>
       </form>
+    </dialog>
+
+    <dialog class="room-dialog werewolf-dialog" id="werewolf-dialog">
+      <div class="werewolf-shell">
+        <div class="dialog-heading werewolf-heading">
+          <div>
+            <p class="section-kicker">WEREWOLF GAME</p>
+            <h2>月黑请闭眼</h2>
+          </div>
+          <button class="icon-button" id="close-werewolf-dialog" type="button" aria-label="关闭">×</button>
+        </div>
+
+        <section id="werewolf-setup">
+          <p class="dialog-intro">一局临时游戏。身份、谎话和夜间密谋只留在本局卷宗里，不进入房间长期总结或嘉宾私人记忆。</p>
+          <div class="werewolf-setup-grid">
+            <fieldset class="control-group werewolf-choice-group">
+              <legend>曦曦坐哪里</legend>
+              <label class="werewolf-radio"><input type="radio" name="werewolf-view" value="player" checked /><span><strong>玩家模式</strong><small>亲自抽身份，只看依法能看的秘密</small></span></label>
+              <label class="werewolf-radio"><input type="radio" name="werewolf-view" value="god" /><span><strong>上帝模式</strong><small>不下场，偷看身份与狼队密谋</small></span></label>
+            </fieldset>
+            <fieldset class="control-group werewolf-choice-group">
+              <legend>额度吃法</legend>
+              <label class="werewolf-radio"><input type="radio" name="werewolf-cost" value="economy" checked /><span><strong>省钱局</strong><small>白天发言顺便交票，少调用一轮</small></span></label>
+              <label class="werewolf-radio"><input type="radio" name="werewolf-cost" value="standard" /><span><strong>标准局</strong><small>发言、投票分开，推理更完整</small></span></label>
+            </fieldset>
+          </div>
+          <fieldset class="control-group werewolf-participant-group">
+            <legend>本局玩家</legend>
+            <p class="field-help" id="werewolf-player-help">玩家模式请选择 5～6 位 AI；上帝模式请选择 6～7 位 AI。</p>
+            <div class="werewolf-participant-list" id="werewolf-participant-list"></div>
+          </fieldset>
+          <p class="werewolf-status" id="werewolf-setup-status" aria-live="polite"></p>
+          <div class="dialog-footer">
+            <span class="werewolf-small-note">首版：2 狼＋预言家＋女巫＋村民；暂时不加警长、猎人、守卫。</span>
+            <div class="dialog-footer-right">
+              <button class="button button-primary" id="start-werewolf-game" type="button">洗牌发身份</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="werewolf-game is-hidden" id="werewolf-game">
+          <div class="werewolf-game-bar">
+            <div>
+              <span class="werewolf-phase" id="werewolf-phase">第 1 夜 · 狼人睁眼</span>
+              <p id="werewolf-mode-copy">玩家模式 · 省钱局</p>
+            </div>
+            <div class="werewolf-game-actions">
+              <button class="text-button" id="werewolf-new-game" type="button">重新开局</button>
+              <button class="text-button danger-text" id="werewolf-end-game" type="button">结束本局</button>
+            </div>
+          </div>
+          <div class="werewolf-role-card" id="werewolf-role-card"></div>
+          <div class="werewolf-player-board" id="werewolf-player-board"></div>
+          <div class="werewolf-log" id="werewolf-log" aria-live="polite"></div>
+          <div class="werewolf-action-panel" id="werewolf-action-panel"></div>
+          <p class="werewolf-status" id="werewolf-game-status" aria-live="polite"></p>
+          <div class="dialog-footer werewolf-footer">
+            <span class="werewolf-small-note" id="werewolf-cost-note"></span>
+            <div class="dialog-footer-right">
+              <button class="button button-quiet is-hidden" id="werewolf-stop" type="button">停一下</button>
+              <button class="button button-primary" id="werewolf-advance" type="button">推进本阶段</button>
+            </div>
+          </div>
+        </section>
+      </div>
     </dialog>
 
     <dialog class="access-dialog security-dialog" id="security-dialog">

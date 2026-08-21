@@ -41,6 +41,8 @@ import {
   roomMembers,
   roomPresenceContext,
 } from "./room-presence.js";
+import { sanitizeWerewolfGame } from "./werewolf-game.js";
+import { createWerewolfController } from "./werewolf-controller.js";
 
 const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
 const LEGACY_MESSAGE_KEY = "wild-ai-observation-room.messages.v1";
@@ -168,6 +170,8 @@ const visitorFormStatus = byId("visitor-form-status");
 const visitorEndpointCard = byId("visitor-endpoint-card");
 const visitorEndpoint = byId("visitor-endpoint");
 const visitorCreateButton = byId("visitor-create");
+const werewolfRoomStage = byId("werewolf-room-stage");
+const directorPanel = byId("director-panel");
 
 let toastTimer;
 let saveChain = Promise.resolve();
@@ -179,6 +183,7 @@ let guestCopyNameSuggestion = "";
 let accessProtectionEnabled = true;
 let agentMemoryDraftDirty = false;
 let visitorInvites = [];
+let werewolfController = null;
 const summarizingRoomIds = new Set();
 const summaryRuns = new Map();
 const summaryNotices = new Map();
@@ -347,12 +352,14 @@ function hydrateRoom(room, fallbackParticipants = [], agents = []) {
   const hydrated = {
     id: room?.id || newId("room"),
     name: String(room?.name || "未命名观察间"),
+    roomType: room?.roomType === "werewolf" ? "werewolf" : "chat",
     roomPrompt: String(room?.roomPrompt || ""),
     bubbleSplit: room?.bubbleSplit === true,
     memory: hydrateRoomMemory(room?.memory),
     schedule: hydrateRoomSchedule(room?.schedule),
     eventCards: hydrateRoomEventCards(room?.eventCards),
     mic: hydrateRoomMic(room?.mic),
+    werewolf: sanitizeWerewolfGame(room?.werewolf),
     externalRevision: Math.max(0, Number(room?.externalRevision) || 0),
     participantIds: Array.isArray(room?.participantIds) ? [...new Set(room.participantIds)] : fallbackParticipants,
     messages: Array.isArray(room?.messages) ? room.messages : [],
@@ -744,7 +751,7 @@ function renderRooms() {
       createElement(
         "span",
         "",
-        `${activeCount} 位在席 · ${members.length} 位来过 · ${room.messages.length} 条记录${room.roomPrompt.trim() ? " · 有氛围" : ""}${room.bubbleSplit ? " · 连发气泡" : ""}${room.memory.summary.trim() ? " · 有记忆" : ""}${room.schedule.enabled ? ` · 定时 ${room.schedule.intervalMinutes}m${room.schedule.strategy === "light-mic" ? " 轻量" : ""}` : ""}${room.eventCards.enabled ? " · 事件卡" : ""}`,
+        `${activeCount} 位在席 · ${members.length} 位来过${room.roomType === "werewolf" ? " · 🐺 狼人杀" : ` · ${room.messages.length} 条记录${room.roomPrompt.trim() ? " · 有氛围" : ""}${room.bubbleSplit ? " · 连发气泡" : ""}${room.memory.summary.trim() ? " · 有记忆" : ""}${room.schedule.enabled ? ` · 定时 ${room.schedule.intervalMinutes}m${room.schedule.strategy === "light-mic" ? " 轻量" : ""}` : ""}${room.eventCards.enabled ? " · 事件卡" : ""}`}`,
       ),
     );
     main.addEventListener("click", () => switchRoom(room.id));
@@ -1275,6 +1282,20 @@ function renderAll(options = {}) {
   renderMode();
   renderSummarizerStatus();
   renderMessages(options);
+  const isWerewolfRoom = activeRoom()?.roomType === "werewolf";
+  byId("werewolf-button").classList.toggle("is-hidden", !isWerewolfRoom);
+  byId("export-button").classList.toggle("is-hidden", isWerewolfRoom);
+  byId("new-chat-button").classList.toggle("is-hidden", isWerewolfRoom);
+  werewolfRoomStage.classList.toggle("is-hidden", !isWerewolfRoom);
+  messageFeed.classList.toggle("is-hidden", isWerewolfRoom);
+  composer.classList.toggle("is-hidden", isWerewolfRoom);
+  newMessageJump.classList.toggle("is-hidden", isWerewolfRoom || unseenMessageCount === 0);
+  directorPanel.classList.toggle("is-hidden", isWerewolfRoom);
+  if (isWerewolfRoom) {
+    roomModeLabel.textContent = "狼人杀 · 临时身份局";
+    mobileRoomMeta.textContent = activeRoom()?.werewolf?.status === "active" ? "游戏进行中" : "等待开局";
+  }
+  werewolfController?.render();
 }
 
 function addMessage({
@@ -2549,6 +2570,23 @@ function populateRoomParticipants(selectedIds) {
   }
 }
 
+function syncRoomTypeForm(room = null) {
+  const select = roomForm.elements.namedItem("roomType");
+  const roomType = room?.roomType === "werewolf" || select.value === "werewolf" ? "werewolf" : "chat";
+  select.value = roomType;
+  select.disabled = Boolean(room);
+  byId("room-type-help").textContent = room
+    ? (roomType === "werewolf"
+      ? "这是独立狼人杀房。房型建立后不切换，避免普通聊天和游戏卷宗混在一起。"
+      : "这是普通聊天室。房型建立后不切换；需要游戏房时请另建一间。")
+    : (roomType === "werewolf"
+      ? "新房间只保存每局临时卷宗，不启用普通聊天的长期总结与后台定时。"
+      : "普通聊天、私聊、记忆与后台定时都照常使用。");
+  for (const selector of [".room-prompt-field", ".room-bubble-field", ".room-memory-field", ".room-schedule-field"]) {
+    roomForm.querySelector(selector)?.classList.toggle("is-hidden", roomType === "werewolf");
+  }
+}
+
 function openRoomDialog(roomId = null) {
   const room = state.rooms.find((item) => item.id === roomId);
   const memory = room?.memory || hydrateRoomMemory();
@@ -2557,6 +2595,7 @@ function openRoomDialog(roomId = null) {
   byId("room-dialog-title").textContent = room ? `设置 ${room.name}` : "新建聊天室";
   roomForm.elements.namedItem("id").value = room?.id || "";
   roomForm.elements.namedItem("name").value = room?.name || "";
+  roomForm.elements.namedItem("roomType").value = room?.roomType || "chat";
   roomForm.elements.namedItem("roomPrompt").value = room?.roomPrompt || "";
   roomForm.elements.namedItem("bubbleSplit").checked = room?.bubbleSplit === true;
   roomForm.elements.namedItem("memoryEnabled").checked = memory.enabled;
@@ -2579,6 +2618,7 @@ function openRoomDialog(roomId = null) {
   byId("memory-rebuild").disabled = !room || !room.messages.length;
   updateRoomMemoryStatus(room || { messages: [], memory });
   updateRoomScheduleStatus(room || { schedule, eventCards });
+  syncRoomTypeForm(room);
   roomDialog.showModal();
 }
 
@@ -2743,6 +2783,9 @@ roomForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const data = new FormData(roomForm);
   const name = String(data.get("name") || "").trim();
+  const id = String(data.get("id") || "");
+  const room = state.rooms.find((item) => item.id === id);
+  const roomType = room?.roomType === "werewolf" || (!room && data.get("roomType") === "werewolf") ? "werewolf" : "chat";
   const roomPrompt = String(data.get("roomPrompt") || "").trim();
   const bubbleSplit = data.get("bubbleSplit") === "on";
   const memoryEnabled = data.get("memoryEnabled") === "on";
@@ -2760,8 +2803,6 @@ roomForm.addEventListener("submit", (event) => {
     showToast("至少邀请一位 AI，空房间会有点尴尬");
     return;
   }
-  const id = String(data.get("id") || "");
-  const room = state.rooms.find((item) => item.id === id);
   let memoryFocusNeedsRebuild = false;
   if (room) {
     room.name = name;
@@ -2796,6 +2837,7 @@ roomForm.addEventListener("submit", (event) => {
   } else {
     const created = hydrateRoom({
       name,
+      roomType,
       roomPrompt,
       bubbleSplit,
       participantIds,
@@ -2813,6 +2855,7 @@ roomForm.addEventListener("submit", (event) => {
   showToast(memoryFocusNeedsRebuild
     ? "记忆重点已保存；点“重新生成”后会应用到旧摘要"
     : `${name} 已准备好`);
+  if (!room && roomType === "werewolf") setTimeout(() => werewolfController?.open(), 0);
 });
 
 byId("memory-summarize-now").addEventListener("click", () => {
@@ -2871,6 +2914,7 @@ byId("agent-format").addEventListener("change", () => {
   syncEndpointHelp();
 });
 byId("agent-auth").addEventListener("change", syncAuthField);
+byId("room-type").addEventListener("change", () => syncRoomTypeForm(null));
 byId("agent-memory-enabled").addEventListener("change", () => {
   agentMemoryDraftDirty = true;
   syncAgentMemoryField();
@@ -3539,6 +3583,13 @@ state.freeStrategy = ["mic-grab", "light-mic"].includes(directorPrefs.freeStrate
 tokensInput.value = String(
   Math.min(4096, Math.max(64, Number(directorPrefs.visibleTokenTarget) || 300)),
 );
+werewolfController = createWerewolfController({
+  getRoom: activeRoom,
+  getRoomAgents: () => activeRoomAgents(activeRoom(), state.agents),
+  persist: queuePersist,
+  toast: showToast,
+});
+byId("open-werewolf-room").addEventListener("click", () => werewolfController.open());
 renderAll();
 checkAccess();
 setInterval(() => void syncBackgroundUpdates(), 5_000);

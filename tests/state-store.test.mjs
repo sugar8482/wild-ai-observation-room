@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createStateStore } from "../lib/state-store.mjs";
+import { createWerewolfGame } from "../public/werewolf-game.js";
 
 test("成员簿会迁移旧房间、保留暂离席，并抵抗滞后浏览器覆盖", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-presence-"));
@@ -548,4 +549,42 @@ test("手动关闭角色记忆时保留内容但后续可再次开启", async (c
   });
   assert.equal(closed.agents[0].memoryEnabled, false);
   assert.equal(closed.agents[0].memory, "- 我记得这件事。");
+});
+
+test("狼人杀房会单独保存临时卷宗，不混入普通聊天与长期总结", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-werewolf-room-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({
+    filePath: join(directory, "state.json"),
+    secret: "werewolf-room-secret",
+  });
+  const participants = Array.from({ length: 6 }, (_, index) => ({
+    id: `guest-${index + 1}`,
+    name: `嘉宾${index + 1}`,
+    type: "agent",
+  }));
+  const saved = await store.save({
+    agents: participants.map((player) => ({
+      id: player.id,
+      name: player.name,
+      format: "openai",
+      authType: "none",
+    })),
+    activeRoomId: "room-werewolf",
+    rooms: [{
+      id: "room-werewolf",
+      name: "月黑请闭眼",
+      roomType: "werewolf",
+      participantIds: participants.map((player) => player.id),
+      messages: [],
+      memory: { summary: "这段普通房间总结不应被游戏改写" },
+      werewolf: createWerewolfGame({ participants, random: () => 0.4 }),
+    }],
+  });
+
+  assert.equal(saved.rooms[0].roomType, "werewolf");
+  assert.equal(saved.rooms[0].werewolf.players.length, 6);
+  assert.equal(saved.rooms[0].werewolf.log[0].text, "身份牌已经发好。天黑请闭眼。");
+  assert.deepEqual(saved.rooms[0].messages, []);
+  assert.equal(saved.rooms[0].memory.summary, "这段普通房间总结不应被游戏改写");
 });

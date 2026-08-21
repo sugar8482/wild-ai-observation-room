@@ -1,0 +1,110 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  WEREWOLF_USER_ID,
+  appendWerewolfLog,
+  checkWerewolfWinner,
+  createWerewolfGame,
+  finishWerewolfGame,
+  parseWerewolfTarget,
+  parseWitchAction,
+  resolveWerewolfNight,
+  sanitizeWerewolfGame,
+  visibleWerewolfLog,
+  voteOutcome,
+} from "../public/werewolf-game.js";
+
+function participants(count = 6, includeUser = false) {
+  const agents = Array.from({ length: count }, (_, index) => ({
+    id: `guest-${index + 1}`,
+    name: `嘉宾${index + 1}`,
+    type: "agent",
+  }));
+  return includeUser
+    ? [{ id: WEREWOLF_USER_ID, name: "晨曦", type: "user" }, ...agents]
+    : agents;
+}
+
+test("六人和七人经典局都会发出两狼、预言家、女巫与正确数量的村民", () => {
+  for (const players of [participants(6), participants(6, true)]) {
+    const game = createWerewolfGame({ participants: players, random: () => 0.42 });
+    const counts = game.players.reduce((result, player) => ({
+      ...result,
+      [player.role]: (result[player.role] || 0) + 1,
+    }), {});
+    assert.equal(counts.wolf, 2);
+    assert.equal(counts.seer, 1);
+    assert.equal(counts.witch, 1);
+    assert.equal(counts.villager, players.length - 4);
+  }
+});
+
+test("玩家模式隔离秘密频道，散场后自动解锁完整卷宗", () => {
+  const game = createWerewolfGame({ participants: participants(6, true), viewMode: "player", random: () => 0.3 });
+  const user = game.players.find((player) => player.id === WEREWOLF_USER_ID);
+  user.role = "villager";
+  appendWerewolfLog(game, { visibility: "public", author: "法官", text: "公开消息" });
+  appendWerewolfLog(game, { visibility: "wolves", author: "狼人", text: "今晚刀晨曦" });
+  appendWerewolfLog(game, { visibility: "seer", author: "法官", text: "验人是狼" });
+  const playing = visibleWerewolfLog(game).map((entry) => entry.text);
+  assert.ok(playing.includes("公开消息"));
+  assert.ok(!playing.includes("今晚刀晨曦"));
+  assert.ok(!playing.includes("验人是狼"));
+
+  finishWerewolfGame(game, "good");
+  const ended = visibleWerewolfLog(game).map((entry) => entry.text);
+  assert.ok(ended.includes("今晚刀晨曦"));
+  assert.ok(ended.includes("验人是狼"));
+});
+
+test("夜间结算支持解药、毒药去重，并能正确判断阵营胜负", () => {
+  const game = createWerewolfGame({ participants: participants(6), random: () => 0.6 });
+  const living = [...game.players];
+  const saved = living[0];
+  const poisoned = living[1];
+  const deaths = resolveWerewolfNight(game, {
+    killTargetId: saved.id,
+    save: true,
+    poisonTargetId: poisoned.id,
+  });
+  assert.deepEqual(deaths, [poisoned.id]);
+  assert.equal(saved.alive, true);
+  assert.equal(poisoned.alive, false);
+
+  for (const player of game.players) {
+    if (player.role === "wolf") player.alive = false;
+  }
+  assert.equal(checkWerewolfWinner(game), "good");
+});
+
+test("结构化目标与女巫行动兼容名字，平票不会误放逐", () => {
+  const game = createWerewolfGame({ participants: participants(6), random: () => 0.2 });
+  const [first, second] = game.players;
+  assert.equal(parseWerewolfTarget(`[VOTE:${first.name}]`, "VOTE", game.players, [first.id]), first.id);
+  assert.deepEqual(
+    parseWitchAction(`[WITCH:save=yes,poison=${second.name}]`, game.players, [second.id]),
+    { save: true, poisonTargetId: second.id },
+  );
+  const outcome = voteOutcome({ a: first.id, b: second.id }, [first.id, second.id]);
+  assert.equal(outcome.eliminatedId, null);
+  assert.deepEqual(new Set(outcome.tiedIds), new Set([first.id, second.id]));
+});
+
+test("狼人杀状态会限长清洗，但不会混进普通消息或长期总结", () => {
+  const game = createWerewolfGame({ participants: participants(6), random: () => 0.1 });
+  game.log.push(...Array.from({ length: 510 }, (_, index) => ({
+    id: `log-${index}`,
+    day: 1,
+    phase: "day_speech",
+    visibility: "wolves",
+    authorId: "guest-1",
+    author: "狼",
+    text: `密谈${index}`,
+    timestamp: index,
+  })));
+  const saved = sanitizeWerewolfGame(game);
+  assert.equal(saved.log.length, 500);
+  assert.equal(saved.log.at(-1).text, "密谈509");
+  assert.equal(Object.hasOwn(saved, "messages"), false);
+  assert.equal(Object.hasOwn(saved, "memory"), false);
+});
