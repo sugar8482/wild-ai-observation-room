@@ -39,6 +39,30 @@ test("六人和七人经典局都会发出两狼、预言家、女巫与正确�
   }
 });
 
+test("上帝席可以亲手指定每位 AI 的身份，非法牌组会安全退回随机发牌", () => {
+  const players = participants(6);
+  const roleAssignments = {
+    "guest-1": "wolf",
+    "guest-2": "wolf",
+    "guest-3": "seer",
+    "guest-4": "witch",
+    "guest-5": "villager",
+    "guest-6": "villager",
+  };
+  const manual = createWerewolfGame({ participants: players, viewMode: "god", roleAssignments, random: () => 0.8 });
+  assert.equal(manual.dealMode, "manual");
+  assert.deepEqual(Object.fromEntries(manual.players.map((player) => [player.id, player.role])), roleAssignments);
+
+  const invalid = createWerewolfGame({
+    participants: players,
+    viewMode: "god",
+    roleAssignments: Object.fromEntries(players.map((player) => [player.id, "wolf"])),
+    random: () => 0.8,
+  });
+  assert.equal(invalid.dealMode, "random");
+  assert.equal(invalid.players.filter((player) => player.role === "wolf").length, 2);
+});
+
 test("玩家模式隔离秘密频道，散场后自动解锁完整卷宗", () => {
   const game = createWerewolfGame({ participants: participants(6, true), viewMode: "player", random: () => 0.3 });
   const user = game.players.find((player) => player.id === WEREWOLF_USER_ID);

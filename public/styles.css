@@ -1379,6 +1379,61 @@ input[type="range"] {
   white-space: nowrap;
 }
 
+.werewolf-manual-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--wash);
+  cursor: pointer;
+}
+
+.werewolf-manual-toggle input {
+  margin-top: 3px;
+}
+
+.werewolf-manual-toggle span {
+  display: grid;
+  gap: 3px;
+}
+
+.werewolf-manual-toggle small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.werewolf-role-assignment {
+  margin-top: 10px;
+}
+
+.werewolf-role-assignment-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.werewolf-role-assignment-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.werewolf-role-assignment-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.werewolf-role-assignment-row select {
+  min-width: 0;
+}
+
 .werewolf-status {
   min-height: 20px;
   margin: 12px 0 0;
@@ -2959,6 +3014,10 @@ html[data-theme="dark"] .mobile-room-switcher {
 
   .werewolf-participant-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .werewolf-role-assignment-list {
+    grid-template-columns: 1fr;
   }
 
   .werewolf-game-bar,

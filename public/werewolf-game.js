@@ -43,7 +43,7 @@ export function shuffleWerewolfItems(items, random = Math.random) {
   return shuffled;
 }
 
-function roleDeck(playerCount) {
+export function werewolfRoleDeck(playerCount) {
   if (playerCount === 6) return ["wolf", "wolf", "seer", "witch", "villager", "villager"];
   if (playerCount === 7) return ["wolf", "wolf", "seer", "witch", "villager", "villager", "villager"];
   throw new Error("经典首版只支持 6 或 7 位玩家");
@@ -53,7 +53,7 @@ function gameId() {
   return `werewolf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-export function createWerewolfGame({ participants, viewMode = "player", costMode = "economy", random = Math.random }) {
+export function createWerewolfGame({ participants, viewMode = "player", costMode = "economy", roleAssignments = null, random = Math.random }) {
   const unique = [];
   const seen = new Set();
   for (const participant of Array.isArray(participants) ? participants : []) {
@@ -66,8 +66,16 @@ export function createWerewolfGame({ participants, viewMode = "player", costMode
       type: participant?.type === "user" ? "user" : "agent",
     });
   }
-  const roles = shuffleWerewolfItems(roleDeck(unique.length), random);
-  const players = shuffleWerewolfItems(unique, random).map((participant, index) => ({
+  const deck = werewolfRoleDeck(unique.length);
+  const assignedRoles = roleAssignments && typeof roleAssignments === "object"
+    ? unique.map((participant) => roleAssignments[participant.id])
+    : null;
+  const hasManualDeal = assignedRoles
+    && assignedRoles.every((role) => Object.hasOwn(WEREWOLF_ROLE_META, role))
+    && [...assignedRoles].sort().join("|") === [...deck].sort().join("|");
+  const seatedParticipants = hasManualDeal ? unique : shuffleWerewolfItems(unique, random);
+  const roles = hasManualDeal ? assignedRoles : shuffleWerewolfItems(deck, random);
+  const players = seatedParticipants.map((participant, index) => ({
     ...participant,
     role: roles[index],
     alive: true,
@@ -80,6 +88,7 @@ export function createWerewolfGame({ participants, viewMode = "player", costMode
     status: "active",
     viewMode: viewMode === "god" ? "god" : "player",
     costMode: costMode === "standard" ? "standard" : "economy",
+    dealMode: hasManualDeal ? "manual" : "random",
     day: 1,
     phase: "night_wolves",
     players,
@@ -157,6 +166,7 @@ export function sanitizeWerewolfGame(game) {
     status,
     viewMode: game.viewMode === "god" ? "god" : "player",
     costMode: game.costMode === "standard" ? "standard" : "economy",
+    dealMode: game.dealMode === "manual" ? "manual" : "random",
     day: boundedInteger(game.day, 1, 1, 99),
     phase,
     players,

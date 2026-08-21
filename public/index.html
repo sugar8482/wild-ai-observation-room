@@ -772,6 +772,14 @@
             <p class="field-help" id="werewolf-player-help">玩家模式请选择 5～6 位 AI；上帝模式请选择 6～7 位 AI。</p>
             <div class="werewolf-participant-list" id="werewolf-participant-list"></div>
           </fieldset>
+          <label class="werewolf-manual-toggle is-hidden" id="werewolf-manual-toggle">
+            <input id="werewolf-manual-deal" type="checkbox" checked />
+            <span><strong>这次由我亲手分配身份</strong><small>取消勾选就是让系统随机洗牌；只有上帝席能看见并使用这张表。</small></span>
+          </label>
+          <fieldset class="control-group werewolf-role-assignment is-hidden" id="werewolf-role-assignment">
+            <legend>身份分配</legend>
+            <div class="werewolf-role-assignment-list" id="werewolf-role-assignment-list"></div>
+          </fieldset>
           <p class="werewolf-status" id="werewolf-setup-status" aria-live="polite"></p>
           <div class="dialog-footer">
             <span class="werewolf-small-note">首版：2 狼＋预言家＋女巫＋村民；暂时不加警长、猎人、守卫。</span>

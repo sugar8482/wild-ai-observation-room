@@ -5,6 +5,7 @@ import {
   appendWerewolfLog,
   checkWerewolfWinner,
   createWerewolfGame,
+  werewolfRoleDeck,
   finishWerewolfGame,
   livingWerewolfPlayers,
   parseWerewolfTarget,
@@ -173,6 +174,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
   const gameStatus = byId("werewolf-game-status");
   const advanceButton = byId("werewolf-advance");
   const stopButton = byId("werewolf-stop");
+  const manualDealInput = byId("werewolf-manual-deal");
   let running = false;
   let abortController = null;
 
@@ -208,6 +210,8 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
     byId("werewolf-player-help").textContent = viewMode === "player"
       ? "玩家模式请选择 5～6 位 AI（加上曦曦共 6～7 人）。"
       : "上帝模式请选择 6～7 位 AI（曦曦只围观，不占身份牌）。";
+    byId("werewolf-manual-toggle").classList.toggle("is-hidden", viewMode !== "god");
+    renderRoleAssignment();
     updateSetupStatus();
   }
 
@@ -215,13 +219,60 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
     return [...byId("werewolf-participant-list").querySelectorAll("input:checked")].map((input) => input.value);
   }
 
+  function manualDealEnabled() {
+    return selectedRadio("werewolf-view", "player") === "god" && manualDealInput.checked;
+  }
+
+  function selectedRoleAssignments() {
+    return Object.fromEntries([...byId("werewolf-role-assignment-list").querySelectorAll("select")]
+      .map((select) => [select.dataset.playerId, select.value]));
+  }
+
+  function roleAssignmentsAreValid(assignments, playerCount) {
+    if (![6, 7].includes(playerCount)) return false;
+    const selectedRoles = Object.values(assignments).sort().join("|");
+    return selectedRoles === werewolfRoleDeck(playerCount).sort().join("|");
+  }
+
+  function renderRoleAssignment() {
+    const fieldset = byId("werewolf-role-assignment");
+    const list = byId("werewolf-role-assignment-list");
+    const enabled = manualDealEnabled();
+    fieldset.classList.toggle("is-hidden", !enabled);
+    if (!enabled) return;
+    const previous = selectedRoleAssignments();
+    const ids = selectedAgentIds();
+    const agentsById = new Map(configuredAgents().map((agent) => [agent.id, agent]));
+    const defaults = [6, 7].includes(ids.length) ? werewolfRoleDeck(ids.length) : [];
+    list.replaceChildren();
+    ids.forEach((id, index) => {
+      const row = createElement("label", "werewolf-role-assignment-row");
+      const select = document.createElement("select");
+      select.dataset.playerId = id;
+      for (const [role, meta] of Object.entries(WEREWOLF_ROLE_META)) {
+        const option = document.createElement("option");
+        option.value = role;
+        option.textContent = `${meta.icon} ${meta.label}`;
+        select.append(option);
+      }
+      select.value = previous[id] || defaults[index] || "villager";
+      select.addEventListener("change", updateSetupStatus);
+      row.append(createElement("span", "", agentsById.get(id)?.name || id), select);
+      list.append(row);
+    });
+  }
+
   function updateSetupStatus() {
     const count = selectedAgentIds().length;
     const playerCount = count + (selectedRadio("werewolf-view", "player") === "player" ? 1 : 0);
-    const valid = playerCount === 6 || playerCount === 7;
-    setupStatus.textContent = valid
-      ? `已选 ${count} 位 AI，本局共 ${playerCount} 位玩家。`
-      : `现在共 ${playerCount} 位玩家，还需要凑成 6 或 7 人。`;
+    const validCount = playerCount === 6 || playerCount === 7;
+    const validRoles = !manualDealEnabled() || roleAssignmentsAreValid(selectedRoleAssignments(), playerCount);
+    const valid = validCount && validRoles;
+    setupStatus.textContent = !validCount
+      ? `现在共 ${playerCount} 位玩家，还需要凑成 6 或 7 人。`
+      : !validRoles
+        ? "身份牌数量不对：需要正好 2 狼、1 预言家、1 女巫，其余村民。"
+        : `已选 ${count} 位 AI，本局共 ${playerCount} 位玩家。${manualDealEnabled() ? "身份由曦曦亲手安排。" : "身份随机洗牌。"}`;
     setupStatus.classList.toggle("is-error", !valid);
     byId("start-werewolf-game").disabled = !valid || running;
   }
@@ -237,7 +288,10 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
       input.type = "checkbox";
       input.value = agent.id;
       input.checked = previous.size ? previous.has(agent.id) : index < 6;
-      input.addEventListener("change", updateSetupStatus);
+      input.addEventListener("change", () => {
+        renderRoleAssignment();
+        updateSetupStatus();
+      });
       label.append(input, createElement("span", "", agent.name));
       list.append(label);
     });
@@ -813,7 +867,8 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
       setupStatus.classList.add("is-error");
       return;
     }
-    room.werewolf = createWerewolfGame({ participants, viewMode, costMode });
+    const roleAssignments = manualDealEnabled() ? selectedRoleAssignments() : null;
+    room.werewolf = createWerewolfGame({ participants, viewMode, costMode, roleAssignments });
     persistGame();
     renderGame();
     toast(viewMode === "god" ? "上帝视角已开，今晚谁刀谁都瞒不过你" : "身份发好了——先别露牌 😼");
@@ -848,6 +903,10 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
   byId("werewolf-new-game").addEventListener("click", () => clearGame(true));
   byId("werewolf-end-game").addEventListener("click", endGame);
   document.querySelectorAll('input[name="werewolf-view"]').forEach((input) => input.addEventListener("change", setupSelectionLimits));
+  manualDealInput.addEventListener("change", () => {
+    renderRoleAssignment();
+    updateSetupStatus();
+  });
 
   return { open, render: renderGame };
 }
