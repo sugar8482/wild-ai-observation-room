@@ -54,13 +54,44 @@ test("狼人、预言家和女巫会在后续请求中拿回各自合法的夜�
   }];
   game.seerChecks = [{ day: 1, seerId: seer.id, targetId: wolf.id, result: "wolf" }];
   game.witch = { healAvailable: false, poisonAvailable: false };
+  game.log.push(
+    {
+      day: 1,
+      phase: "night_wolves",
+      visibility: "wolves",
+      authorId: wolf.id,
+      author: wolf.name,
+      text: "我先刀玩家5。",
+    },
+    {
+      day: 1,
+      phase: "night_wolves",
+      visibility: "wolves",
+      authorId: "guest-2",
+      author: "玩家2",
+      text: "我更想刀玩家4。",
+    },
+    {
+      day: 1,
+      phase: "day_speech",
+      visibility: "public",
+      authorId: "guest-6",
+      author: "玩家6",
+      text: "这句公屏不属于狼队密谈。",
+    },
+  );
 
   const wolfInfo = roleKnowledge(game, wolf);
   assert.match(wolfInfo, /允许自刀或刀狼队友/);
   assert.match(wolfInfo, /第1夜狼队最终刀口=玩家4，你的选择=玩家1/);
+  assert.match(wolfInfo, /你记得此前的狼队密谈/);
+  assert.match(wolfInfo, /第1夜 玩家1：我先刀玩家5/);
+  assert.match(wolfInfo, /第1夜 玩家2：我更想刀玩家4/);
+  assert.doesNotMatch(wolfInfo, /这句公屏不属于狼队密谈/);
 
   const seerInfo = roleKnowledge(game, seer);
   assert.match(seerInfo, /第1夜 玩家1=狼人/);
+  assert.doesNotMatch(seerInfo, /狼队密谈/);
 
   const witchInfo = roleKnowledge(game, witch);
   assert.match(witchInfo, /解药已经用掉，毒药已经用掉/);

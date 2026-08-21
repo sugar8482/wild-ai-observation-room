@@ -119,9 +119,19 @@ export function roleKnowledge(game, player) {
       const ownTarget = werewolfPlayer(game, night.wolfVotes?.[player.id])?.name || "未落刀";
       return `第${night.day}夜狼队最终刀口=${finalTarget}，你的选择=${ownTarget}`;
     }).join("；");
+    const rememberedWolfChat = game.log
+      .filter((entry) => (
+        entry.visibility === "wolves"
+        && (entry.day < game.day || game.phase !== "night_wolves")
+      ))
+      .slice(-20)
+      .map((entry) => `第${entry.day}夜 ${entry.author}：${entry.text}`)
+      .join("\n")
+      .slice(-6_000);
     return [
       `你的狼队友：${teammates.map((item) => item.name).join("、") || "没有"}。狼人允许自刀或刀狼队友。`,
       history ? `你记得的狼队夜间行动：${history}。` : "狼队还没有已结算的夜间行动。",
+      rememberedWolfChat ? `你记得此前的狼队密谈：\n${rememberedWolfChat}` : "此前没有需要回忆的狼队密谈。",
     ].join("");
   }
   if (player.role === "seer") {
