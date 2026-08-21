@@ -63,6 +63,7 @@ function currentNight(game) {
       witchSave: false,
       poisonTargetId: null,
       deaths: [],
+      resolved: false,
     };
     game.nights.push(night);
   }
@@ -100,19 +101,49 @@ function publicHistory(game, limit = 80) {
     .join("\n");
 }
 
-function roleKnowledge(game, player) {
+function completedNights(game) {
+  const unresolvedPhases = new Set(["night_wolves", "night_seer", "night_witch", "dawn"]);
+  return game.nights.filter((night) => (
+    night.resolved === true
+    || night.day < game.day
+    || (night.day === game.day && !unresolvedPhases.has(game.phase))
+  ));
+}
+
+export function roleKnowledge(game, player) {
+  const nights = completedNights(game);
   if (player.role === "wolf") {
     const teammates = game.players.filter((item) => item.role === "wolf" && item.id !== player.id);
-    return `你的狼队友：${teammates.map((item) => item.name).join("、") || "没有"}。`;
+    const history = nights.map((night) => {
+      const finalTarget = werewolfPlayer(game, night.killTargetId)?.name || "无人";
+      const ownTarget = werewolfPlayer(game, night.wolfVotes?.[player.id])?.name || "未落刀";
+      return `第${night.day}夜狼队最终刀口=${finalTarget}，你的选择=${ownTarget}`;
+    }).join("；");
+    return [
+      `你的狼队友：${teammates.map((item) => item.name).join("、") || "没有"}。狼人允许自刀或刀狼队友。`,
+      history ? `你记得的狼队夜间行动：${history}。` : "狼队还没有已结算的夜间行动。",
+    ].join("");
   }
   if (player.role === "seer") {
     const checks = game.seerChecks
-      .map((entry) => `${werewolfPlayer(game, entry.targetId)?.name || entry.targetId}=${entry.result === "wolf" ? "狼人" : "好人"}`)
+      .filter((entry) => !entry.seerId || entry.seerId === player.id)
+      .map((entry) => `第${entry.day}夜 ${werewolfPlayer(game, entry.targetId)?.name || entry.targetId}=${entry.result === "wolf" ? "狼人" : "好人"}`)
       .join("；");
     return checks ? `你已经验过：${checks}。` : "你还没有验人结果。";
   }
   if (player.role === "witch") {
-    return `你的解药${game.witch.healAvailable ? "还在" : "已经用掉"}，毒药${game.witch.poisonAvailable ? "还在" : "已经用掉"}。`;
+    const history = nights.map((night) => {
+      const knife = werewolfPlayer(game, night.killTargetId)?.name || "无人";
+      const saved = night.witchSave ? `使用解药救了${knife}` : "没有使用解药";
+      const poisoned = night.poisonTargetId
+        ? `使用毒药毒了${werewolfPlayer(game, night.poisonTargetId)?.name || night.poisonTargetId}`
+        : "没有使用毒药";
+      return `第${night.day}夜刀口=${knife}，${saved}，${poisoned}`;
+    }).join("；");
+    return [
+      `你的解药${game.witch.healAvailable ? "还在" : "已经用掉"}，毒药${game.witch.poisonAvailable ? "还在" : "已经用掉"}。`,
+      history ? `你记得的女巫行动：${history}。` : "你还没有已结算的夜间行动。",
+    ].join("");
   }
   return "你没有额外的夜间信息。";
 }
@@ -154,8 +185,8 @@ async function chatRequest(agent, game, player, task, userContent, signal, maxTo
   return String(payload.text);
 }
 
-function validTargets(game, playerId, { wolvesExcluded = false, candidateIds = null } = {}) {
-  const candidates = livingWerewolfPlayers(game).filter((player) => player.id !== playerId);
+export function validTargets(game, playerId, { wolvesExcluded = false, candidateIds = null, includeSelf = false } = {}) {
+  const candidates = livingWerewolfPlayers(game).filter((player) => includeSelf || player.id !== playerId);
   const allowed = candidateIds ? new Set(candidateIds) : null;
   return candidates.filter((player) => (
     (!wolvesExcluded || player.role !== "wolf")
@@ -411,7 +442,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
       panel.append(createElement("strong", "werewolf-action-title", "🐺 狼队今晚刀谁？你写的话只给狼队看。"));
       const grid = createElement("div", "werewolf-action-grid");
       grid.append(
-        selectField("werewolf-user-target", "落刀目标", validTargets(current, user.id, { wolvesExcluded: true })),
+        selectField("werewolf-user-target", "落刀目标（允许自刀或刀狼队友）", validTargets(current, user.id, { includeSelf: true })),
         textareaField("werewolf-user-secret", "给狼队的话（可空）", "可以骗、倒钩、商量战术……"),
       );
       panel.append(grid);
@@ -570,14 +601,14 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
       if (player.type !== "agent" || current.pending.wolfDone.includes(player.id)) continue;
       const agent = agentFor(player.id);
       if (!agent) continue;
-      const targets = validTargets(current, player.id, { wolvesExcluded: true });
+      const targets = validTargets(current, player.id, { includeSelf: true });
       const prior = current.log.filter((entry) => entry.day === current.day && entry.visibility === "wolves")
         .map((entry) => `${entry.author}：${entry.text}`).join("\n") || "狼队频道还没人说话。";
       const raw = await chatRequest(
         agent,
         current,
         player,
-        "现在是狼人夜间密谈。简短说你的判断，并在最后单独写 [TARGET:玩家名字]。这段话不会公开。",
+        "现在是狼人夜间密谈。你可以自刀或刀狼队友。简短说你的判断，并在最后单独写 [TARGET:玩家名字]。这段话不会公开。",
         `可刀目标：${targets.map((target) => target.name).join("、")}\n\n狼队已有密谈：\n${prior}`,
         signal,
         180,
@@ -593,8 +624,9 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
       current.pending.wolfDone.push(player.id);
       persistGame();
     }
-    const outcome = voteOutcome(night.wolfVotes, validTargets(current, "", { wolvesExcluded: true }).map((player) => player.id));
-    night.killTargetId = outcome.eliminatedId || outcome.tiedIds[0] || fallbackTarget(validTargets(current, "", { wolvesExcluded: true }));
+    const killTargets = validTargets(current, "", { includeSelf: true });
+    const outcome = voteOutcome(night.wolfVotes, killTargets.map((player) => player.id));
+    night.killTargetId = outcome.eliminatedId || outcome.tiedIds[0] || fallbackTarget(killTargets);
     appendWerewolfLog(current, { visibility: "god", text: `狼队最终选择：${werewolfPlayer(current, night.killTargetId)?.name || "无人"}。` });
     current.phase = "night_seer";
     current.pending = {};
@@ -659,6 +691,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
       save: night.witchSave,
       poisonTargetId: night.poisonTargetId,
     });
+    night.resolved = true;
     appendWerewolfLog(current, {
       visibility: "public",
       text: night.deaths.length ? `昨夜出局：${namesFor(current, night.deaths)}。` : "昨夜是平安夜，无人出局。",
