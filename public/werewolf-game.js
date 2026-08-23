@@ -17,6 +17,7 @@ export const WEREWOLF_PHASE_META = Object.freeze({
   tie_speech: "平票辩护",
   tie_vote: "平票重投",
   last_words: "离场遗言",
+  debrief: "赛后复盘",
   ended: "游戏结束",
 });
 
@@ -83,7 +84,7 @@ export function createWerewolfGame({ participants, viewMode = "player", costMode
   }));
   const now = Date.now();
   return {
-    version: 1,
+    version: 2,
     id: gameId(),
     status: "active",
     viewMode: viewMode === "god" ? "god" : "player",
@@ -109,6 +110,12 @@ export function createWerewolfGame({ participants, viewMode = "player", costMode
     pending: {},
     tieRound: 0,
     winner: null,
+    debrief: {
+      recap: "",
+      roundDone: [],
+      openedAt: null,
+    },
+    incidents: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -149,6 +156,25 @@ function sanitizeRecordList(value, limit = 50) {
   }));
 }
 
+function sanitizeDebrief(value) {
+  return {
+    recap: text(value?.recap, 30_000),
+    roundDone: [...new Set((Array.isArray(value?.roundDone) ? value.roundDone : [])
+      .map(cleanId)
+      .filter(Boolean))].slice(0, 20),
+    openedAt: Number.isFinite(Number(value?.openedAt)) ? Number(value.openedAt) : null,
+  };
+}
+
+function sanitizeIncidents(value) {
+  return (Array.isArray(value) ? value : []).slice(-50).map((entry) => ({
+    day: boundedInteger(entry?.day, 1, 1, 99),
+    phase: Object.hasOwn(WEREWOLF_PHASE_META, entry?.phase) ? entry.phase : "day_speech",
+    text: text(entry?.text, 1_000).trim(),
+    timestamp: Number.isFinite(Number(entry?.timestamp)) ? Number(entry.timestamp) : Date.now(),
+  })).filter((entry) => entry.text);
+}
+
 export function sanitizeWerewolfGame(game) {
   if (!game || typeof game !== "object" || !String(game.id || "")) return null;
   const players = (Array.isArray(game.players) ? game.players : [])
@@ -157,11 +183,11 @@ export function sanitizeWerewolfGame(game) {
     .filter((player) => player.id);
   if (![6, 7].includes(players.length)) return null;
   const status = game.status === "ended" ? "ended" : "active";
-  const phase = status === "ended" || !Object.hasOwn(WEREWOLF_PHASE_META, game.phase)
-    ? (status === "ended" ? "ended" : "night_wolves")
-    : game.phase;
+  const phase = status === "ended"
+    ? (game.phase === "debrief" ? "debrief" : "ended")
+    : (Object.hasOwn(WEREWOLF_PHASE_META, game.phase) ? game.phase : "night_wolves");
   return {
-    version: 1,
+    version: 2,
     id: cleanId(game.id) || gameId(),
     status,
     viewMode: game.viewMode === "god" ? "god" : "player",
@@ -181,9 +207,88 @@ export function sanitizeWerewolfGame(game) {
     pending: game.pending && typeof game.pending === "object" ? game.pending : {},
     tieRound: boundedInteger(game.tieRound, 0, 0, 2),
     winner: ["good", "wolf"].includes(game.winner) ? game.winner : null,
+    debrief: sanitizeDebrief(game.debrief),
+    incidents: sanitizeIncidents(game.incidents),
+    archiveTitle: text(game.archiveTitle, 180),
+    archivedAt: Number.isFinite(Number(game.archivedAt)) ? Number(game.archivedAt) : null,
     createdAt: Number.isFinite(Number(game.createdAt)) ? Number(game.createdAt) : Date.now(),
     updatedAt: Number.isFinite(Number(game.updatedAt)) ? Number(game.updatedAt) : Date.now(),
   };
+}
+
+export function sanitizeWerewolfArchives(value) {
+  return (Array.isArray(value) ? value : [])
+    .map((game) => sanitizeWerewolfGame(game))
+    .filter((game) => game?.status === "ended");
+}
+
+export function recordWerewolfIncident(game, body) {
+  const content = text(body, 1_000).trim();
+  if (!content) return;
+  game.incidents ||= [];
+  game.incidents.push({ day: game.day, phase: game.phase, text: content, timestamp: Date.now() });
+  game.incidents = game.incidents.slice(-50);
+}
+
+export function buildWerewolfRecap(game) {
+  const roleLine = game.players
+    .map((player) => `${player.name}＝${WEREWOLF_ROLE_META[player.role].label}`)
+    .join("；");
+  const nightLines = game.nights.map((night) => {
+    const playerName = (id) => game.players.find((player) => player.id === id)?.name || id || "无";
+    const deaths = (night.deaths || []).map(playerName).join("、") || "平安夜";
+    return `第 ${night.day} 夜：狼刀 ${playerName(night.killTargetId)}；预言家验 ${playerName(night.seerTargetId)}${night.seerResult ? `＝${night.seerResult === "wolf" ? "狼人" : "好人"}` : ""}；解药${night.witchSave ? "已用" : "未用"}；毒药 ${night.poisonTargetId ? playerName(night.poisonTargetId) : "未用"}；出局 ${deaths}`;
+  });
+  const dayLines = game.days.map((day) => {
+    const votes = Object.entries(day.voteCounts || {})
+      .filter(([, count]) => Number(count) > 0)
+      .map(([id, count]) => `${game.players.find((player) => player.id === id)?.name || id} ${count}票`)
+      .join("、") || "无有效票";
+    const eliminated = game.players.find((player) => player.id === day.eliminatedId)?.name || "无人";
+    return `第 ${day.day} 天：${votes}；放逐 ${eliminated}`;
+  });
+  const turningPoints = game.log
+    .filter((entry) => entry.visibility === "public" && ["day_vote", "tie_vote", "last_words"].includes(entry.phase))
+    .slice(-12)
+    .map((entry) => `第 ${entry.day} 天 ${entry.author}：${entry.text}`);
+  const incidentLines = (game.incidents || []).map((entry) => `第 ${entry.day} 天／夜 ${WEREWOLF_PHASE_META[entry.phase] || entry.phase}：${entry.text}`);
+  const result = game.winner === "wolf" ? "狼人阵营获胜" : game.winner === "good" ? "好人阵营获胜" : "本局提前结束";
+  return [
+    `【本局结果】${result}`,
+    `【身份表】${roleLine}`,
+    nightLines.length ? `【每夜行动】\n${nightLines.join("\n")}` : "【每夜行动】尚无已结算夜晚",
+    dayLines.length ? `【每日票型】\n${dayLines.join("\n")}` : "【每日票型】尚无公开投票",
+    turningPoints.length ? `【关键转折】\n${turningPoints.join("\n")}` : "",
+    incidentLines.length ? `【运行事故】\n${incidentLines.join("\n")}` : "",
+  ].filter(Boolean).join("\n\n");
+}
+
+export function beginWerewolfDebrief(game) {
+  game.status = "ended";
+  game.phase = "debrief";
+  game.debrief ||= { recap: "", roundDone: [], openedAt: null };
+  if (!game.debrief.recap) game.debrief.recap = buildWerewolfRecap(game);
+  if (!game.debrief.openedAt) game.debrief.openedAt = Date.now();
+  if (!game.log.some((entry) => entry.phase === "debrief" && entry.authorId === "recap")) {
+    appendWerewolfLog(game, {
+      visibility: "public",
+      authorId: "recap",
+      author: "法官 · 完整复盘",
+      text: game.debrief.recap,
+      phase: "debrief",
+    });
+  }
+  game.updatedAt = Date.now();
+  return game;
+}
+
+export function archiveWerewolfGame(game, sequence = 1) {
+  beginWerewolfDebrief(game);
+  const archived = sanitizeWerewolfGame(structuredClone(game));
+  archived.archivedAt = Date.now();
+  const result = archived.winner === "wolf" ? "狼人胜利" : archived.winner === "good" ? "好人胜利" : "提前结束";
+  archived.archiveTitle = `第 ${sequence} 局｜${result}`;
+  return archived;
 }
 
 export function appendWerewolfLog(game, { visibility = "public", authorId = "system", author = "法官", text: body, phase = game.phase }) {
@@ -314,4 +419,5 @@ export function finishWerewolfGame(game, winner) {
     text: winner === "wolf" ? "狼人阵营获胜。所有身份与夜间密谋现已解锁。" : "好人阵营获胜。所有身份与夜间密谋现已解锁。",
     phase: "ended",
   });
+  beginWerewolfDebrief(game);
 }

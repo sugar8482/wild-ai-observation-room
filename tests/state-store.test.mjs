@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createStateStore } from "../lib/state-store.mjs";
-import { createWerewolfGame } from "../public/werewolf-game.js";
+import { archiveWerewolfGame, createWerewolfGame, finishWerewolfGame } from "../public/werewolf-game.js";
 
 test("成员簿会迁移旧房间、保留暂离席，并抵抗滞后浏览器覆盖", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-presence-"));
@@ -563,6 +563,8 @@ test("狼人杀房会单独保存临时卷宗，不混入普通聊天与长期�
     name: `嘉宾${index + 1}`,
     type: "agent",
   }));
+  const archivedGame = createWerewolfGame({ participants, random: () => 0.2 });
+  finishWerewolfGame(archivedGame, "wolf");
   const saved = await store.save({
     agents: participants.map((player) => ({
       id: player.id,
@@ -579,12 +581,16 @@ test("狼人杀房会单独保存临时卷宗，不混入普通聊天与长期�
       messages: [],
       memory: { summary: "这段普通房间总结不应被游戏改写" },
       werewolf: createWerewolfGame({ participants, random: () => 0.4 }),
+      werewolfArchives: [archiveWerewolfGame(archivedGame, 1)],
     }],
   });
 
   assert.equal(saved.rooms[0].roomType, "werewolf");
   assert.equal(saved.rooms[0].werewolf.players.length, 6);
   assert.equal(saved.rooms[0].werewolf.log[0].text, "身份牌已经发好。天黑请闭眼。");
+  assert.equal(saved.rooms[0].werewolfArchives.length, 1);
+  assert.match(saved.rooms[0].werewolfArchives[0].archiveTitle, /第 1 局/);
+  assert.ok(saved.rooms[0].werewolfArchives[0].log.some((entry) => entry.phase === "debrief"));
   assert.deepEqual(saved.rooms[0].messages, []);
   assert.equal(saved.rooms[0].memory.summary, "这段普通房间总结不应被游戏改写");
 });

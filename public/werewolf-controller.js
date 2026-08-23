@@ -3,6 +3,8 @@ import {
   WEREWOLF_ROLE_META,
   WEREWOLF_USER_ID,
   appendWerewolfLog,
+  archiveWerewolfGame,
+  beginWerewolfDebrief,
   checkWerewolfWinner,
   createWerewolfGame,
   werewolfRoleDeck,
@@ -10,6 +12,7 @@ import {
   livingWerewolfPlayers,
   parseWerewolfTarget,
   parseWitchAction,
+  recordWerewolfIncident,
   resolveWerewolfNight,
   shuffleWerewolfItems,
   stripWerewolfControls,
@@ -195,6 +198,54 @@ async function chatRequest(agent, game, player, task, userContent, signal, maxTo
   return String(payload.text);
 }
 
+function completeGameHistory(game) {
+  return game.log
+    .filter((entry) => entry.phase !== "debrief")
+    .map((entry) => {
+      const channel = entry.visibility === "public" ? "公屏" : entry.visibility;
+      return `第${entry.day}天／夜｜${channel}｜${entry.author}：${entry.text}`;
+    })
+    .join("\n")
+    .slice(-45_000);
+}
+
+async function debriefChatRequest(agent, game, player, signal) {
+  const recap = game.debrief?.recap || "";
+  const recentDebrief = game.log
+    .filter((entry) => entry.phase === "debrief")
+    .slice(-24)
+    .map((entry) => `${entry.author}：${entry.text}`)
+    .join("\n");
+  const system = [
+    `你是“${agent.name}”。狼人杀已经结束，你当局的真实身份是${WEREWOLF_ROLE_META[player.role].label}。`,
+    agent.persona?.trim() ? `你平时的个人设定：\n${agent.persona.trim().slice(0, 4_000)}` : "保持你平时自然的判断与说话方式。",
+    agent.memoryEnabled && agent.memory?.trim()
+      ? `以下是你进场前已有的私人记忆，只用于保持你自己的连续性：\n${agent.memory.trim().slice(-5_000)}`
+      : "不需要为了复盘临时编造永久记忆。",
+    "现在所有身份、狼队密谈、验人、女巫行动、刀口、票型和遗言都已经公开。你可以认错、邀功、吐槽、反驳、追问或清算，但不要继续把游戏里的假身份当事实硬演。",
+    "本轮复盘不会写入普通聊天室长期总结或你的私人记忆。说人话，不要只写分析报告，也不要替别人宣布感受。",
+  ].join("\n\n");
+  const response = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      agent,
+      requestMode: "werewolf-game",
+      temperature: 0.9,
+      maxTokens: 520,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: `【法官事实复盘】\n${recap}\n\n【本局完整卷宗】\n${completeGameHistory(game)}\n\n【赛后茶话会最近发言】\n${recentDebrief || "还没人开口。"}\n\n现在轮到你复盘。优先回应晨曦最近点到你的内容；若没有明确追问，就说你最想认领、解释或吐槽的一件事。` },
+      ],
+    }),
+    signal,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `${agent.name} 没有接通`);
+  if (!String(payload.text || "").trim()) throw new Error(`${agent.name} 没有留下有效复盘`);
+  return stripWerewolfControls(String(payload.text));
+}
+
 export function validTargets(game, playerId, { wolvesExcluded = false, candidateIds = null, includeSelf = false } = {}) {
   const candidates = livingWerewolfPlayers(game).filter((player) => includeSelf || player.id !== playerId);
   const allowed = candidateIds ? new Set(candidateIds) : null;
@@ -217,8 +268,17 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
   const advanceButton = byId("werewolf-advance");
   const stopButton = byId("werewolf-stop");
   const manualDealInput = byId("werewolf-manual-deal");
+  const roomStage = byId("werewolf-room-stage");
+  const roomEmpty = byId("werewolf-room-empty");
+  const mainTable = byId("werewolf-main-table");
+  const roundtable = byId("werewolf-roundtable");
+  const archiveButton = byId("werewolf-archive-game");
+  const composer = byId("composer");
+  const messageInput = byId("message-input");
+  const sendButton = byId("send-button");
   let running = false;
   let abortController = null;
+  let speakingPlayerId = "";
 
   function game() {
     return getRoom()?.werewolf || null;
@@ -389,7 +449,9 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
 
   function renderLog(current) {
     const log = byId("werewolf-log");
+    if (!log) return;
     const entries = visibleWerewolfLog(current);
+    const wasNearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 120;
     log.replaceChildren();
     for (const entry of entries) {
       const secret = entry.visibility !== "public";
@@ -402,7 +464,115 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
       item.append(header, createElement("p", "", entry.text));
       log.append(item);
     }
-    requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
+    if (wasNearBottom || !log.dataset.rendered) {
+      requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
+    }
+    log.dataset.rendered = "true";
+  }
+
+  function archiveResultLabel(archived) {
+    if (archived.winner === "wolf") return "狼人胜利";
+    if (archived.winner === "good") return "好人胜利";
+    return "提前结束";
+  }
+
+  function renderArchives() {
+    const list = byId("werewolf-archive-list");
+    const archives = getRoom()?.werewolfArchives || [];
+    list.replaceChildren();
+    for (const archived of [...archives].reverse()) {
+      const details = createElement("details", "werewolf-archive-card");
+      const summary = document.createElement("summary");
+      summary.append(
+        createElement("strong", "", archived.archiveTitle || archiveResultLabel(archived)),
+        createElement("span", "", new Date(archived.archivedAt || archived.updatedAt).toLocaleString("zh-CN")),
+      );
+      const recap = createElement("pre", "werewolf-archive-recap", archived.debrief?.recap || "本局没有生成事实复盘。");
+      const transcript = createElement("div", "werewolf-archive-transcript");
+      for (const entry of archived.log) {
+        const row = createElement("article", `werewolf-log-entry${entry.authorId === "system" ? " is-system" : ""}${entry.visibility !== "public" ? " is-secret" : ""}`);
+        const header = document.createElement("header");
+        header.append(createElement("span", "", `${entry.author} · ${WEREWOLF_PHASE_META[entry.phase] || entry.phase}`), createElement("time", "", formatTime(entry.timestamp)));
+        row.append(header, createElement("p", "", entry.text));
+        transcript.append(row);
+      }
+      details.append(summary, recap, transcript);
+      list.append(details);
+    }
+  }
+
+  function speechPlayerIds(current, tiedOnly = current.phase === "tie_speech") {
+    const day = currentDay(current);
+    const ids = tiedOnly ? (current.pending?.tieIds || day.tiedIds || []) : day.speechOrder;
+    return ids.filter((id) => werewolfPlayer(current, id)?.alive);
+  }
+
+  function playerHasSpoken(current, playerId, tiedOnly = current.phase === "tie_speech") {
+    const day = currentDay(current);
+    return Boolean(day.speeches[tiedOnly ? `${playerId}-tie` : playerId]);
+  }
+
+  function allSpeakersDone(current, tiedOnly = current.phase === "tie_speech") {
+    return speechPlayerIds(current, tiedOnly).every((id) => playerHasSpoken(current, id, tiedOnly));
+  }
+
+  function renderRoundtable(current) {
+    roundtable.replaceChildren();
+    if (!current) return;
+    if (current.status === "ended") {
+      const heading = createElement("div", "werewolf-roundtable-heading");
+      const copy = createElement("div");
+      copy.append(createElement("strong", "", "赛后茶话会"), createElement("p", "", "身份和全部秘密已经解锁。点谁谁复盘，也可以让全员依次说；说过的人仍能继续追问。"));
+      const runAll = createElement("button", "button button-quiet", "全体依次复盘");
+      runAll.type = "button";
+      runAll.disabled = running;
+      runAll.addEventListener("click", () => void runDebriefRound());
+      heading.append(copy, runAll);
+      const speakers = createElement("div", "werewolf-speaker-grid");
+      for (const player of current.players.filter((item) => item.type === "agent")) {
+        const done = current.debrief?.roundDone?.includes(player.id);
+        const button = createElement("button", `werewolf-speaker${done ? " is-done" : ""}${speakingPlayerId === player.id ? " is-speaking" : ""}`);
+        button.type = "button";
+        button.disabled = running;
+        button.append(createElement("strong", "", player.name), createElement("span", "", speakingPlayerId === player.id ? "正在复盘……" : done ? "已复盘 · 可再点" : WEREWOLF_ROLE_META[player.role].label));
+        button.addEventListener("click", () => void runDebriefSpeaker(player.id));
+        speakers.append(button);
+      }
+      roundtable.append(heading, speakers);
+      return;
+    }
+    if (!["day_speech", "tie_speech"].includes(current.phase)) {
+      roundtable.append(createElement("p", "werewolf-roundtable-idle", "现在是夜间或投票阶段。打开“身份与行动”完成本阶段。"));
+      return;
+    }
+    const tiedOnly = current.phase === "tie_speech";
+    const ids = speechPlayerIds(current, tiedOnly);
+    const heading = createElement("div", "werewolf-roundtable-heading");
+    const copy = createElement("div");
+    copy.append(
+      createElement("strong", "", tiedOnly ? "平票辩护席" : `第 ${current.day} 天 · 自由点名发言`),
+      createElement("p", "", "点一位只调用一位，回复会立刻落在上方。晨曦想压轴，就最后再用下面输入框发言。"),
+    );
+    const runAll = createElement("button", "button button-quiet", "依次叫未发言嘉宾");
+    runAll.type = "button";
+    runAll.disabled = running || allSpeakersDone(current, tiedOnly);
+    runAll.addEventListener("click", () => void runSpeechRound(tiedOnly));
+    heading.append(copy, runAll);
+    const speakers = createElement("div", "werewolf-speaker-grid");
+    for (const id of ids) {
+      const player = werewolfPlayer(current, id);
+      const done = playerHasSpoken(current, id, tiedOnly);
+      const button = createElement("button", `werewolf-speaker${done ? " is-done" : ""}${speakingPlayerId === id ? " is-speaking" : ""}`);
+      button.type = "button";
+      button.disabled = running || done || player.type === "user";
+      button.append(
+        createElement("strong", "", player.name),
+        createElement("span", "", speakingPlayerId === id ? "正在发言……" : done ? "已发言" : player.type === "user" ? "用下方输入框" : "点名发言"),
+      );
+      if (player.type === "agent") button.addEventListener("click", () => void runSpeechSpeaker(id, tiedOnly));
+      speakers.append(button);
+    }
+    roundtable.append(heading, speakers);
   }
 
   function selectField(id, labelText, candidates, selected = "") {
@@ -473,58 +643,121 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
       if (current.witch.poisonAvailable) grid.append(selectField("werewolf-user-poison", "毒谁（可不选）", validTargets(current, user.id)));
       panel.append(grid);
     } else if (current.phase === "day_speech") {
-      panel.append(textareaField("werewolf-user-speech", "☀️ 轮到曦曦发言", "盘逻辑、跳身份、抬杠，或者直接点狼……"));
-      if (current.costMode === "economy") panel.append(selectField("werewolf-user-vote", "省钱局：发言时顺便交票", validTargets(current, user.id)));
+      const day = currentDay(current);
+      if (!day.speeches[user.id]) {
+        panel.append(createElement("p", "field-help", "曦曦的白天发言请直接写在主页面下方输入框；想压轴就先点其他人。"));
+      } else if (current.costMode === "economy" && !day.provisionalVotes[user.id]) {
+        panel.append(selectField("werewolf-user-vote", "省钱局：曦曦发言后补交这一票", validTargets(current, user.id)));
+      } else {
+        panel.append(createElement("p", "field-help", "曦曦已经发言。等所有存活玩家说完即可进入下一阶段。"));
+      }
     } else if (current.phase === "day_vote") {
       panel.append(selectField("werewolf-user-vote", "🗳️ 曦曦这一票投给谁？", validTargets(current, user.id)));
     } else if (current.phase === "tie_speech" && current.pending?.tieIds?.includes(user.id)) {
-      panel.append(textareaField("werewolf-user-tie-speech", "平票了，再为自己辩一句", "这次可以短一点。"));
+      panel.append(createElement("p", "field-help", playerHasSpoken(current, user.id, true)
+        ? "平票辩护已经说完。"
+        : "平票辩护请直接写在主页面下方输入框。"));
     } else if (current.phase === "tie_vote") {
       panel.append(selectField("werewolf-user-tie-vote", "平票重投", validTargets(current, user.id, { candidateIds: current.pending?.tieIds || [] })));
     } else if (current.phase === "last_words" && current.pending?.eliminatedId === user.id) {
-      panel.append(textareaField("werewolf-user-last-words", "留下遗言（可空）", "说完这一句就不能再发言或投票了。"));
+      panel.append(createElement("p", "field-help", current.pending.userLastWordsReady
+        ? "遗言已经留下，可以让法官继续。"
+        : "遗言请直接写在主页面下方输入框。"));
     }
   }
 
   function phaseButtonCopy(current) {
-    if (current.status === "ended") return "本局已结束";
+    if (current.status === "ended") return "复盘进行中";
     return {
       night_wolves: "收狼刀",
       night_seer: "完成验人",
       night_witch: "女巫落药",
       dawn: "宣布天亮",
-      day_speech: "开始依次发言",
+      day_speech: allSpeakersDone(current, false) ? (current.costMode === "economy" ? "结算发言与投票" : "进入公开投票") : "等待全员发言",
       day_vote: "开始公开投票",
-      tie_speech: "开始平票辩护",
+      tie_speech: allSpeakersDone(current, true) ? "进入平票重投" : "等待辩护完成",
       tie_vote: "开始平票重投",
       last_words: "留下遗言",
     }[current.phase] || "推进本阶段";
   }
 
+  function syncWerewolfComposer(current) {
+    const isRoom = getRoom()?.roomType === "werewolf";
+    if (!isRoom) return;
+    const user = current ? werewolfPlayer(current, WEREWOLF_USER_ID) : null;
+    const canDaySpeak = current?.status === "active"
+      && current.viewMode === "player"
+      && user?.alive
+      && current.phase === "day_speech"
+      && !playerHasSpoken(current, user.id, false);
+    const canTieSpeak = current?.status === "active"
+      && current.viewMode === "player"
+      && user?.alive
+      && current.phase === "tie_speech"
+      && current.pending?.tieIds?.includes(user.id)
+      && !playerHasSpoken(current, user.id, true);
+    const canDebrief = current?.status === "ended";
+    const canLastWords = current?.status === "active"
+      && current.viewMode === "player"
+      && current.phase === "last_words"
+      && current.pending?.eliminatedId === user?.id
+      && !current.pending?.userLastWordsReady;
+    const enabled = Boolean(canDaySpeak || canTieSpeak || canLastWords || canDebrief);
+    messageInput.disabled = !enabled;
+    sendButton.disabled = !enabled || running;
+    messageInput.placeholder = canDebrief
+      ? "赛后想审谁、夸谁、骂谁，直接说……"
+      : canLastWords
+        ? "留下最后一句话；发出后再让法官继续……"
+      : canTieSpeak
+        ? "为自己辩一句，再看他们怎么投……"
+        : canDaySpeak
+          ? "盘逻辑、跳身份、抬杠；想压轴就最后再发……"
+          : current
+            ? "当前阶段不需要公开发言，请打开身份与行动……"
+            : "先开一局狼人杀……";
+    sendButton.textContent = canDebrief ? "加入复盘" : canLastWords ? "留下遗言" : "公开发言";
+  }
+
   function renderGame() {
     const current = game();
     const hasGame = Boolean(current);
+    renderArchives();
+    roomEmpty.classList.toggle("is-hidden", hasGame);
+    mainTable.classList.toggle("is-hidden", !hasGame);
     setup.classList.toggle("is-hidden", hasGame);
     gameSection.classList.toggle("is-hidden", !hasGame);
+    dialog.classList.toggle("is-control-mode", hasGame);
     if (!current) {
       renderParticipantSetup();
+      roundtable.replaceChildren();
+      syncWerewolfComposer(null);
       return;
     }
     byId("werewolf-phase").textContent = current.status === "ended"
       ? WEREWOLF_PHASE_META.ended
       : `${current.phase.startsWith("night") || current.phase === "dawn" ? `第 ${current.day} 夜` : `第 ${current.day} 天`} · ${WEREWOLF_PHASE_META[current.phase]}`;
     byId("werewolf-mode-copy").textContent = `${current.viewMode === "god" ? "上帝模式" : "玩家模式"} · ${current.costMode === "standard" ? "标准局" : "省钱局"}`;
+    byId("werewolf-main-phase").textContent = current.status === "ended"
+      ? `${archiveResultLabel(current)} · 赛后复盘`
+      : `${current.phase.startsWith("night") || current.phase === "dawn" ? `第 ${current.day} 夜` : `第 ${current.day} 天`} · ${WEREWOLF_PHASE_META[current.phase]}`;
     byId("werewolf-cost-note").textContent = current.costMode === "standard"
       ? "标准局会把发言与投票分开调用。"
       : "省钱局会从发言末尾读取预投票。";
     advanceButton.textContent = phaseButtonCopy(current);
-    advanceButton.disabled = running || current.status === "ended";
+    const waitingForSpeech = current.phase === "day_speech" && !allSpeakersDone(current, false);
+    const waitingForTieSpeech = current.phase === "tie_speech" && !allSpeakersDone(current, true);
+    advanceButton.disabled = running || current.status === "ended" || waitingForSpeech || waitingForTieSpeech;
     stopButton.classList.toggle("is-hidden", !running);
     byId("werewolf-end-game").classList.toggle("is-hidden", current.status === "ended");
+    archiveButton.classList.toggle("is-hidden", current.status !== "ended");
+    advanceButton.classList.toggle("is-hidden", current.status === "ended");
     renderRoleCard(current);
     renderPlayerBoard(current);
     renderLog(current);
     renderActionPanel(current);
+    renderRoundtable(current);
+    syncWerewolfComposer(current);
   }
 
   function open() {
@@ -554,27 +787,18 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
       night.witchSave = Boolean(byId("werewolf-user-save")?.checked && current.witch.healAvailable && night.killTargetId);
       night.poisonTargetId = byId("werewolf-user-poison")?.value || null;
       current.pending.userWitchReady = true;
-    } else if (current.phase === "day_speech" && !current.pending.userSpeechReady) {
-      const speech = byId("werewolf-user-speech")?.value.trim();
-      if (!speech) throw new Error("曦曦先说一句，再让他们接着盘");
+    } else if (current.phase === "day_speech") {
       const day = currentDay(current);
-      day.speeches[user.id] = speech;
-      if (current.costMode === "economy") {
+      if (current.costMode === "economy" && day.speeches[user.id] && !day.provisionalVotes[user.id]) {
         const vote = byId("werewolf-user-vote")?.value;
-        if (!vote) throw new Error("省钱局要在发言时顺便交一票");
+        if (!vote) throw new Error("省钱局还差曦曦这一票，请在身份与行动里选好");
         day.provisionalVotes[user.id] = vote;
       }
-      current.pending.userSpeechReady = true;
     } else if (current.phase === "day_vote" && !current.pending.userVoteReady) {
       const vote = byId("werewolf-user-vote")?.value;
       if (!vote) throw new Error("先投出曦曦这一票");
       currentDay(current).votes[user.id] = vote;
       current.pending.userVoteReady = true;
-    } else if (current.phase === "tie_speech" && current.pending.tieIds?.includes(user.id) && !current.pending.userTieSpeechReady) {
-      const speech = byId("werewolf-user-tie-speech")?.value.trim();
-      if (!speech) throw new Error("平票辩护至少说一句");
-      currentDay(current).speeches[`${user.id}-tie`] = speech;
-      current.pending.userTieSpeechReady = true;
     } else if (current.phase === "tie_vote" && !current.pending.userTieVoteReady) {
       const vote = byId("werewolf-user-tie-vote")?.value;
       if (!vote) throw new Error("先投出平票重投这一票");
@@ -603,7 +827,6 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
   }
 
   async function runWolves(current, signal) {
-    captureUserAction(current);
     const night = currentNight(current);
     const wolves = livingWerewolfPlayers(current).filter((player) => player.role === "wolf");
     current.pending.wolfDone ||= [];
@@ -643,7 +866,6 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
   }
 
   async function runSeer(current, signal) {
-    captureUserAction(current);
     const seer = livingWerewolfPlayers(current).find((player) => player.role === "seer");
     if (seer?.type === "agent") {
       const agent = agentFor(seer.id);
@@ -665,7 +887,6 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
   }
 
   async function runWitch(current, signal) {
-    captureUserAction(current);
     const night = currentNight(current);
     const witch = livingWerewolfPlayers(current).find((player) => player.role === "witch");
     if (witch?.type === "agent") {
@@ -717,60 +938,184 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
     currentDay(current);
   }
 
-  async function runDaySpeeches(current, signal, { tiedOnly = false } = {}) {
-    captureUserAction(current);
+  async function generateSpeech(current, playerId, signal, { tiedOnly = false } = {}) {
     const day = currentDay(current);
-    const order = tiedOnly ? (current.pending.tieIds || []) : day.speechOrder;
-    const doneKey = tiedOnly ? "tieSpeechDone" : "speechDone";
-    current.pending[doneKey] ||= [];
-    for (const playerId of order) {
-      const player = werewolfPlayer(current, playerId);
-      if (!player?.alive || current.pending[doneKey].includes(playerId)) continue;
-      if (player.type === "user") {
-        const speech = tiedOnly ? day.speeches[`${player.id}-tie`] : day.speeches[player.id];
-        if (speech) appendWerewolfLog(current, { authorId: player.id, author: player.name, text: speech, phase: current.phase });
-        current.pending[doneKey].push(playerId);
-        continue;
-      }
-      const agent = agentFor(player.id);
-      if (!agent) continue;
-      const targets = validTargets(current, player.id, { candidateIds: tiedOnly ? (current.pending.tieIds || []) : null });
-      const economyInstruction = !tiedOnly && current.costMode === "economy"
-        ? "发言最后另起一行写 [VOTE:玩家名字]，作为你今天的正式投票。"
-        : "这一轮只发言，不要输出投票标签。";
-      const raw = await chatRequest(
-        agent,
-        current,
-        player,
-        `${tiedOnly ? "你在平票名单里，做一次简短辩护。" : "现在轮到你白天公开发言。"}可以跳身份、撒谎、盘逻辑或反驳别人。${economyInstruction}`,
-        `今天目前的公屏：\n${publicHistory(current)}\n\n${targets.length ? `可投目标：${targets.map((target) => target.name).join("、")}` : ""}`,
-        signal,
-        tiedOnly ? 180 : 300,
-      );
-      const speech = stripWerewolfControls(raw) || "我暂时没有更多补充。";
-      day.speeches[tiedOnly ? `${player.id}-tie` : player.id] = speech;
-      if (!tiedOnly && current.costMode === "economy") {
-        day.provisionalVotes[player.id] = parseWerewolfTarget(raw, "VOTE", current.players, targets.map((target) => target.id)) || fallbackTarget(targets);
-      }
-      appendWerewolfLog(current, { authorId: player.id, author: player.name, text: speech, phase: current.phase });
-      current.pending[doneKey].push(playerId);
-      persistGame();
+    const player = werewolfPlayer(current, playerId);
+    if (!player?.alive || player.type !== "agent" || playerHasSpoken(current, playerId, tiedOnly)) return;
+    const agent = agentFor(player.id);
+    if (!agent) throw new Error(`${player.name} 没有可用的接口配置`);
+    const targets = validTargets(current, player.id, { candidateIds: tiedOnly ? (current.pending.tieIds || []) : null });
+    const economyInstruction = !tiedOnly && current.costMode === "economy"
+      ? "发言最后另起一行写 [VOTE:玩家名字]，作为你今天的正式投票。"
+      : "这一轮只发言，不要输出投票标签。";
+    const raw = await chatRequest(
+      agent,
+      current,
+      player,
+      `${tiedOnly ? "你在平票名单里，做一次简短辩护。" : "现在是白天公开发言，房主刚刚点到你。"}可以跳身份、撒谎、盘逻辑或反驳别人。${economyInstruction}`,
+      `今天目前的公屏：\n${publicHistory(current)}\n\n${targets.length ? `可投目标：${targets.map((target) => target.name).join("、")}` : ""}`,
+      signal,
+      tiedOnly ? 220 : 360,
+    );
+    const speech = stripWerewolfControls(raw) || "我暂时没有更多补充。";
+    day.speeches[tiedOnly ? `${player.id}-tie` : player.id] = speech;
+    if (!tiedOnly && current.costMode === "economy") {
+      day.provisionalVotes[player.id] = parseWerewolfTarget(raw, "VOTE", current.players, targets.map((target) => target.id)) || fallbackTarget(targets);
     }
+    appendWerewolfLog(current, { authorId: player.id, author: player.name, text: speech, phase: current.phase });
+    persistGame();
+  }
+
+  async function runSpeechSpeaker(playerId, tiedOnly = false) {
+    const current = game();
+    if (!current || running || current.status !== "active") return;
+    if (current.phase !== (tiedOnly ? "tie_speech" : "day_speech")) return;
+    running = true;
+    speakingPlayerId = playerId;
+    abortController = new AbortController();
+    setGameStatus(`${werewolfPlayer(current, playerId)?.name || "这位嘉宾"}正在发言……`);
+    renderGame();
+    try {
+      await generateSpeech(current, playerId, abortController.signal, { tiedOnly });
+      setGameStatus("这一位说完了。可以继续点名，晨曦也可以最后压轴。");
+      persistGame();
+    } catch (error) {
+      if (error.name === "AbortError") setGameStatus("停在这里了；前面已经说完的发言都还在。", true);
+      else {
+        recordWerewolfIncident(current, `${werewolfPlayer(current, playerId)?.name || playerId} 发言请求失败：${error.message}`);
+        setGameStatus(`${error.message}。只需重试这一位，其他人的发言不会丢。`, true);
+      }
+    } finally {
+      running = false;
+      speakingPlayerId = "";
+      abortController = null;
+      renderGame();
+    }
+  }
+
+  async function runSpeechRound(tiedOnly = false) {
+    const current = game();
+    if (!current || running || current.status !== "active") return;
+    if (current.phase !== (tiedOnly ? "tie_speech" : "day_speech")) return;
+    running = true;
+    abortController = new AbortController();
+    try {
+      for (const playerId of speechPlayerIds(current, tiedOnly)) {
+        const player = werewolfPlayer(current, playerId);
+        if (player?.type !== "agent" || playerHasSpoken(current, playerId, tiedOnly)) continue;
+        speakingPlayerId = playerId;
+        setGameStatus(`${player.name}正在发言……`);
+        renderGame();
+        await generateSpeech(current, playerId, abortController.signal, { tiedOnly });
+        speakingPlayerId = "";
+        renderGame();
+      }
+      setGameStatus(allSpeakersDone(current, tiedOnly) ? "这一轮全员说完了，可以进入下一阶段。" : "AI 嘉宾说完了，等晨曦用下方输入框发言。" );
+    } catch (error) {
+      const failedId = speakingPlayerId;
+      if (error.name === "AbortError") setGameStatus("停在这里了；已经说完的都保留。", true);
+      else {
+        recordWerewolfIncident(current, `${werewolfPlayer(current, failedId)?.name || failedId} 发言请求失败：${error.message}`);
+        setGameStatus(`${error.message}。重试这一位即可。`, true);
+      }
+    } finally {
+      running = false;
+      speakingPlayerId = "";
+      abortController = null;
+      persistGame();
+      renderGame();
+    }
+  }
+
+  function completeSpeechPhase(current, tiedOnly = false) {
+    if (!allSpeakersDone(current, tiedOnly)) throw new Error(tiedOnly ? "平票席还没有全部辩护" : "还有存活玩家没有发言");
     if (tiedOnly) {
+      const tieIds = [...(current.pending.tieIds || currentDay(current).tiedIds || [])];
       current.phase = "tie_vote";
-      current.pending = { tieIds: [...(current.pending.tieIds || [])] };
+      current.pending = { tieIds };
       return;
     }
-    if (current.costMode === "economy") {
-      resolveDayVotes(current, day.provisionalVotes, false);
-    } else {
+    const day = currentDay(current);
+    if (current.costMode === "economy") resolveDayVotes(current, day.provisionalVotes, false);
+    else {
       current.phase = "day_vote";
       current.pending = {};
     }
   }
 
+  async function runDebriefSpeaker(playerId) {
+    const current = game();
+    if (!current || current.status !== "ended" || running) return;
+    const player = werewolfPlayer(current, playerId);
+    const agent = player?.type === "agent" ? agentFor(player.id) : null;
+    if (!player || !agent) return;
+    running = true;
+    speakingPlayerId = playerId;
+    abortController = new AbortController();
+    setGameStatus(`${player.name}正在看完整卷宗……`);
+    renderGame();
+    try {
+      const reply = await debriefChatRequest(agent, current, player, abortController.signal);
+      appendWerewolfLog(current, { authorId: player.id, author: player.name, text: reply || "我暂时没什么要补。", phase: "debrief" });
+      current.debrief.roundDone ||= [];
+      if (!current.debrief.roundDone.includes(player.id)) current.debrief.roundDone.push(player.id);
+      setGameStatus(`${player.name}复盘完了。可以继续追问同一个人。`);
+      persistGame();
+    } catch (error) {
+      if (error.name === "AbortError") setGameStatus("复盘暂停了，前面的内容都还在。", true);
+      else {
+        recordWerewolfIncident(current, `${player.name} 赛后复盘请求失败：${error.message}`);
+        setGameStatus(`${error.message}。只重试这一位即可。`, true);
+      }
+    } finally {
+      running = false;
+      speakingPlayerId = "";
+      abortController = null;
+      renderGame();
+    }
+  }
+
+  async function runDebriefRound() {
+    const current = game();
+    if (!current || current.status !== "ended" || running) return;
+    const ids = current.players.filter((player) => player.type === "agent").map((player) => player.id);
+    running = true;
+    abortController = new AbortController();
+    try {
+      for (const playerId of ids) {
+        if (current.debrief?.roundDone?.includes(playerId)) continue;
+        const player = werewolfPlayer(current, playerId);
+        const agent = agentFor(playerId);
+        if (!player || !agent) continue;
+        speakingPlayerId = playerId;
+        setGameStatus(`${player.name}正在看完整卷宗……`);
+        renderGame();
+        const reply = await debriefChatRequest(agent, current, player, abortController.signal);
+        appendWerewolfLog(current, { authorId: player.id, author: player.name, text: reply || "我暂时没什么要补。", phase: "debrief" });
+        current.debrief.roundDone ||= [];
+        if (!current.debrief.roundDone.includes(player.id)) current.debrief.roundDone.push(player.id);
+        speakingPlayerId = "";
+        persistGame();
+        renderGame();
+      }
+      setGameStatus("第一轮复盘说完了。现在可以自由点名继续审。" );
+    } catch (error) {
+      const failedId = speakingPlayerId;
+      if (error.name === "AbortError") setGameStatus("复盘停在这里了；已经说完的都保留。", true);
+      else {
+        recordWerewolfIncident(current, `${werewolfPlayer(current, failedId)?.name || failedId} 赛后复盘请求失败：${error.message}`);
+        setGameStatus(`${error.message}。重试当前这一位即可。`, true);
+      }
+    } finally {
+      running = false;
+      speakingPlayerId = "";
+      abortController = null;
+      persistGame();
+      renderGame();
+    }
+  }
+
   async function runVotes(current, signal, { tiedOnly = false } = {}) {
-    captureUserAction(current);
     const day = currentDay(current);
     const votes = tiedOnly ? day.tieVotes : day.votes;
     const doneKey = tiedOnly ? "tieVoteDone" : "voteDone";
@@ -892,16 +1237,19 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
       else if (current.phase === "night_seer") await runSeer(current, abortController.signal);
       else if (current.phase === "night_witch") await runWitch(current, abortController.signal);
       else if (current.phase === "dawn") runDawn(current);
-      else if (current.phase === "day_speech") await runDaySpeeches(current, abortController.signal);
+      else if (current.phase === "day_speech") completeSpeechPhase(current, false);
       else if (current.phase === "day_vote") await runVotes(current, abortController.signal);
-      else if (current.phase === "tie_speech") await runDaySpeeches(current, abortController.signal, { tiedOnly: true });
+      else if (current.phase === "tie_speech") completeSpeechPhase(current, true);
       else if (current.phase === "tie_vote") await runVotes(current, abortController.signal, { tiedOnly: true });
       else if (current.phase === "last_words") await runLastWords(current, abortController.signal);
       setGameStatus(current.status === "ended" ? "卷宗已解锁，可以往回翻所有密谈。" : "这一阶段完成了。先看戏，再继续。🐺");
       persistGame();
     } catch (error) {
       if (error.name === "AbortError") setGameStatus("停在这里了，已经完成的发言会保留。");
-      else setGameStatus(error.message, true);
+      else {
+        recordWerewolfIncident(current, `${WEREWOLF_PHASE_META[current.phase] || current.phase}：${error.message}`);
+        setGameStatus(error.message, true);
+      }
     } finally {
       running = false;
       abortController = null;
@@ -930,33 +1278,87 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
     toast(viewMode === "god" ? "上帝视角已开，今晚谁刀谁都瞒不过你" : "身份发好了——先别露牌 😼");
   }
 
-  function clearGame(confirmActive = true) {
+  function submitUserMessage(rawText) {
+    const current = game();
+    const body = String(rawText || "").trim();
+    if (!current || !body || running) return false;
+    if (current.status === "ended") {
+      appendWerewolfLog(current, { authorId: WEREWOLF_USER_ID, author: "晨曦", text: body, phase: "debrief" });
+      persistGame();
+      renderGame();
+      return true;
+    }
+    const user = werewolfPlayer(current, WEREWOLF_USER_ID);
+    if (!user) {
+      toast("上帝席这局只主持和围观，不向存活玩家递话");
+      return false;
+    }
+    if (current.phase === "day_speech" && user.alive && !playerHasSpoken(current, user.id, false)) {
+      currentDay(current).speeches[user.id] = body;
+      appendWerewolfLog(current, { authorId: user.id, author: user.name, text: body, phase: "day_speech" });
+      setGameStatus(current.costMode === "economy" ? "曦曦说完了；记得在身份与行动里补交一票。" : "曦曦说完了，可以继续点名其他人。" );
+    } else if (current.phase === "tie_speech" && user.alive && current.pending?.tieIds?.includes(user.id) && !playerHasSpoken(current, user.id, true)) {
+      currentDay(current).speeches[`${user.id}-tie`] = body;
+      appendWerewolfLog(current, { authorId: user.id, author: user.name, text: body, phase: "tie_speech" });
+      setGameStatus("平票辩护已经记下。" );
+    } else if (current.phase === "last_words" && current.pending?.eliminatedId === user.id && !current.pending.userLastWordsReady) {
+      current.pending.userLastWords = body;
+      current.pending.userLastWordsReady = true;
+      setGameStatus("遗言已收好，让法官继续即可。" );
+    } else {
+      toast("现在不是曦曦的公开发言阶段");
+      return false;
+    }
+    persistGame();
+    renderGame();
+    return true;
+  }
+
+  function archiveCurrentGame(confirmActive = true) {
     const room = getRoom();
-    if (!room?.werewolf) return;
-    if (confirmActive && room.werewolf.status === "active" && !window.confirm("这局还没结束，确定收掉本局卷宗重新洗牌？")) return;
+    const current = room?.werewolf;
+    if (!room || !current) return;
+    if (current.status === "active") {
+      if (confirmActive && !window.confirm("这局还没结束。确定提前结束、封存整局，再重新洗牌？")) return;
+      current.winner = null;
+      appendWerewolfLog(current, { text: "房主提前结束了本局。所有身份与夜间密谈现已解锁。", phase: "ended" });
+      beginWerewolfDebrief(current);
+    }
+    room.werewolfArchives ||= [];
+    if (!room.werewolfArchives.some((item) => item.id === current.id)) {
+      room.werewolfArchives.push(archiveWerewolfGame(current, room.werewolfArchives.length + 1));
+    }
     room.werewolf = null;
     persist();
+    setGameStatus("");
     renderGame();
+    if (!dialog.open) dialog.showModal();
+    toast("本局卷宗和赛后复盘都收好了，可以重新发牌");
+  }
+
+  function clearGame(confirmActive = true) {
+    archiveCurrentGame(confirmActive);
   }
 
   function endGame() {
     const current = game();
     if (!current || current.status === "ended") return;
     if (!window.confirm("确定提前结束这局？身份和夜间密谈会立刻解锁。")) return;
-    current.status = "ended";
-    current.phase = "ended";
     current.winner = null;
     appendWerewolfLog(current, { text: "房主提前结束了本局。所有身份与夜间密谈现已解锁。", phase: "ended" });
+    beginWerewolfDebrief(current);
     persistGame();
     renderGame();
   }
 
   byId("werewolf-button").addEventListener("click", open);
+  byId("werewolf-open-controls").addEventListener("click", open);
   byId("close-werewolf-dialog").addEventListener("click", () => dialog.close());
   byId("start-werewolf-game").addEventListener("click", start);
   byId("werewolf-advance").addEventListener("click", () => void advance());
   byId("werewolf-stop").addEventListener("click", () => abortController?.abort());
   byId("werewolf-new-game").addEventListener("click", () => clearGame(true));
+  archiveButton.addEventListener("click", () => archiveCurrentGame(false));
   byId("werewolf-end-game").addEventListener("click", endGame);
   document.querySelectorAll('input[name="werewolf-view"]').forEach((input) => input.addEventListener("change", setupSelectionLimits));
   manualDealInput.addEventListener("change", () => {
@@ -964,5 +1366,5 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
     updateSetupStatus();
   });
 
-  return { open, render: renderGame };
+  return { open, render: renderGame, submitUserMessage };
 }

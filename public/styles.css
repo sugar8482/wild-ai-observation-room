@@ -272,24 +272,30 @@ html[data-theme="dark"] .button-werewolf {
 .werewolf-room-stage {
   min-height: 0;
   flex: 1;
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  padding: 42px 24px;
-  text-align: center;
+  overflow-y: auto;
+  display: block;
+  padding: 24px clamp(16px, 4vw, 48px) 32px;
   background:
     radial-gradient(circle at 50% 38%, rgba(116, 62, 86, 0.14), transparent 32%),
     var(--paper);
 }
 
-.werewolf-room-stage h3 {
+.werewolf-room-empty {
+  min-height: 100%;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+}
+
+.werewolf-room-empty h3 {
   margin: 12px 0 8px;
   font-family: Georgia, "Songti SC", serif;
   font-size: clamp(25px, 4vw, 42px);
   font-weight: 520;
 }
 
-.werewolf-room-stage > p:not(.section-kicker) {
+.werewolf-room-empty > p:not(.section-kicker) {
   max-width: 520px;
   margin-bottom: 22px;
   color: var(--muted);
@@ -301,6 +307,200 @@ html[data-theme="dark"] .button-werewolf {
   font-size: 58px;
   line-height: 1;
   color: #6d5060;
+}
+
+.werewolf-main-table {
+  width: min(880px, 100%);
+  margin: 0 auto;
+}
+
+.werewolf-main-heading,
+.werewolf-roundtable-heading,
+.werewolf-archive-card > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.werewolf-main-heading {
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.werewolf-main-heading h3 {
+  margin: 4px 0 0;
+  font-family: Georgia, "Songti SC", serif;
+  font-size: clamp(22px, 3vw, 32px);
+  font-weight: 560;
+}
+
+.werewolf-main-log {
+  height: auto;
+  min-height: 260px;
+  overflow: visible;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.werewolf-main-log .werewolf-log-entry {
+  max-width: min(86%, 720px);
+  padding: 12px 14px;
+  box-shadow: 0 5px 18px rgba(17, 17, 15, 0.035);
+}
+
+.werewolf-main-log .werewolf-log-entry.is-system {
+  max-width: 100%;
+}
+
+.werewolf-roundtable {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--paper) 92%, var(--warm));
+}
+
+.werewolf-roundtable:empty {
+  display: none;
+}
+
+.werewolf-roundtable-heading strong {
+  font-size: 14px;
+}
+
+.werewolf-roundtable-heading p,
+.werewolf-roundtable-idle {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.werewolf-speaker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 8px;
+  margin-top: 13px;
+}
+
+.werewolf-speaker {
+  min-width: 0;
+  padding: 10px 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.werewolf-speaker:hover:not(:disabled) {
+  border-color: var(--ink);
+  transform: translateY(-1px);
+}
+
+.werewolf-speaker:disabled {
+  cursor: default;
+}
+
+.werewolf-speaker strong,
+.werewolf-speaker span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.werewolf-speaker strong {
+  font-size: 12px;
+}
+
+.werewolf-speaker span {
+  margin-top: 3px;
+  color: var(--quiet);
+  font-size: 10px;
+}
+
+.werewolf-speaker.is-done {
+  opacity: 0.58;
+  background: var(--wash);
+}
+
+.werewolf-speaker.is-speaking {
+  opacity: 1;
+  border-color: #7b5e84;
+  box-shadow: 0 0 0 2px rgba(123, 94, 132, 0.13);
+}
+
+.werewolf-archive-list {
+  width: min(880px, 100%);
+  margin: 0 auto 14px;
+}
+
+.werewolf-archive-list:empty {
+  display: none;
+}
+
+.werewolf-archive-card {
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.werewolf-archive-card > summary {
+  padding: 11px 13px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.werewolf-archive-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.werewolf-archive-card > summary::before {
+  content: "▸";
+  color: var(--quiet);
+}
+
+.werewolf-archive-card[open] > summary::before {
+  content: "▾";
+}
+
+.werewolf-archive-card > summary strong {
+  flex: 1;
+  font-size: 12px;
+}
+
+.werewolf-archive-card > summary span {
+  color: var(--quiet);
+  font-size: 10px;
+}
+
+.werewolf-archive-recap {
+  margin: 0;
+  padding: 13px;
+  border-top: 1px solid var(--soft-line);
+  white-space: pre-wrap;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.werewolf-archive-transcript {
+  max-height: 520px;
+  overflow-y: auto;
+  padding: 13px;
+  border-top: 1px solid var(--soft-line);
+  background: var(--wash);
+}
+
+.composer.is-werewolf-compose .composer-route {
+  display: none;
 }
 
 .panel,
@@ -1290,6 +1490,10 @@ input[type="range"] {
   background: var(--paper);
 }
 
+.werewolf-dialog.is-control-mode {
+  width: min(650px, calc(100vw - 24px));
+}
+
 .werewolf-shell {
   padding: 22px;
 }
@@ -1500,6 +1704,10 @@ input[type="range"] {
   margin: 12px 0;
 }
 
+.werewolf-dialog.is-control-mode .werewolf-player-board {
+  grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
+}
+
 .werewolf-player-chip {
   min-width: 0;
   padding: 8px 6px;
@@ -1591,6 +1799,18 @@ html[data-theme="dark"] .werewolf-log-entry.is-secret {
   white-space: pre-wrap;
   font-size: 13px;
   line-height: 1.62;
+}
+
+/* The room transcript uses the page itself as its scroll container. Keep this
+   more specific rule after the legacy modal log styles so it cannot collapse
+   back into the old fixed-height mini window. */
+.werewolf-log.werewolf-main-log {
+  height: auto;
+  min-height: 260px;
+  overflow: visible;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .werewolf-action-panel {
@@ -3028,6 +3248,29 @@ html[data-theme="dark"] .mobile-room-switcher {
 
   .werewolf-log {
     height: 38vh;
+  }
+
+  .werewolf-log.werewolf-main-log {
+    height: auto;
+    min-height: 220px;
+  }
+
+  .werewolf-room-stage {
+    padding: 16px 12px 24px;
+  }
+
+  .werewolf-main-heading,
+  .werewolf-roundtable-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .werewolf-main-log .werewolf-log-entry {
+    max-width: 94%;
+  }
+
+  .werewolf-speaker-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .topbar {

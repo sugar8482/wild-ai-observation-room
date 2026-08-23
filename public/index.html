@@ -103,11 +103,25 @@
         </div>
 
         <section class="werewolf-room-stage is-hidden" id="werewolf-room-stage">
-          <div class="werewolf-room-moon" aria-hidden="true">☾</div>
-          <p class="section-kicker">TEMPORARY GAME TABLE</p>
-          <h3>身份只活一局，散场不记仇。</h3>
-          <p>曦曦可以坐上帝席发牌围观，也可以亲自下场，让他们连群主一起盘、一起投。</p>
-          <button class="button button-primary" id="open-werewolf-room" type="button">进入狼人杀房</button>
+          <div class="werewolf-archive-list" id="werewolf-archive-list"></div>
+          <div class="werewolf-room-empty" id="werewolf-room-empty">
+            <div class="werewolf-room-moon" aria-hidden="true">☾</div>
+            <p class="section-kicker">TEMPORARY GAME TABLE</p>
+            <h3>身份只活一局，散场不记仇。</h3>
+            <p>曦曦可以坐上帝席发牌围观，也可以亲自下场，让他们连群主一起盘、一起投。</p>
+            <button class="button button-primary" id="open-werewolf-room" type="button">进入狼人杀房</button>
+          </div>
+          <section class="werewolf-main-table is-hidden" id="werewolf-main-table">
+            <header class="werewolf-main-heading">
+              <div>
+                <p class="section-kicker">LIVE GAME</p>
+                <h3 id="werewolf-main-phase">月黑请闭眼</h3>
+              </div>
+              <button class="button button-quiet" id="werewolf-open-controls" type="button">身份与行动</button>
+            </header>
+            <div class="werewolf-log werewolf-main-log" id="werewolf-log" aria-live="polite"></div>
+            <section class="werewolf-roundtable" id="werewolf-roundtable" aria-live="polite"></section>
+          </section>
         </section>
 
         <section class="message-feed" id="message-feed" aria-live="polite" aria-label="聊天记录">
@@ -802,13 +816,13 @@
           </div>
           <div class="werewolf-role-card" id="werewolf-role-card"></div>
           <div class="werewolf-player-board" id="werewolf-player-board"></div>
-          <div class="werewolf-log" id="werewolf-log" aria-live="polite"></div>
           <div class="werewolf-action-panel" id="werewolf-action-panel"></div>
           <p class="werewolf-status" id="werewolf-game-status" aria-live="polite"></p>
           <div class="dialog-footer werewolf-footer">
             <span class="werewolf-small-note" id="werewolf-cost-note"></span>
             <div class="dialog-footer-right">
               <button class="button button-quiet is-hidden" id="werewolf-stop" type="button">停一下</button>
+              <button class="button button-primary is-hidden" id="werewolf-archive-game" type="button">封存本局并开新局</button>
               <button class="button button-primary" id="werewolf-advance" type="button">推进本阶段</button>
             </div>
           </div>

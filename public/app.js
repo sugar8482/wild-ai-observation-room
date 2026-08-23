@@ -41,7 +41,7 @@ import {
   roomMembers,
   roomPresenceContext,
 } from "./room-presence.js";
-import { sanitizeWerewolfGame } from "./werewolf-game.js";
+import { sanitizeWerewolfArchives, sanitizeWerewolfGame } from "./werewolf-game.js";
 import { createWerewolfController } from "./werewolf-controller.js";
 
 const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
@@ -360,6 +360,7 @@ function hydrateRoom(room, fallbackParticipants = [], agents = []) {
     eventCards: hydrateRoomEventCards(room?.eventCards),
     mic: hydrateRoomMic(room?.mic),
     werewolf: sanitizeWerewolfGame(room?.werewolf),
+    werewolfArchives: sanitizeWerewolfArchives(room?.werewolfArchives),
     externalRevision: Math.max(0, Number(room?.externalRevision) || 0),
     participantIds: Array.isArray(room?.participantIds) ? [...new Set(room.participantIds)] : fallbackParticipants,
     messages: Array.isArray(room?.messages) ? room.messages : [],
@@ -1288,12 +1289,17 @@ function renderAll(options = {}) {
   byId("new-chat-button").classList.toggle("is-hidden", isWerewolfRoom);
   werewolfRoomStage.classList.toggle("is-hidden", !isWerewolfRoom);
   messageFeed.classList.toggle("is-hidden", isWerewolfRoom);
-  composer.classList.toggle("is-hidden", isWerewolfRoom);
+  composer.classList.remove("is-hidden");
+  composer.classList.toggle("is-werewolf-compose", isWerewolfRoom);
   newMessageJump.classList.toggle("is-hidden", isWerewolfRoom || unseenMessageCount === 0);
   directorPanel.classList.toggle("is-hidden", isWerewolfRoom);
   if (isWerewolfRoom) {
     roomModeLabel.textContent = "狼人杀 · 临时身份局";
     mobileRoomMeta.textContent = activeRoom()?.werewolf?.status === "active" ? "游戏进行中" : "等待开局";
+  } else {
+    messageInput.disabled = false;
+    sendButton.disabled = state.running;
+    renderComposerPrivacy();
   }
   werewolfController?.render();
 }
@@ -3270,12 +3276,20 @@ window.addEventListener("scroll", clearNewMessageNoticeAtLatest, { passive: true
 messageFeed.addEventListener("scroll", clearNewMessageNoticeAtLatest, { passive: true });
 composer.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (activeRoom()?.roomType === "werewolf") {
+    if (werewolfController?.submitUserMessage(messageInput.value)) messageInput.value = "";
+    return;
+  }
   startConversation();
 });
 messageRecipient.addEventListener("change", renderComposerPrivacy);
 messageInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
+    if (activeRoom()?.roomType === "werewolf") {
+      if (werewolfController?.submitUserMessage(messageInput.value)) messageInput.value = "";
+      return;
+    }
     startConversation();
   }
 });

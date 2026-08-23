@@ -3,6 +3,9 @@ import test from "node:test";
 import {
   WEREWOLF_USER_ID,
   appendWerewolfLog,
+  archiveWerewolfGame,
+  beginWerewolfDebrief,
+  buildWerewolfRecap,
   checkWerewolfWinner,
   createWerewolfGame,
   finishWerewolfGame,
@@ -10,6 +13,7 @@ import {
   parseWitchAction,
   resolveWerewolfNight,
   sanitizeWerewolfGame,
+  sanitizeWerewolfArchives,
   visibleWerewolfLog,
   voteOutcome,
 } from "../public/werewolf-game.js";
@@ -131,4 +135,53 @@ test("狼人杀状态会限长清洗，但不会混进普通消息或长期总�
   assert.equal(saved.log.at(-1).text, "密谈509");
   assert.equal(Object.hasOwn(saved, "messages"), false);
   assert.equal(Object.hasOwn(saved, "memory"), false);
+});
+
+test("散场会生成完整事实复盘，封存后保留茶话会但不会串进下一局", () => {
+  const game = createWerewolfGame({ participants: participants(6), random: () => 0.1 });
+  const [wolf, , seer, witch] = game.players;
+  wolf.role = "wolf";
+  seer.role = "seer";
+  witch.role = "witch";
+  game.nights.push({
+    day: 1,
+    killTargetId: seer.id,
+    seerTargetId: wolf.id,
+    seerResult: "wolf",
+    witchSave: true,
+    poisonTargetId: null,
+    deaths: [],
+  });
+  game.days.push({ day: 1, voteCounts: { [wolf.id]: 3 }, eliminatedId: wolf.id });
+  game.winner = "good";
+  beginWerewolfDebrief(game);
+  appendWerewolfLog(game, { authorId: "guest-2", author: "嘉宾2", text: "赛后我认。", phase: "debrief" });
+
+  const recap = buildWerewolfRecap(game);
+  assert.match(recap, /【身份表】/);
+  assert.match(recap, new RegExp(`狼刀 ${seer.name}`));
+  assert.match(recap, /解药已用/);
+  assert.equal(game.phase, "debrief");
+  assert.ok(game.log.some((entry) => entry.authorId === "recap"));
+
+  const archived = archiveWerewolfGame(game, 1);
+  const archives = sanitizeWerewolfArchives([archived]);
+  assert.equal(archives.length, 1);
+  assert.match(archives[0].archiveTitle, /第 1 局/);
+  assert.ok(archives[0].log.some((entry) => entry.text === "赛后我认。"));
+});
+
+test("历史卷宗不会因为局数多而被静默截断", () => {
+  const archives = Array.from({ length: 35 }, (_, index) => ({
+    ...createWerewolfGame({ participants: participants(6), random: () => 0.1 }),
+    id: `game-${index + 1}`,
+    status: "ended",
+    phase: "debrief",
+    winner: index % 2 ? "wolf" : "good",
+  }));
+
+  const sanitized = sanitizeWerewolfArchives(archives);
+  assert.equal(sanitized.length, 35);
+  assert.equal(sanitized[0].id, "game-1");
+  assert.equal(sanitized.at(-1).id, "game-35");
 });
