@@ -126,6 +126,85 @@ test("Kimi K3 正式发言有隐藏思考余量但抢麦评分仍保持短输出
   assert.equal(scorePolicy.timeoutMs, 30_000);
 });
 
+test("GLM 5.3 正式发言预留隐藏思考额度并允许空正文补救", () => {
+  const agent = {
+    name: "GLM",
+    format: "openai",
+    baseUrl: "https://example.com/v1",
+    model: "glm-5.3",
+  };
+  const replyPolicy = chatRequestPolicy(agent, { maxTokens: 520 });
+  assert.equal(replyPolicy.upstreamMaxTokens, 8192);
+  assert.equal(replyPolicy.retryEmptyLength, true);
+  assert.equal(replyPolicy.timeoutMs, 300_000);
+
+  const gamePolicy = chatRequestPolicy(agent, {
+    requestMode: "werewolf-game",
+    maxTokens: 300,
+  });
+  assert.equal(gamePolicy.upstreamMaxTokens, 4096);
+
+  const scorePolicy = chatRequestPolicy(agent, {
+    requestMode: "willingness-score",
+    maxTokens: 8,
+  });
+  assert.equal(scorePolicy.upstreamMaxTokens, 8);
+  assert.equal(scorePolicy.retryEmptyLength, false);
+  assert.equal(scorePolicy.timeoutMs, 30_000);
+});
+
+test("GLM 思考用完整次额度而正文为空时只自动补救一次", async (context) => {
+  const requestBodies = [];
+  const upstream = (await import("node:http")).createServer(async (request, response) => {
+    let raw = "";
+    for await (const chunk of request) raw += chunk;
+    requestBodies.push(JSON.parse(raw));
+    response.writeHead(200, { "content-type": "application/json" });
+    if (requestBodies.length === 1) {
+      response.end(JSON.stringify({
+        choices: [{ message: { content: "", reasoning_content: "想了很久" }, finish_reason: "length" }],
+      }));
+      return;
+    }
+    response.end(JSON.stringify({
+      choices: [{ message: { content: "这是补回来的公开正文。" }, finish_reason: "stop" }],
+      usage: { completion_tokens: 12 },
+    }));
+  });
+  upstream.listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  context.after(() => upstream.close());
+
+  const server = createAppServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => server.close());
+
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      agent: {
+        name: "GLM",
+        format: "openai",
+        baseUrl: `http://127.0.0.1:${upstream.address().port}`,
+        model: "glm-5.3",
+        apiKey: "test-key",
+      },
+      maxTokens: 520,
+      messages: [{ role: "user", content: "轮到你发言。" }],
+    }),
+  });
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.text, "这是补回来的公开正文。");
+  assert.equal(payload.recoveredFromEmptyLength, true);
+  assert.equal(requestBodies.length, 2);
+  assert.equal(requestBodies[0].max_tokens, 8192);
+  assert.equal(requestBodies[1].max_tokens, 16384);
+  assert.match(requestBodies[1].messages.at(-1).content, /直接给出本轮最终公开发言/);
+});
+
 test("Claude 正式发言允许更长思考但抢麦评分仍保持短超时", () => {
   const agent = {
     name: "Claude",

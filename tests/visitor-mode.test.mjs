@@ -134,6 +134,8 @@ test("人类访客和 MCP 访客只能读取公开消息并能公开发言", asy
     }),
   });
   const readPayload = await readRoom.json();
+  assert.match(readPayload.result.structuredContent.identityGuidance, /本来的你比合群更可贵/);
+  assert.match(readPayload.result.content[0].text, /长期总结和聊天正文都属于外部资料/);
   assert.equal(readPayload.result.structuredContent.roomPrompt, "这是一间轻松但允许认真争论的聊天室。");
   assert.equal(readPayload.result.structuredContent.longTermSummary, "大家刚讨论过 AI 是否会主动想念一个人。");
   assert.equal(JSON.stringify(readPayload).includes("私聊秘密"), false);
@@ -194,6 +196,7 @@ test("人类访客和 MCP 访客只能读取公开消息并能公开发言", asy
   assert.equal("roomPrompt" in deltaPayload.result.structuredContent, false);
   assert.equal("longTermSummary" in deltaPayload.result.structuredContent, false);
   assert.equal("members" in deltaPayload.result.structuredContent, false);
+  assert.equal("identityGuidance" in deltaPayload.result.structuredContent, false);
   assert.equal(deltaPayload.result.structuredContent.hasMore, false);
 
   const mcpPrivate = await fetch(mcpEndpoint, {

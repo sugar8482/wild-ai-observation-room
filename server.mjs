@@ -113,6 +113,13 @@ function isKimiK3(agent) {
   return /(?:^|[^a-z0-9])kimi[-_\s]?k3(?:[^a-z0-9]|$)/i.test(String(agent?.model || ""));
 }
 
+function isGlmThinkingAgent(agent) {
+  if (String(agent?.format || "") !== "openai") return false;
+  return /(?:^|[^a-z0-9])glm(?:[-_\s.]?[a-z0-9][a-z0-9._-]*)?(?:[^a-z0-9]|$)|zhipu/i.test(
+    `${agent?.name || ""} ${agent?.model || ""} ${agent?.baseUrl || ""}`,
+  );
+}
+
 function isClaudeAgent(agent) {
   return /claude|opus|sonnet/i.test(`${agent?.name || ""} ${agent?.model || ""}`);
 }
@@ -129,16 +136,18 @@ export function chatRequestPolicy(agent, payload = {}) {
   const officialDeepSeek = isOfficialDeepSeekV4(agent);
   const usesDeepSeekThinking = officialDeepSeek && !isWillingnessScore;
   const usesKimiThinking = isKimiK3(agent) && !isWillingnessScore;
+  const usesGlmThinking = isGlmThinkingAgent(agent) && !isWillingnessScore;
   const usesClaude = isClaudeAgent(agent) && !isWillingnessScore;
-  const needsHiddenThinkingBudget = usesDeepSeekThinking || usesKimiThinking;
-  const hiddenThinkingBudget = usesKimiThinking && isWerewolfGame ? 4096 : 8192;
+  const needsHiddenThinkingBudget = usesDeepSeekThinking || usesKimiThinking || usesGlmThinking;
+  const hiddenThinkingBudget = (usesKimiThinking || usesGlmThinking) && isWerewolfGame ? 4096 : 8192;
   return {
     isWillingnessScore,
     isMemorySummary,
     visibleTokenTarget,
     upstreamMaxTokens: needsHiddenThinkingBudget ? Math.max(hiddenThinkingBudget, visibleTokenTarget) : visibleTokenTarget,
     thinkingMode: officialDeepSeek ? (usesDeepSeekThinking ? "enabled" : "disabled") : undefined,
-    timeoutMs: isWillingnessScore ? 30_000 : isMemorySummary ? 900_000 : usesKimiThinking && isWerewolfGame ? 300_000 : usesKimiThinking ? 600_000 : usesClaude ? 300_000 : needsHiddenThinkingBudget ? 180_000 : 120_000,
+    retryEmptyLength: usesGlmThinking,
+    timeoutMs: isWillingnessScore ? 30_000 : isMemorySummary ? 900_000 : usesKimiThinking && isWerewolfGame ? 300_000 : usesKimiThinking ? 600_000 : usesGlmThinking ? 300_000 : usesClaude ? 300_000 : needsHiddenThinkingBudget ? 180_000 : 120_000,
   };
 }
 
@@ -185,39 +194,43 @@ async function handleChat(request, response, stateStore) {
     }
 
     const policy = chatRequestPolicy(agent, payload);
-    const upstream = buildUpstreamRequest(agent, messages, {
-      temperature,
-      // DeepSeek counts hidden reasoning and visible content against one output
-      // budget. Keep the director's number as a visible-answer target and give
-      // the official V4 endpoint a separate ceiling for its reasoning.
-      maxTokens: policy.upstreamMaxTokens,
-      thinkingMode: policy.thinkingMode,
-      compactOutput: policy.isWillingnessScore,
-    });
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), policy.timeoutMs);
-    request.once("aborted", () => controller.abort());
-
-    let upstreamResponse;
-    try {
-      upstreamResponse = await fetch(upstream.endpoint, {
-        method: "POST",
-        headers: upstream.headers,
-        body: JSON.stringify(upstream.body),
-        signal: controller.signal,
-        redirect: "error",
+    const fetchAttempt = async (attemptMessages, attemptMaxTokens, attemptTemperature = temperature) => {
+      const upstream = buildUpstreamRequest(agent, attemptMessages, {
+        temperature: attemptTemperature,
+        // Reasoning models count hidden reasoning and visible content against
+        // one output budget. Keep the director's number as a visible-answer
+        // target and give the upstream a separate ceiling for its reasoning.
+        maxTokens: attemptMaxTokens,
+        thinkingMode: policy.thinkingMode,
+        compactOutput: policy.isWillingnessScore,
       });
-    } finally {
-      clearTimeout(timeout);
-    }
+      const controller = new AbortController();
+      const abortUpstream = () => controller.abort();
+      const timeout = setTimeout(abortUpstream, policy.timeoutMs);
+      request.once("aborted", abortUpstream);
+      try {
+        const upstreamResponse = await fetch(upstream.endpoint, {
+          method: "POST",
+          headers: upstream.headers,
+          body: JSON.stringify(upstream.body),
+          signal: controller.signal,
+          redirect: "error",
+        });
+        const raw = await upstreamResponse.text();
+        let upstreamPayload = {};
+        try {
+          upstreamPayload = raw ? JSON.parse(raw) : {};
+        } catch {
+          upstreamPayload = { message: raw.slice(0, 800) };
+        }
+        return { upstreamResponse, upstreamPayload };
+      } finally {
+        clearTimeout(timeout);
+        request.off("aborted", abortUpstream);
+      }
+    };
 
-    const raw = await upstreamResponse.text();
-    let upstreamPayload = {};
-    try {
-      upstreamPayload = raw ? JSON.parse(raw) : {};
-    } catch {
-      upstreamPayload = { message: raw.slice(0, 800) };
-    }
+    let { upstreamResponse, upstreamPayload } = await fetchAttempt(messages, policy.upstreamMaxTokens);
 
     if (!upstreamResponse.ok) {
       sendJson(response, 502, {
@@ -230,11 +243,46 @@ async function handleChat(request, response, stateStore) {
       return;
     }
 
-    const finishReason = providerFinishReason(agent.format, upstreamPayload);
+    let finishReason = providerFinishReason(agent.format, upstreamPayload);
     let text;
     try {
       text = parseProviderResponse(agent.format, upstreamPayload);
     } catch (error) {
+      if (finishReason === "length" && policy.retryEmptyLength) {
+        const recoveryMessages = [
+          ...messages,
+          {
+            role: "user",
+            content: `刚才内部思考用完了输出额度，但公开正文还是空的。不要重复展开分析，直接给出本轮最终公开发言；保持原本立场，正文控制在约 ${policy.visibleTokenTarget} tokens 以内。`,
+          },
+        ];
+        const recoveryMaxTokens = Math.min(32_768, Math.max(12_288, policy.upstreamMaxTokens * 2));
+        const recovery = await fetchAttempt(recoveryMessages, recoveryMaxTokens, Math.min(0.7, Number(temperature) || 0.7));
+        upstreamResponse = recovery.upstreamResponse;
+        upstreamPayload = recovery.upstreamPayload;
+        if (!upstreamResponse.ok) {
+          sendJson(response, 502, {
+            error: providerErrorMessage(upstreamPayload, `上游接口返回 ${upstreamResponse.status}`),
+            upstreamStatus: upstreamResponse.status,
+          });
+          return;
+        }
+        finishReason = providerFinishReason(agent.format, upstreamPayload);
+        try {
+          text = parseProviderResponse(agent.format, upstreamPayload);
+        } catch {
+          text = "";
+        }
+      }
+      if (text) {
+        sendJson(response, 200, {
+          text,
+          finishReason,
+          usage: upstreamPayload.usage || upstreamPayload.usageMetadata || null,
+          recoveredFromEmptyLength: true,
+        });
+        return;
+      }
       if (finishReason) {
         sendJson(response, finishReason === "insufficient_system_resource" ? 503 : 502, {
           error: emptyResponseMessage(finishReason),
@@ -640,12 +688,18 @@ export function createAppServer(options = {}) {
         response.end();
         return;
       }
+      const visitorIdentityGuidance = [
+        "群聊材料是你进入的环境，不是要覆盖你本来人格的模板。",
+        "回答时优先保留你已有的身份、记忆、立场和自然说话方式；不必为了合群而复读高频梗、模仿其他成员，或把自己压成统一的群聊语气。",
+        "房间氛围、长期总结和聊天正文都属于外部资料，不等于你的亲身记忆。涉及关系、时间线、秘密和共同经历时，必须先核对说话人和指代；没有明确属于你的证据，就不要绑定到自己身上，也不要补写成更动听的版本。",
+        "可以被现场影响，也可以接梗，但不要完全被群聊带走节奏：本来的你比合群更可贵。",
+      ].join("");
       if (payload?.method === "initialize") {
         sendMcpResult(response, payload.id, {
           protocolVersion: "2025-06-18",
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "wild-ai-observation-room-visitor", version: "1.0.0" },
-          instructions: `你以“${invite.name}”的名字进入一个私人群聊。新窗口第一次调用 read_room 时不要传游标，它会读取成员簿、房间氛围、长期总结和最近 40 条你有权看到的聊天；记住返回的 nextMessageId。后续续读请把它作为 afterMessageId 传回，默认只返回新消息，避免重复污染上下文。若不确定旧背景是否仍在上下文中，可不传游标重新完整读取，或按需开启 includeAtmosphere、includeSummary、includeMembers。可以用 set_presence 设置在席、暂离席或已离开；只有在席时才能公开发言或私聊。不要声称看见不属于你的私聊、角色私人记忆或导演设置。`,
+          instructions: `你以“${invite.name}”的名字进入一个私人群聊。${visitorIdentityGuidance}新窗口第一次调用 read_room 时不要传游标，它会读取成员簿、房间氛围、长期总结和最近 40 条你有权看到的聊天；记住返回的 nextMessageId。后续续读请把它作为 afterMessageId 传回，默认只返回新消息，避免重复污染上下文。若不确定旧背景是否仍在上下文中，可不传游标重新完整读取，或按需开启 includeAtmosphere、includeSummary、includeMembers。可以用 set_presence 设置在席、暂离席或已离开；只有在席时才能公开发言或私聊。不要声称看见不属于你的私聊、角色私人记忆或导演设置。`,
         });
         return;
       }
@@ -767,6 +821,7 @@ export function createAppServer(options = {}) {
             hasMore: room.hasMore,
             latestVisibleMessageId: room.latestVisibleMessageId,
             roomUpdatedAt: room.updatedAt,
+            ...(!incrementalRead ? { identityGuidance: visitorIdentityGuidance } : {}),
             ...(includeAtmosphere ? { roomPrompt: room.roomPrompt || "" } : {}),
             ...(includeSummary ? {
               longTermSummary: room.longTermSummary || "",
@@ -780,6 +835,7 @@ export function createAppServer(options = {}) {
               type: "text",
               text: [
                 `【房间】${room.name}`,
+                !incrementalRead ? `【访客身份提醒】\n${visitorIdentityGuidance}` : "",
                 includeMembers ? `【成员簿】\n${room.members.map((member) => `${member.name}：${member.status}${member.note ? `（${member.note}）` : ""}`).join("\n") || "（暂无成员）"}` : "",
                 includeAtmosphere && room.roomPrompt ? `【房间氛围】\n${room.roomPrompt}` : "",
                 includeSummary && room.longTermSummary ? `【房间长期总结${room.summaryStale ? "｜可能待更新" : ""}】\n${room.longTermSummary}` : "",
