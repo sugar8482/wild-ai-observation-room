@@ -64,10 +64,11 @@ test("普通聊天、狼人杀与访客消息显示完整日期时间", async ()
     readFile(new URL("../public/visitor.js", import.meta.url), "utf8"),
   ]);
   for (const source of sources) {
-    assert.match(source, /year: "numeric"/);
-    assert.match(source, /month: "2-digit"/);
-    assert.match(source, /day: "2-digit"/);
-    assert.match(source, /replace\(\/\\\/\/g, "-"\)/);
+    const formatter = source.match(/function formatTime\(timestamp\) \{[\s\S]*?\n\}/)?.[0] || "";
+    assert.match(formatter, /year: "numeric"/);
+    assert.match(formatter, /month: "2-digit"/);
+    assert.match(formatter, /day: "2-digit"/);
+    assert.match(formatter, /replace\(\/\\\/\/g, "-"\)/);
   }
 });
 
