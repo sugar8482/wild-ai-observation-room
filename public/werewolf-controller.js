@@ -27,6 +27,7 @@ import {
   privateMemoryContext,
   privateMemoryOutputInstruction,
 } from "./agent-memory.js";
+import { appendBoldText } from "./rich-text.js";
 
 const byId = (id) => document.getElementById(id);
 
@@ -391,7 +392,9 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
       : WEREWOLF_PHASE_META[entry.phase];
     const label = archived && !route ? entry.phase : route;
     header.append(createElement("span", "", `${entry.author}${label ? ` · ${label}` : ""}`), createElement("time", "", formatTime(entry.timestamp)));
-    content.append(header, createElement("p", "", entry.text));
+    const body = createElement("p");
+    appendBoldText(body, entry.text);
+    content.append(header, body);
     item.append(playerAvatar(current, entry.author, entry.authorId), content);
     return item;
   }

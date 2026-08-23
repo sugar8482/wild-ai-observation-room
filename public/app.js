@@ -43,6 +43,7 @@ import {
 } from "./room-presence.js";
 import { sanitizeWerewolfArchives, sanitizeWerewolfGame } from "./werewolf-game.js";
 import { createWerewolfController } from "./werewolf-controller.js";
+import { appendBoldText } from "./rich-text.js";
 
 const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
 const LEGACY_MESSAGE_KEY = "wild-ai-observation-room.messages.v1";
@@ -1191,26 +1192,29 @@ function renderMessages({ scroll = false } = {}) {
     const messageAgent = state.agents.find((agent) => agent.id === message.agentId);
     const avatar = createAvatarElement(message.author, messageAgent?.avatar, "message-avatar");
     const meta = createElement("div", "message-meta");
-    meta.append(createElement("span", "message-author", message.author));
+    const metaTop = createElement("div", "message-meta-top");
+    metaTop.append(createElement("span", "message-author", message.author));
     if (message.source === "visitor" || message.source === "mcp") {
-      meta.append(createElement(
+      metaTop.append(createElement(
         "span",
         "message-source-badge",
         message.source === "mcp" ? "MCP 访客" : "朋友访客",
       ));
     }
+    meta.append(metaTop, createElement("time", "message-time", formatTime(message.timestamp)));
     if (privateMessage) {
       const recipient = privateRecipientLabel(message, privateActorsForRoom(activeRoom())) || "未知对象";
       meta.append(createElement("span", "private-route", `私聊 · ${message.author} → ${recipient}`));
     }
-    meta.append(createElement("time", "message-time", formatTime(message.timestamp)));
     const segments = Array.isArray(message.segments) && message.segments.length > 1
       ? message.segments
       : [message.text];
     const stack = createElement("div", segments.length > 1 ? "message-bubble-stack" : "message-bubble-single");
     const bodies = segments.map((segment) => {
       const body = createElement("div", "message-body");
-      body.append(createElement("span", "message-text", segment));
+      const text = createElement("span", "message-text");
+      appendBoldText(text, segment);
+      body.append(text);
       stack.append(body);
       return body;
     });

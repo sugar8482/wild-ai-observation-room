@@ -1045,7 +1045,7 @@ html[data-theme="dark"] .button-werewolf {
 
 .message-avatar {
   grid-column: 1;
-  grid-row: 1 / span 3;
+  grid-row: 1;
   width: 40px;
   height: 40px;
   display: grid;
@@ -1061,11 +1061,19 @@ html[data-theme="dark"] .button-werewolf {
 
 .message-meta {
   grid-column: 2;
+  min-height: 40px;
   display: flex;
-  align-items: baseline;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+}
+
+.message-meta-top {
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 9px;
-  margin-bottom: 7px;
+  gap: 7px;
 }
 
 .message-author {
@@ -1081,7 +1089,8 @@ html[data-theme="dark"] .button-werewolf {
 .message-bubble-stack,
 .message-bubble-single,
 .private-message-mask {
-  grid-column: 2;
+  grid-column: 1 / -1;
+  margin-top: 9px;
 }
 
 .private-route {
@@ -1106,6 +1115,11 @@ html[data-theme="dark"] .button-werewolf {
   line-height: 1.75;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.message-text strong,
+.werewolf-log-entry p strong {
+  font-weight: 800;
 }
 
 .message-bubble-stack {
@@ -1920,14 +1934,18 @@ html[data-theme="dark"] .werewolf-player-chip.is-known-good {
 }
 
 .werewolf-entry-content {
-  min-width: 0;
+  display: contents;
 }
 
 .werewolf-log-entry header {
+  grid-column: 2;
+  min-width: 0;
   display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 7px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-height: 40px;
   color: var(--quiet);
   font-size: 11px;
 }
@@ -1939,7 +1957,8 @@ html[data-theme="dark"] .werewolf-player-chip.is-known-good {
 }
 
 .werewolf-log-entry p {
-  margin: 0;
+  grid-column: 1 / -1;
+  margin: 9px 0 0;
   padding: 15px 17px;
   border-left: 2px solid var(--ink);
   background: var(--paper);

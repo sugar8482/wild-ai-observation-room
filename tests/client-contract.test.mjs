@@ -40,6 +40,23 @@ test("消息操作在点选当前消息后才展开", async () => {
   assert.match(styles, /pointer-events: none/);
 });
 
+test("普通聊天与狼人杀使用头像标题正文分层布局并安全显示双星号加粗", async () => {
+  const [script, styles, werewolf, richText] = await Promise.all([
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/rich-text.js", import.meta.url), "utf8"),
+  ]);
+  assert.match(script, /meta\.append\(metaTop, createElement\("time", "message-time"/);
+  assert.match(script, /appendBoldText\(text, segment\)/);
+  assert.match(werewolf, /appendBoldText\(body, entry\.text\)/);
+  assert.match(styles, /\.message-bubble-stack,[\s\S]*grid-column: 1 \/ -1/);
+  assert.match(styles, /\.werewolf-entry-content[\s\S]*display: contents/);
+  assert.match(styles, /\.werewolf-log-entry p[\s\S]*grid-column: 1 \/ -1/);
+  assert.doesNotMatch(richText, /innerHTML/);
+  assert.match(richText, /strong\.textContent = part\.text/);
+});
+
 test("局域网 HTTP 下复制消息有 iPad 兼容兜底", async () => {
   const [html, script] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
