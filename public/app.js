@@ -43,6 +43,11 @@ import {
 } from "./room-presence.js";
 import { sanitizeWerewolfArchives, sanitizeWerewolfGame } from "./werewolf-game.js";
 import { createWerewolfController } from "./werewolf-controller.js";
+import {
+  HISTORY_WINDOW_BATCH,
+  historyWindow,
+  nextHistoryWindowLimit,
+} from "./history-window.js";
 import { appendBoldText } from "./rich-text.js";
 
 const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
@@ -188,6 +193,12 @@ let agentMemoryDraftDirty = false;
 let agentAvatarDraft = "";
 let visitorInvites = [];
 let werewolfController = null;
+let messageHistoryObserver = null;
+let loadingOlderMessages = false;
+const messageRenderLimits = new Map();
+let messageHistoryPullIntent = false;
+let messageHistoryLastScrollTop = 0;
+let messageHistoryLastTouchY = null;
 const summarizingRoomIds = new Set();
 const summaryRuns = new Map();
 const summaryNotices = new Map();
@@ -419,6 +430,15 @@ function activeRoom() {
 
 function currentMessages() {
   return activeRoom()?.messages || [];
+}
+
+function currentMessageRenderLimit(room = activeRoom()) {
+  return messageRenderLimits.get(room?.id) || HISTORY_WINDOW_BATCH;
+}
+
+function resetMessageRenderLimit(roomId = activeRoom()?.id) {
+  if (roomId) messageRenderLimits.delete(roomId);
+  messageHistoryPullIntent = false;
 }
 
 function showToast(message) {
@@ -1178,12 +1198,127 @@ function formatTime(timestamp) {
   }).format(new Date(timestamp)).replace(/\//g, "-");
 }
 
-function renderMessages({ scroll = false } = {}) {
-  const previousScrollTop = messageFeed.scrollTop;
-  for (const element of [...messageFeed.querySelectorAll(".message")]) element.remove();
+function revealOlderMessages() {
+  const room = activeRoom();
   const messages = currentMessages();
-  emptyState.classList.toggle("is-hidden", messages.length > 0);
-  for (const message of messages) {
+  const currentLimit = currentMessageRenderLimit(room);
+  if (!room || loadingOlderMessages || currentLimit >= messages.length) return;
+  loadingOlderMessages = true;
+  messageHistoryPullIntent = false;
+  messageRenderLimits.set(
+    room.id,
+    nextHistoryWindowLimit(messages.length, currentLimit),
+  );
+  renderMessages({ preservePrepend: true });
+}
+
+function messageFeedOwnsScroll() {
+  return messageFeed.scrollHeight > messageFeed.clientHeight + 2;
+}
+
+function messageHistoryScrollMetrics() {
+  if (messageFeedOwnsScroll()) {
+    return {
+      owner: messageFeed,
+      top: messageFeed.scrollTop,
+      height: messageFeed.scrollHeight,
+    };
+  }
+  const root = document.scrollingElement || document.documentElement;
+  return {
+    owner: window,
+    top: window.scrollY || root.scrollTop || 0,
+    height: root.scrollHeight,
+  };
+}
+
+function restoreMessageHistoryScroll(owner, top) {
+  if (owner === messageFeed && messageFeedOwnsScroll()) {
+    messageFeed.scrollTop = top;
+    return;
+  }
+  window.scrollTo({ top, behavior: "auto" });
+}
+
+function messageHistoryLoaderIsNearView() {
+  const loader = messageFeed.querySelector(".message-history-loader");
+  if (!loader) return false;
+  const loaderRect = loader.getBoundingClientRect();
+  if (messageFeedOwnsScroll()) {
+    const feedRect = messageFeed.getBoundingClientRect();
+    return loaderRect.bottom >= feedRect.top - 56 && loaderRect.top <= feedRect.bottom + 56;
+  }
+  return loaderRect.bottom >= -56 && loaderRect.top <= window.innerHeight + 56;
+}
+
+function maybeRevealOlderMessagesFromPull() {
+  if (messageHistoryPullIntent && messageHistoryLoaderIsNearView()) revealOlderMessages();
+}
+
+function handleMessageHistoryScroll(event) {
+  const metrics = messageHistoryScrollMetrics();
+  const expectedOwner = metrics.owner;
+  if ((event.currentTarget === window && expectedOwner !== window)
+    || (event.currentTarget === messageFeed && expectedOwner !== messageFeed)) return;
+  if (metrics.top < messageHistoryLastScrollTop - 1) messageHistoryPullIntent = true;
+  messageHistoryLastScrollTop = metrics.top;
+  maybeRevealOlderMessagesFromPull();
+}
+
+function handleMessageHistoryWheel(event) {
+  if (event.deltaY >= 0) return;
+  messageHistoryPullIntent = true;
+  maybeRevealOlderMessagesFromPull();
+}
+
+function handleMessageHistoryTouchStart(event) {
+  messageHistoryLastTouchY = event.touches?.[0]?.clientY ?? null;
+}
+
+function handleMessageHistoryTouchMove(event) {
+  const nextY = event.touches?.[0]?.clientY;
+  if (!Number.isFinite(nextY)) return;
+  if (Number.isFinite(messageHistoryLastTouchY) && nextY > messageHistoryLastTouchY + 6) {
+    messageHistoryPullIntent = true;
+    maybeRevealOlderMessagesFromPull();
+  }
+  messageHistoryLastTouchY = nextY;
+}
+
+function createMessageHistoryLoader(hiddenCount) {
+  const button = createElement(
+    "button",
+    "history-window-loader message-history-loader",
+    `↑ 还有 ${hiddenCount} 条较早记录，继续上拉或点这里`,
+  );
+  button.type = "button";
+  button.addEventListener("click", revealOlderMessages);
+  return button;
+}
+
+function observeMessageHistoryLoader(loader) {
+  messageHistoryObserver?.disconnect();
+  messageHistoryObserver = null;
+  if (!loader || typeof IntersectionObserver !== "function") return;
+  messageHistoryObserver = new IntersectionObserver((entries) => {
+    if (messageHistoryPullIntent && entries.some((entry) => entry.isIntersecting)) revealOlderMessages();
+  }, { root: messageFeedOwnsScroll() ? messageFeed : null, rootMargin: "56px 0px 0px" });
+  messageHistoryObserver.observe(loader);
+}
+
+function renderMessages({ scroll = false, preservePrepend = false } = {}) {
+  const previousScroll = messageHistoryScrollMetrics();
+  messageHistoryObserver?.disconnect();
+  messageHistoryObserver = null;
+  for (const element of [...messageFeed.querySelectorAll(".message, .message-history-loader")]) element.remove();
+  const allMessages = currentMessages();
+  const windowed = historyWindow(allMessages, currentMessageRenderLimit());
+  emptyState.classList.toggle("is-hidden", allMessages.length > 0);
+  const historyLoader = windowed.hiddenCount
+    ? createMessageHistoryLoader(windowed.hiddenCount)
+    : null;
+  if (historyLoader) messageFeed.append(historyLoader);
+  for (const message of windowed.items) {
     const privateMessage = isPrivateMessage(message);
     const maskedForOwner = isAgentToAgentPrivateMessage(message);
     const article = createElement(
@@ -1282,8 +1417,27 @@ function renderMessages({ scroll = false } = {}) {
     }
     messageFeed.append(article);
   }
-  if (scroll) scrollToLatest({ revealOnSmallScreen: true });
-  else requestAnimationFrame(() => { messageFeed.scrollTop = previousScrollTop; });
+  if (scroll) {
+    loadingOlderMessages = false;
+    scrollToLatest({ revealOnSmallScreen: true });
+  } else if (preservePrepend) {
+    requestAnimationFrame(() => {
+      const currentScroll = messageHistoryScrollMetrics();
+      const addedHeight = Math.max(0, currentScroll.height - previousScroll.height);
+      restoreMessageHistoryScroll(previousScroll.owner, previousScroll.top + addedHeight);
+      loadingOlderMessages = false;
+      messageHistoryLastScrollTop = previousScroll.top + addedHeight;
+      observeMessageHistoryLoader(historyLoader);
+    });
+    return;
+  } else {
+    loadingOlderMessages = false;
+    requestAnimationFrame(() => {
+      restoreMessageHistoryScroll(previousScroll.owner, previousScroll.top);
+      messageHistoryLastScrollTop = previousScroll.top;
+    });
+  }
+  observeMessageHistoryLoader(historyLoader);
 }
 
 function isSmallRoomLayout() {
@@ -1295,7 +1449,11 @@ function isViewingLatest() {
     const composerRect = composer.getBoundingClientRect();
     return composerRect.top <= window.innerHeight + 140 && composerRect.bottom >= -140;
   }
-  return messageFeed.scrollHeight - messageFeed.scrollTop - messageFeed.clientHeight < 120;
+  if (messageFeedOwnsScroll()) {
+    return messageFeed.scrollHeight - messageFeed.scrollTop - messageFeed.clientHeight < 120;
+  }
+  const root = document.scrollingElement || document.documentElement;
+  return root.scrollHeight - (window.scrollY + window.innerHeight) < 120;
 }
 
 function updateNewMessageJump() {
@@ -1307,8 +1465,12 @@ function updateNewMessageJump() {
 
 function scrollToLatest({ revealOnSmallScreen = false, behavior = "auto" } = {}) {
   requestAnimationFrame(() => {
-    messageFeed.scrollTo({ top: messageFeed.scrollHeight, behavior });
-    if (revealOnSmallScreen && isSmallRoomLayout() && currentMessages().length) {
+    if (messageFeedOwnsScroll()) {
+      messageFeed.scrollTo({ top: messageFeed.scrollHeight, behavior });
+    } else if (currentMessages().length) {
+      composer.scrollIntoView({ block: "end", behavior });
+    }
+    if (revealOnSmallScreen && isSmallRoomLayout() && currentMessages().length && messageFeedOwnsScroll()) {
       composer.scrollIntoView({ block: "end", behavior });
     }
     unseenMessageCount = 0;
@@ -1460,6 +1622,7 @@ function switchRoom(roomId) {
     return;
   }
   state.activeRoomId = roomId;
+  resetMessageRenderLimit(roomId);
   agentListView = "room";
   agentRoomFilter = "all";
   unseenMessageCount = 0;
@@ -3331,6 +3494,11 @@ mobileRoomCurrent.addEventListener("click", () => {
   mobileRoomCurrent.setAttribute("aria-expanded", String(opening));
 });
 newMessageJump.addEventListener("click", () => scrollToLatest({ revealOnSmallScreen: true, behavior: "smooth" }));
+window.addEventListener("scroll", handleMessageHistoryScroll, { passive: true });
+messageFeed.addEventListener("scroll", handleMessageHistoryScroll, { passive: true });
+messageFeed.addEventListener("wheel", handleMessageHistoryWheel, { passive: true });
+messageFeed.addEventListener("touchstart", handleMessageHistoryTouchStart, { passive: true });
+messageFeed.addEventListener("touchmove", handleMessageHistoryTouchMove, { passive: true });
 
 document.querySelectorAll("[data-mode]").forEach((button) => {
   button.addEventListener("click", () => {

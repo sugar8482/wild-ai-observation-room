@@ -1007,6 +1007,30 @@ html[data-theme="dark"] .button-werewolf {
   scroll-behavior: smooth;
 }
 
+.history-window-loader {
+  width: min(760px, 100%);
+  margin: 0 auto 24px;
+  padding: 10px 14px;
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--wash) 82%, transparent);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.history-window-loader:hover,
+.history-window-loader:focus-visible {
+  border-color: var(--quiet);
+  color: var(--ink);
+}
+
+.werewolf-history-loader {
+  width: min(720px, 100%);
+}
+
 .empty-state {
   max-width: 580px;
   min-height: 100%;

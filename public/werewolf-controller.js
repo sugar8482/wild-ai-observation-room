@@ -21,6 +21,11 @@ import {
   werewolfPlayer,
 } from "./werewolf-game.js";
 import {
+  HISTORY_WINDOW_BATCH,
+  historyWindow,
+  nextHistoryWindowLimit,
+} from "./history-window.js";
+import {
   PRIVATE_MEMORY_TOKEN_ALLOWANCE,
   appendAgentMemory,
   parseAgentReply,
@@ -330,6 +335,13 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
   let running = false;
   let abortController = null;
   let speakingPlayerId = "";
+  let renderedGameId = "";
+  let logRenderLimit = HISTORY_WINDOW_BATCH;
+  let logHistoryObserver = null;
+  let loadingOlderLog = false;
+  let logPullIntent = false;
+  let logLastScrollTop = 0;
+  let logLastTouchY = null;
 
   function game() {
     return getRoom()?.werewolf || null;
@@ -578,18 +590,111 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     }
   }
 
-  function renderLog(current) {
+  function revealOlderLog(current) {
+    const entries = visibleWerewolfLog(current);
+    if (loadingOlderLog || logRenderLimit >= entries.length) return;
+    loadingOlderLog = true;
+    logPullIntent = false;
+    logRenderLimit = nextHistoryWindowLimit(entries.length, logRenderLimit);
+    renderLog(current, { preservePrepend: true });
+  }
+
+  function roomStageOwnsScroll() {
+    return roomStage.scrollHeight > roomStage.clientHeight + 2;
+  }
+
+  function logScrollMetrics() {
+    if (roomStageOwnsScroll()) {
+      return { owner: roomStage, top: roomStage.scrollTop, height: roomStage.scrollHeight };
+    }
+    const root = document.scrollingElement || document.documentElement;
+    return { owner: window, top: window.scrollY || root.scrollTop || 0, height: root.scrollHeight };
+  }
+
+  function restoreLogScroll(owner, top) {
+    if (owner === roomStage && roomStageOwnsScroll()) roomStage.scrollTop = top;
+    else window.scrollTo({ top, behavior: "auto" });
+  }
+
+  function logLoaderIsNearView() {
+    const loader = roomStage.querySelector(".werewolf-history-loader");
+    if (!loader) return false;
+    const loaderRect = loader.getBoundingClientRect();
+    if (roomStageOwnsScroll()) {
+      const stageRect = roomStage.getBoundingClientRect();
+      return loaderRect.bottom >= stageRect.top - 56 && loaderRect.top <= stageRect.bottom + 56;
+    }
+    return loaderRect.bottom >= -56 && loaderRect.top <= window.innerHeight + 56;
+  }
+
+  function maybeRevealOlderLogFromPull() {
+    const current = game();
+    if (current && logPullIntent && logLoaderIsNearView()) revealOlderLog(current);
+  }
+
+  function handleLogScroll(event) {
+    const metrics = logScrollMetrics();
+    if ((event.currentTarget === window && metrics.owner !== window)
+      || (event.currentTarget === roomStage && metrics.owner !== roomStage)) return;
+    if (metrics.top < logLastScrollTop - 1) logPullIntent = true;
+    logLastScrollTop = metrics.top;
+    maybeRevealOlderLogFromPull();
+  }
+
+  function createLogHistoryLoader(current, hiddenCount) {
+    const button = createElement(
+      "button",
+      "history-window-loader werewolf-history-loader",
+      `↑ 还有 ${hiddenCount} 条较早记录，继续上拉或点这里`,
+    );
+    button.type = "button";
+    button.addEventListener("click", () => revealOlderLog(current));
+    return button;
+  }
+
+  function observeLogHistoryLoader(current, loader) {
+    logHistoryObserver?.disconnect();
+    logHistoryObserver = null;
+    if (!loader || typeof IntersectionObserver !== "function") return;
+    logHistoryObserver = new IntersectionObserver((entries) => {
+      if (logPullIntent && entries.some((entry) => entry.isIntersecting)) revealOlderLog(current);
+    }, { root: roomStageOwnsScroll() ? roomStage : null, rootMargin: "56px 0px 0px" });
+    logHistoryObserver.observe(loader);
+  }
+
+  function renderLog(current, { preservePrepend = false } = {}) {
     const log = byId("werewolf-log");
     if (!log) return;
-    const entries = visibleWerewolfLog(current);
-    const wasNearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 120;
+    if (renderedGameId !== current.id) {
+      renderedGameId = current.id;
+      logRenderLimit = HISTORY_WINDOW_BATCH;
+      logPullIntent = false;
+    }
+    const previousScroll = logScrollMetrics();
+    const windowed = historyWindow(visibleWerewolfLog(current), logRenderLimit);
+    logHistoryObserver?.disconnect();
+    logHistoryObserver = null;
     log.replaceChildren();
-    for (const entry of entries) {
+    const historyLoader = windowed.hiddenCount
+      ? createLogHistoryLoader(current, windowed.hiddenCount)
+      : null;
+    if (historyLoader) log.append(historyLoader);
+    for (const entry of windowed.items) {
       log.append(logEntry(current, entry));
     }
-    if (wasNearBottom || !log.dataset.rendered) {
-      requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
+    if (preservePrepend) {
+      requestAnimationFrame(() => {
+        const currentScroll = logScrollMetrics();
+        const addedHeight = Math.max(0, currentScroll.height - previousScroll.height);
+        restoreLogScroll(previousScroll.owner, previousScroll.top + addedHeight);
+        logLastScrollTop = previousScroll.top + addedHeight;
+        loadingOlderLog = false;
+        observeLogHistoryLoader(current, historyLoader);
+      });
+      return;
     }
+    loadingOlderLog = false;
+    observeLogHistoryLoader(current, historyLoader);
     log.dataset.rendered = "true";
   }
 
@@ -612,9 +717,13 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
       );
       const recap = createElement("pre", "werewolf-archive-recap", archived.debrief?.recap || "本局没有生成事实复盘。");
       const transcript = createElement("div", "werewolf-archive-transcript");
-      for (const entry of archived.log) {
-        transcript.append(logEntry(archived, entry, { archived: true }));
-      }
+      details.addEventListener("toggle", () => {
+        if (!details.open || transcript.dataset.rendered) return;
+        for (const entry of archived.log) {
+          transcript.append(logEntry(archived, entry, { archived: true }));
+        }
+        transcript.dataset.rendered = "true";
+      });
       details.append(summary, recap, transcript);
       list.append(details);
     }
@@ -1494,6 +1603,25 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     renderRoleAssignment();
     updateSetupStatus();
   });
+  window.addEventListener("scroll", handleLogScroll, { passive: true });
+  roomStage.addEventListener("scroll", handleLogScroll, { passive: true });
+  roomStage.addEventListener("wheel", (event) => {
+    if (event.deltaY >= 0) return;
+    logPullIntent = true;
+    maybeRevealOlderLogFromPull();
+  }, { passive: true });
+  roomStage.addEventListener("touchstart", (event) => {
+    logLastTouchY = event.touches?.[0]?.clientY ?? null;
+  }, { passive: true });
+  roomStage.addEventListener("touchmove", (event) => {
+    const nextY = event.touches?.[0]?.clientY;
+    if (!Number.isFinite(nextY)) return;
+    if (Number.isFinite(logLastTouchY) && nextY > logLastTouchY + 6) {
+      logPullIntent = true;
+      maybeRevealOlderLogFromPull();
+    }
+    logLastTouchY = nextY;
+  }, { passive: true });
 
   return { open, render: renderGame, submitUserMessage };
 }
