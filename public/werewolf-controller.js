@@ -734,6 +734,10 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
       syncWerewolfComposer(null);
       return;
     }
+    if (current.status === "ended" && (current.phase !== "debrief" || !current.debrief?.recap)) {
+      beginWerewolfDebrief(current);
+      persistGame();
+    }
     byId("werewolf-phase").textContent = current.status === "ended"
       ? WEREWOLF_PHASE_META.ended
       : `${current.phase.startsWith("night") || current.phase === "dawn" ? `第 ${current.day} 夜` : `第 ${current.day} 天`} · ${WEREWOLF_PHASE_META[current.phase]}`;
