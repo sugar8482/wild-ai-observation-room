@@ -20,6 +20,13 @@ import {
   voteOutcome,
   werewolfPlayer,
 } from "./werewolf-game.js";
+import {
+  PRIVATE_MEMORY_TOKEN_ALLOWANCE,
+  appendAgentMemory,
+  parseAgentReply,
+  privateMemoryContext,
+  privateMemoryOutputInstruction,
+} from "./agent-memory.js";
 
 const byId = (id) => document.getElementById(id);
 
@@ -219,11 +226,11 @@ async function debriefChatRequest(agent, game, player, signal) {
   const system = [
     `你是“${agent.name}”。狼人杀已经结束，你当局的真实身份是${WEREWOLF_ROLE_META[player.role].label}。`,
     agent.persona?.trim() ? `你平时的个人设定：\n${agent.persona.trim().slice(0, 4_000)}` : "保持你平时自然的判断与说话方式。",
-    agent.memoryEnabled && agent.memory?.trim()
-      ? `以下是你进场前已有的私人记忆，只用于保持你自己的连续性：\n${agent.memory.trim().slice(-5_000)}`
-      : "不需要为了复盘临时编造永久记忆。",
+    privateMemoryContext(agent, { maxLength: 5_000 }),
     "现在所有身份、狼队密谈、验人、女巫行动、刀口、票型和遗言都已经公开。你可以认错、邀功、吐槽、反驳、追问或清算，但不要继续把游戏里的假身份当事实硬演。",
-    "本轮复盘不会写入普通聊天室长期总结或你的私人记忆。说人话，不要只写分析报告，也不要替别人宣布感受。",
+    "本局卷宗与赛后公开发言不会写入普通聊天室长期总结。复盘结束后，你可以自行判断是否有只对未来的自己有意义的经历或看法，写入自己的私人记忆；不强制记录，也不要照抄整局过程。",
+    "说人话，不要只写分析报告，也不要替别人宣布感受。",
+    privateMemoryOutputInstruction(agent),
   ].join("\n\n");
   const response = await fetch("/api/chat", {
     method: "POST",
@@ -232,7 +239,7 @@ async function debriefChatRequest(agent, game, player, signal) {
       agent,
       requestMode: "werewolf-game",
       temperature: 0.9,
-      maxTokens: 520,
+      maxTokens: 520 + (agent.memoryEnabled === true ? PRIVATE_MEMORY_TOKEN_ALLOWANCE : 0),
       messages: [
         { role: "system", content: system },
         { role: "user", content: `【法官事实复盘】\n${recap}\n\n【本局完整卷宗】\n${completeGameHistory(game)}\n\n【赛后茶话会最近发言】\n${recentDebrief || "还没人开口。"}\n\n现在轮到你复盘。优先回应晨曦最近点到你的内容；若没有明确追问，就说你最想认领、解释或吐槽的一件事。` },
@@ -243,7 +250,13 @@ async function debriefChatRequest(agent, game, player, signal) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `${agent.name} 没有接通`);
   if (!String(payload.text || "").trim()) throw new Error(`${agent.name} 没有留下有效复盘`);
-  return stripWerewolfControls(String(payload.text));
+  const parsed = agent.memoryEnabled === true
+    ? parseAgentReply(String(payload.text))
+    : { visibleText: String(payload.text), memoryItems: [] };
+  return {
+    text: stripWerewolfControls(parsed.visibleText),
+    memoryItems: parsed.memoryItems,
+  };
 }
 
 export function validTargets(game, playerId, { wolvesExcluded = false, candidateIds = null, includeSelf = false } = {}) {
@@ -300,6 +313,22 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
     const current = game();
     if (current) current.updatedAt = Date.now();
     persist();
+  }
+
+  function saveDebriefMemory(agent, memoryItems) {
+    if (agent?.memoryEnabled !== true || !memoryItems?.length) return false;
+    const room = getRoom();
+    const nextMemory = appendAgentMemory(agent.memory, memoryItems, {
+      roomName: `${room?.name || "狼人杀"} · 赛后复盘`,
+      at: Date.now(),
+    });
+    if (nextMemory === agent.memory) return false;
+    agent.memory = nextMemory;
+    agent.memoryRevision = Math.max(
+      Date.now(),
+      Math.max(0, Number(agent.memoryRevision) || 0) + 1,
+    );
+    return true;
   }
 
   function setGameStatus(message, isError = false) {
@@ -1060,7 +1089,8 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
     renderGame();
     try {
       const reply = await debriefChatRequest(agent, current, player, abortController.signal);
-      appendWerewolfLog(current, { authorId: player.id, author: player.name, text: reply || "我暂时没什么要补。", phase: "debrief" });
+      appendWerewolfLog(current, { authorId: player.id, author: player.name, text: reply.text || "我暂时没什么要补。", phase: "debrief" });
+      saveDebriefMemory(agent, reply.memoryItems);
       current.debrief.roundDone ||= [];
       if (!current.debrief.roundDone.includes(player.id)) current.debrief.roundDone.push(player.id);
       setGameStatus(`${player.name}复盘完了。可以继续追问同一个人。`);
@@ -1095,7 +1125,8 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
         setGameStatus(`${player.name}正在看完整卷宗……`);
         renderGame();
         const reply = await debriefChatRequest(agent, current, player, abortController.signal);
-        appendWerewolfLog(current, { authorId: player.id, author: player.name, text: reply || "我暂时没什么要补。", phase: "debrief" });
+        appendWerewolfLog(current, { authorId: player.id, author: player.name, text: reply.text || "我暂时没什么要补。", phase: "debrief" });
+        saveDebriefMemory(agent, reply.memoryItems);
         current.debrief.roundDone ||= [];
         if (!current.debrief.roundDone.includes(player.id)) current.debrief.roundDone.push(player.id);
         speakingPlayerId = "";

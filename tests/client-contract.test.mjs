@@ -168,6 +168,15 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
   assert.match(memoryPrompt, /不属于房间总结/);
 });
 
+test("狼人杀赛后复盘允许嘉宾自主写私人日记但仍隔离普通长期总结", async () => {
+  const script = await readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8");
+  assert.match(script, /privateMemoryOutputInstruction\(agent\)/);
+  assert.match(script, /parseAgentReply\(String\(payload\.text\)\)/);
+  assert.match(script, /saveDebriefMemory\(agent, reply\.memoryItems\)/);
+  assert.match(script, /本局卷宗与赛后公开发言不会写入普通聊天室长期总结/);
+  assert.doesNotMatch(script, /本轮复盘不会写入普通聊天室长期总结或你的私人记忆/);
+});
+
 test("群聊时间线支持真正隔离的私聊与房主遮罩查看", async () => {
   const [html, script, styles, privateModule] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
