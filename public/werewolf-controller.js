@@ -54,7 +54,8 @@ function formatTime(timestamp) {
     minute: "2-digit",
     hour12: false,
   })
-    .format(new Date(timestamp));
+    .format(new Date(timestamp))
+    .replace(/\//g, "-");
 }
 
 function optionList(select, players, { placeholder = "请选择", selected = "" } = {}) {

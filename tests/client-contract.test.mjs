@@ -67,6 +67,7 @@ test("普通聊天、狼人杀与访客消息显示完整日期时间", async ()
     assert.match(source, /year: "numeric"/);
     assert.match(source, /month: "2-digit"/);
     assert.match(source, /day: "2-digit"/);
+    assert.match(source, /replace\(\/\\\/\/g, "-"\)/);
   }
 });
 
