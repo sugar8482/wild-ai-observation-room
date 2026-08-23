@@ -1541,6 +1541,10 @@ function scrollToLatest({ revealOnSmallScreen = false, behavior = "auto" } = {})
     }
     unseenMessageCount = 0;
     updateNewMessageJump();
+    requestAnimationFrame(() => {
+      messageHistoryLastScrollTop = messageHistoryScrollMetrics().top;
+      messageHistoryPullIntent = false;
+    });
   });
 }
 
