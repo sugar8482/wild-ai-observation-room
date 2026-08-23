@@ -736,8 +736,7 @@ function mergeServerRoomUpdates(serverRooms = []) {
       .filter((message) => ["scheduled", "visitor", "mcp"].includes(message.source) && !localIds.has(message.id));
     if (incomingMessages.length) {
       room.messages = [...room.messages, ...incomingMessages]
-        .sort((left, right) => left.timestamp - right.timestamp)
-        .slice(-500);
+        .sort((left, right) => left.timestamp - right.timestamp);
       addedMessages += incomingMessages.length;
     }
     room.schedule = hydrateRoomSchedule(remote.schedule);

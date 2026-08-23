@@ -6,6 +6,29 @@ import test from "node:test";
 import { createStateStore } from "../lib/state-store.mjs";
 import { archiveWerewolfGame, createWerewolfGame, finishWerewolfGame } from "../public/werewolf-game.js";
 
+test("聊天记录超过五百条时不会静默丢掉最早消息", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-long-history-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({ filePath: join(directory, "state.json"), secret: "long-history-secret" });
+  const messages = Array.from({ length: 748 }, (_, index) => ({
+    id: `message-${index + 1}`,
+    kind: "user",
+    author: "晨曦",
+    text: `第 ${index + 1} 条`,
+    timestamp: index + 1,
+  }));
+
+  const saved = await store.save({
+    agents: [],
+    activeRoomId: "room-long",
+    rooms: [{ id: "room-long", name: "群聊", participantIds: [], messages }],
+  });
+
+  assert.equal(saved.rooms[0].messages.length, 748);
+  assert.equal(saved.rooms[0].messages[0].id, "message-1");
+  assert.equal(saved.rooms[0].messages.at(-1).id, "message-748");
+});
+
 test("成员簿会迁移旧房间、保留暂离席，并抵抗滞后浏览器覆盖", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-presence-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
