@@ -474,17 +474,15 @@ function renderAgentAvatarPreview() {
 
 function loadImageFile(file) {
   return new Promise((resolve, reject) => {
-    const objectUrl = URL.createObjectURL(file);
-    const image = new Image();
-    image.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      resolve(image);
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("这张图片没有读取成功，换一张试试"));
+    reader.onload = () => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("这张图片的格式暂时无法解析，试试 PNG、JPG 或 WebP"));
+      image.src = String(reader.result || "");
     };
-    image.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      reject(new Error("这张图片没有读取成功，换一张试试"));
-    };
-    image.src = objectUrl;
+    reader.readAsDataURL(file);
   });
 }
 

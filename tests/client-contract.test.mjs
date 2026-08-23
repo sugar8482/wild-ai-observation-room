@@ -143,6 +143,9 @@ test("嘉宾头像可上传压缩并统一显示在普通聊天与狼人杀记�
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.match(script, /async function prepareAgentAvatar\(file\)/);
+  assert.match(script, /const reader = new FileReader\(\)/);
+  assert.match(script, /reader\.readAsDataURL\(file\)/);
+  assert.doesNotMatch(script, /URL\.createObjectURL\(file\)/);
   assert.match(script, /createAvatarElement\(message\.author, messageAgent\?\.avatar, "message-avatar"\)/);
   assert.match(script, /avatar: agentAvatarDraft/);
   assert.match(werewolf, /function playerAvatar\(current, author, authorId/);
