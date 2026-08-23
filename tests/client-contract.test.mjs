@@ -57,6 +57,19 @@ test("普通聊天与狼人杀使用头像标题正文分层布局并安全显�
   assert.match(richText, /strong\.textContent = part\.text/);
 });
 
+test("普通聊天、狼人杀与访客消息显示完整日期时间", async () => {
+  const sources = await Promise.all([
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/visitor.js", import.meta.url), "utf8"),
+  ]);
+  for (const source of sources) {
+    assert.match(source, /year: "numeric"/);
+    assert.match(source, /month: "2-digit"/);
+    assert.match(source, /day: "2-digit"/);
+  }
+});
+
 test("局域网 HTTP 下复制消息有 iPad 兼容兜底", async () => {
   const [html, script] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
