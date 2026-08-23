@@ -389,6 +389,10 @@ html[data-theme="dark"] .button-werewolf {
 .werewolf-speaker {
   min-width: 0;
   padding: 10px 9px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
   border: 1px solid var(--line);
   border-radius: 9px;
   background: var(--paper);
@@ -406,19 +410,23 @@ html[data-theme="dark"] .button-werewolf {
   cursor: default;
 }
 
-.werewolf-speaker strong,
-.werewolf-speaker span {
+.werewolf-speaker-copy {
+  min-width: 0;
+}
+
+.werewolf-speaker-copy > strong,
+.werewolf-speaker-copy > span {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.werewolf-speaker strong {
+.werewolf-speaker-copy > strong {
   font-size: 14px;
 }
 
-.werewolf-speaker span {
+.werewolf-speaker-copy > span {
   margin-top: 3px;
   color: var(--quiet);
   font-size: 11px;
@@ -739,7 +747,7 @@ html[data-theme="dark"] .button-werewolf {
 
 .agent-initial.is-fallback,
 .message-avatar.is-fallback,
-.werewolf-entry-avatar.is-fallback,
+.werewolf-avatar-face.is-fallback,
 .agent-avatar-preview-image.is-fallback {
   background: linear-gradient(145deg, color-mix(in srgb, var(--paper) 78%, #a9c9e8), color-mix(in srgb, var(--paper) 88%, #d7c3e7));
 }
@@ -1751,26 +1759,27 @@ input[type="range"] {
 
 .werewolf-player-chip {
   min-width: 0;
-  padding: 8px 6px;
+  padding: 8px 6px 9px;
   border: 1px solid var(--line);
   border-radius: 8px;
   text-align: center;
   background: var(--paper);
 }
 
-.werewolf-player-chip strong,
-.werewolf-player-chip span {
+.werewolf-player-name,
+.werewolf-player-state {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.werewolf-player-chip strong {
+.werewolf-player-name {
+  margin-top: 5px;
   font-size: 13px;
 }
 
-.werewolf-player-chip span {
+.werewolf-player-state {
   min-height: 16px;
   margin-top: 3px;
   color: var(--quiet);
@@ -1787,8 +1796,17 @@ input[type="range"] {
   background: #fff4f3;
 }
 
+.werewolf-player-chip.is-known-good {
+  border-color: #4f8b6d;
+  background: #f1fbf5;
+}
+
 html[data-theme="dark"] .werewolf-player-chip.is-wolf {
   background: #352525;
+}
+
+html[data-theme="dark"] .werewolf-player-chip.is-known-good {
+  background: #20342a;
 }
 
 .werewolf-log {
@@ -1824,7 +1842,10 @@ html[data-theme="dark"] .werewolf-player-chip.is-wolf {
   background: transparent;
 }
 
-.werewolf-entry-avatar {
+.werewolf-entry-avatar,
+.werewolf-player-avatar,
+.werewolf-speaker-avatar {
+  position: relative;
   width: 40px;
   height: 40px;
   display: grid;
@@ -1836,6 +1857,66 @@ html[data-theme="dark"] .werewolf-player-chip.is-wolf {
   background: var(--paper);
   font-size: 14px;
   font-weight: 800;
+}
+
+.werewolf-player-avatar {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto;
+}
+
+.werewolf-speaker-avatar {
+  width: 34px;
+  height: 34px;
+}
+
+.werewolf-avatar-face,
+.werewolf-role-badge {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+.werewolf-role-badge {
+  background: #0c0c0d;
+}
+
+.is-hidden-role .werewolf-avatar-face {
+  filter: blur(2px) brightness(0.38) saturate(0.55);
+  transform: scale(1.1);
+}
+
+.werewolf-avatar-marker {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(12, 12, 13, 0.2);
+  text-shadow: 0 1px 4px #000;
+  font-size: 19px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.werewolf-player-avatar.is-known-good,
+.werewolf-speaker-avatar.is-known-good,
+.werewolf-entry-avatar.is-known-good {
+  box-shadow: inset 0 0 0 2px #4f9a70;
+}
+
+.is-known-good .werewolf-avatar-marker {
+  inset: auto -2px -2px auto;
+  width: 17px;
+  height: 17px;
+  border: 2px solid var(--paper);
+  background: #38865c;
+  font-size: 10px;
+  text-shadow: none;
 }
 
 .werewolf-entry-content {

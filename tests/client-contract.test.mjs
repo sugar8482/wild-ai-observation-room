@@ -112,11 +112,15 @@ test("人设编辑器提供兼容 iPad 的复制文本与可撤销清空草稿",
 });
 
 test("嘉宾头像可上传压缩并统一显示在普通聊天与狼人杀记录", async () => {
-  const [html, script, styles, werewolf] = await Promise.all([
+  const [html, script, styles, werewolf, villagerBadge, wolfBadge, witchBadge, seerBadge] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
     readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
     readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/assets/werewolf-villager.svg", import.meta.url), "utf8"),
+    readFile(new URL("../public/assets/werewolf-wolf.svg", import.meta.url), "utf8"),
+    readFile(new URL("../public/assets/werewolf-witch.svg", import.meta.url), "utf8"),
+    readFile(new URL("../public/assets/werewolf-seer.svg", import.meta.url), "utf8"),
   ]);
   for (const id of ["agent-avatar-preview", "choose-agent-avatar-button", "clear-agent-avatar-button", "agent-avatar-file"]) {
     assert.match(html, new RegExp(`id="${id}"`));
@@ -124,11 +128,18 @@ test("嘉宾头像可上传压缩并统一显示在普通聊天与狼人杀记�
   assert.match(script, /async function prepareAgentAvatar\(file\)/);
   assert.match(script, /createAvatarElement\(message\.author, messageAgent\?\.avatar, "message-avatar"\)/);
   assert.match(script, /avatar: agentAvatarDraft/);
-  assert.match(werewolf, /function logAvatar\(author, authorId\)/);
-  assert.match(werewolf, /"werewolf-entry-avatar is-image"/);
+  assert.match(werewolf, /function playerAvatar\(current, author, authorId/);
+  assert.match(werewolf, /viewerRoleKnowledge\(current, player\)/);
+  assert.match(werewolf, /"werewolf-avatar-marker"/);
+  assert.match(werewolf, /"werewolf-role-badge"/);
   assert.match(styles, /\.message-avatar/);
   assert.match(styles, /\.werewolf-entry-avatar/);
+  assert.match(styles, /\.is-hidden-role \.werewolf-avatar-face/);
   assert.match(styles, /\.message-author[\s\S]*font-size: 14px/);
+  for (const badge of [villagerBadge, wolfBadge, witchBadge, seerBadge]) {
+    assert.match(badge, /<svg/);
+    assert.match(badge, /<circle/);
+  }
 });
 
 test("房间氛围与个人设定在发言前按 Depth 0 顺序再次注入", async () => {

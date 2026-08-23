@@ -30,6 +30,13 @@ import {
 
 const byId = (id) => document.getElementById(id);
 
+const WEREWOLF_ROLE_AVATARS = Object.freeze({
+  villager: "/assets/werewolf-villager.svg",
+  wolf: "/assets/werewolf-wolf.svg",
+  witch: "/assets/werewolf-witch.svg",
+  seer: "/assets/werewolf-seer.svg",
+});
+
 function createElement(tag, className = "", text = "") {
   const element = document.createElement(tag);
   if (className) element.className = className;
@@ -168,6 +175,28 @@ export function roleKnowledge(game, player) {
   return "你没有额外的夜间信息。";
 }
 
+export function viewerRoleKnowledge(game, player) {
+  if (!game || !player) return { kind: "hidden" };
+  if (game.status === "ended" || game.viewMode === "god") {
+    return { kind: "role", role: player.role };
+  }
+  const user = werewolfPlayer(game, WEREWOLF_USER_ID);
+  if (player.id === WEREWOLF_USER_ID || (user?.role === "wolf" && player.role === "wolf")) {
+    return { kind: "role", role: player.role };
+  }
+  if (user?.role === "seer") {
+    const check = [...(game.seerChecks || [])]
+      .reverse()
+      .find((entry) => (
+        (!entry.seerId || entry.seerId === user.id)
+        && entry.targetId === player.id
+      ));
+    if (check?.result === "wolf") return { kind: "role", role: "wolf" };
+    if (check?.result === "good") return { kind: "team", team: "good" };
+  }
+  return { kind: "hidden" };
+}
+
 function gameSystemPrompt(agent, game, player, task) {
   const living = livingWerewolfPlayers(game).map((item) => item.name).join("、");
   return [
@@ -301,22 +330,58 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     return (getAllAgents?.() || getRoomAgents()).find((agent) => agent.id === playerId) || null;
   }
 
-  function logAvatar(author, authorId) {
+  function baseAvatar(author, authorId) {
     const avatar = String(agentFor(authorId)?.avatar || "").trim();
     if (/^data:image\/(?:png|jpe?g|webp);base64,[a-z0-9+/=]+$/i.test(avatar)) {
       const image = document.createElement("img");
-      image.className = "werewolf-entry-avatar is-image";
+      image.className = "werewolf-avatar-face is-image";
       image.src = avatar;
       image.alt = `${author}的头像`;
       image.decoding = "async";
       return image;
     }
-    const fallback = createElement("span", "werewolf-entry-avatar is-fallback", String(author || "?").trim().slice(0, 1) || "?");
+    const fallback = createElement("span", "werewolf-avatar-face is-fallback", String(author || "?").trim().slice(0, 1) || "?");
     fallback.setAttribute("aria-label", `${author}的默认头像`);
     return fallback;
   }
 
-  function logEntry(entry, { archived = false } = {}) {
+  function playerAvatar(current, author, authorId, className = "werewolf-entry-avatar") {
+    const wrapper = createElement("span", className);
+    const player = current ? werewolfPlayer(current, authorId) : null;
+    if (!player) {
+      wrapper.classList.add("is-plain-avatar");
+      wrapper.append(baseAvatar(author, authorId));
+      return wrapper;
+    }
+    const knowledge = viewerRoleKnowledge(current, player);
+    if (knowledge.kind === "role") {
+      const meta = WEREWOLF_ROLE_META[knowledge.role] || WEREWOLF_ROLE_META.villager;
+      const image = document.createElement("img");
+      image.className = "werewolf-role-badge";
+      image.src = WEREWOLF_ROLE_AVATARS[knowledge.role] || WEREWOLF_ROLE_AVATARS.villager;
+      image.alt = `${player.name}：${meta.label}`;
+      image.decoding = "async";
+      wrapper.classList.add("is-known-role", `is-role-${knowledge.role}`);
+      wrapper.title = `${player.name} · ${meta.label}`;
+      wrapper.append(image);
+      return wrapper;
+    }
+    wrapper.append(baseAvatar(author, authorId));
+    const marker = createElement("span", "werewolf-avatar-marker", knowledge.kind === "team" ? "✓" : "?");
+    if (knowledge.kind === "team") {
+      wrapper.classList.add("is-known-good");
+      wrapper.title = `${player.name} · 已验为好人（具体身份未知）`;
+      marker.setAttribute("aria-label", "已验为好人，具体身份未知");
+    } else {
+      wrapper.classList.add("is-hidden-role");
+      wrapper.title = `${player.name} · 身份尚未公开`;
+      marker.setAttribute("aria-label", "身份尚未公开");
+    }
+    wrapper.append(marker);
+    return wrapper;
+  }
+
+  function logEntry(current, entry, { archived = false } = {}) {
     const secret = entry.visibility !== "public";
     const item = createElement("article", `werewolf-log-entry${entry.authorId === "system" ? " is-system" : ""}${secret ? " is-secret" : ""}`);
     const content = createElement("div", "werewolf-entry-content");
@@ -327,7 +392,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     const label = archived && !route ? entry.phase : route;
     header.append(createElement("span", "", `${entry.author}${label ? ` · ${label}` : ""}`), createElement("time", "", formatTime(entry.timestamp)));
     content.append(header, createElement("p", "", entry.text));
-    item.append(logAvatar(entry.author, entry.authorId), content);
+    item.append(playerAvatar(current, entry.author, entry.authorId), content);
     return item;
   }
 
@@ -460,12 +525,6 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     setupSelectionLimits();
   }
 
-  function viewerCanSeeRole(current, player) {
-    if (current.status === "ended" || current.viewMode === "god") return true;
-    const user = werewolfPlayer(current, WEREWOLF_USER_ID);
-    return player.id === WEREWOLF_USER_ID || (user?.role === "wolf" && player.role === "wolf");
-  }
-
   function renderRoleCard(current) {
     const card = byId("werewolf-role-card");
     card.replaceChildren();
@@ -494,13 +553,15 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     const board = byId("werewolf-player-board");
     board.replaceChildren();
     for (const player of current.players) {
-      const visible = viewerCanSeeRole(current, player);
-      const chip = createElement("div", `werewolf-player-chip${player.alive ? "" : " is-dead"}${visible && player.role === "wolf" ? " is-wolf" : ""}`);
+      const knowledge = viewerRoleKnowledge(current, player);
+      const visible = knowledge.kind === "role";
+      const chip = createElement("div", `werewolf-player-chip${player.alive ? "" : " is-dead"}${visible && knowledge.role === "wolf" ? " is-wolf" : ""}${knowledge.kind === "team" ? " is-known-good" : ""}`);
       chip.append(
-        createElement("strong", "", player.name),
-        createElement("span", "", player.alive
-          ? (visible ? `${WEREWOLF_ROLE_META[player.role].icon} ${WEREWOLF_ROLE_META[player.role].label}` : "存活")
-          : `${visible ? `${WEREWOLF_ROLE_META[player.role].label} · ` : ""}已离场`),
+        playerAvatar(current, player.name, player.id, "werewolf-player-avatar"),
+        createElement("strong", "werewolf-player-name", player.name),
+        createElement("span", "werewolf-player-state", player.alive
+          ? (visible ? WEREWOLF_ROLE_META[knowledge.role].label : knowledge.kind === "team" ? "已验好人" : "存活")
+          : `${visible ? `${WEREWOLF_ROLE_META[knowledge.role].label} · ` : knowledge.kind === "team" ? "已验好人 · " : ""}已离场`),
       );
       board.append(chip);
     }
@@ -513,7 +574,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     const wasNearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 120;
     log.replaceChildren();
     for (const entry of entries) {
-      log.append(logEntry(entry));
+      log.append(logEntry(current, entry));
     }
     if (wasNearBottom || !log.dataset.rendered) {
       requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
@@ -541,7 +602,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
       const recap = createElement("pre", "werewolf-archive-recap", archived.debrief?.recap || "本局没有生成事实复盘。");
       const transcript = createElement("div", "werewolf-archive-transcript");
       for (const entry of archived.log) {
-        transcript.append(logEntry(entry, { archived: true }));
+        transcript.append(logEntry(archived, entry, { archived: true }));
       }
       details.append(summary, recap, transcript);
       list.append(details);
@@ -581,7 +642,9 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
         const button = createElement("button", `werewolf-speaker${done ? " is-done" : ""}${speakingPlayerId === player.id ? " is-speaking" : ""}`);
         button.type = "button";
         button.disabled = running;
-        button.append(createElement("strong", "", player.name), createElement("span", "", speakingPlayerId === player.id ? "正在复盘……" : done ? "已复盘 · 可再点" : WEREWOLF_ROLE_META[player.role].label));
+        const copy = createElement("span", "werewolf-speaker-copy");
+        copy.append(createElement("strong", "", player.name), createElement("span", "", speakingPlayerId === player.id ? "正在复盘……" : done ? "已复盘 · 可再点" : WEREWOLF_ROLE_META[player.role].label));
+        button.append(playerAvatar(current, player.name, player.id, "werewolf-speaker-avatar"), copy);
         button.addEventListener("click", () => void runDebriefSpeaker(player.id));
         speakers.append(button);
       }
@@ -612,10 +675,12 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
       const button = createElement("button", `werewolf-speaker${done ? " is-done" : ""}${speakingPlayerId === id ? " is-speaking" : ""}`);
       button.type = "button";
       button.disabled = running || done || player.type === "user";
-      button.append(
+      const copy = createElement("span", "werewolf-speaker-copy");
+      copy.append(
         createElement("strong", "", player.name),
         createElement("span", "", speakingPlayerId === id ? "正在发言……" : done ? "已发言" : player.type === "user" ? "用下方输入框" : "点名发言"),
       );
+      button.append(playerAvatar(current, player.name, player.id, "werewolf-speaker-avatar"), copy);
       if (player.type === "agent") button.addEventListener("click", () => void runSpeechSpeaker(id, tiedOnly));
       speakers.append(button);
     }
