@@ -49,6 +49,7 @@ import {
   nextHistoryWindowLimit,
 } from "./history-window.js";
 import { appendBoldText } from "./rich-text.js";
+import { chatScrollThumbMetrics } from "./chat-scroll-indicator.js";
 
 const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
 const LEGACY_MESSAGE_KEY = "wild-ai-observation-room.messages.v1";
@@ -116,6 +117,8 @@ const mobileRoomCurrent = byId("mobile-room-current");
 const mobileRoomMenu = byId("mobile-room-menu");
 const mobileRoomName = byId("mobile-room-name");
 const mobileRoomMeta = byId("mobile-room-meta");
+const chatScrollIndicator = byId("chat-scroll-indicator");
+const chatScrollIndicatorThumb = byId("chat-scroll-indicator-thumb");
 const newMessageJump = byId("new-message-jump");
 const emptyState = byId("empty-state");
 const composer = byId("composer");
@@ -199,6 +202,7 @@ const messageRenderLimits = new Map();
 let messageHistoryPullIntent = false;
 let messageHistoryLastScrollTop = 0;
 let messageHistoryLastTouchY = null;
+let chatScrollIndicatorFrame = 0;
 const summarizingRoomIds = new Set();
 const summaryRuns = new Map();
 const summaryNotices = new Map();
@@ -1444,6 +1448,68 @@ function isSmallRoomLayout() {
   return globalThis.matchMedia?.("(max-width: 840px)").matches === true;
 }
 
+function activeTranscriptElement() {
+  return activeRoom()?.roomType === "werewolf" ? werewolfRoomStage : messageFeed;
+}
+
+function updateChatScrollIndicator() {
+  chatScrollIndicatorFrame = 0;
+  if (!isSmallRoomLayout()) {
+    chatScrollIndicator.classList.remove("is-active");
+    return;
+  }
+
+  const transcript = activeTranscriptElement();
+  if (!transcript || transcript.classList.contains("is-hidden")) {
+    chatScrollIndicator.classList.remove("is-active");
+    return;
+  }
+
+  const switcherBottom = mobileRoomSwitcher.getBoundingClientRect().bottom;
+  const viewportHeight = globalThis.visualViewport?.height || window.innerHeight;
+  const trackTop = Math.max(0, Math.round(switcherBottom + 6));
+  const trackBottom = 12;
+  const trackHeight = Math.max(0, viewportHeight - trackTop - trackBottom);
+  chatScrollIndicator.style.top = `${trackTop}px`;
+  chatScrollIndicator.style.height = `${trackHeight}px`;
+
+  let metrics;
+  if (transcript === messageFeed && messageFeedOwnsScroll()) {
+    metrics = chatScrollThumbMetrics({
+      scrollTop: messageFeed.scrollTop,
+      scrollStart: 0,
+      scrollEnd: messageFeed.scrollHeight - messageFeed.clientHeight,
+      contentHeight: messageFeed.scrollHeight,
+      visibleHeight: messageFeed.clientHeight,
+      trackHeight,
+    });
+  } else {
+    const root = document.scrollingElement || document.documentElement;
+    const pageScrollTop = window.scrollY || root.scrollTop || 0;
+    const transcriptRect = transcript.getBoundingClientRect();
+    const transcriptTop = transcriptRect.top + pageScrollTop;
+    const transcriptHeight = transcriptRect.height;
+    const visibleHeight = Math.max(0, viewportHeight - trackTop - trackBottom);
+    metrics = chatScrollThumbMetrics({
+      scrollTop: pageScrollTop,
+      scrollStart: transcriptTop - trackTop,
+      scrollEnd: transcriptTop + transcriptHeight - viewportHeight + trackBottom,
+      contentHeight: transcriptHeight,
+      visibleHeight,
+      trackHeight,
+    });
+  }
+
+  chatScrollIndicator.classList.toggle("is-active", metrics.visible);
+  chatScrollIndicatorThumb.style.height = `${Math.round(metrics.thumbHeight)}px`;
+  chatScrollIndicatorThumb.style.transform = `translateY(${Math.round(metrics.thumbOffset)}px)`;
+}
+
+function scheduleChatScrollIndicatorUpdate() {
+  if (chatScrollIndicatorFrame) return;
+  chatScrollIndicatorFrame = requestAnimationFrame(updateChatScrollIndicator);
+}
+
 function isViewingLatest() {
   if (isSmallRoomLayout()) {
     const composerRect = composer.getBoundingClientRect();
@@ -1550,6 +1616,7 @@ function renderAll(options = {}) {
     renderComposerPrivacy();
   }
   werewolfController?.render();
+  scheduleChatScrollIndicatorUpdate();
 }
 
 function addMessage({
@@ -3496,6 +3563,16 @@ mobileRoomCurrent.addEventListener("click", () => {
 newMessageJump.addEventListener("click", () => scrollToLatest({ revealOnSmallScreen: true, behavior: "smooth" }));
 window.addEventListener("scroll", handleMessageHistoryScroll, { passive: true });
 messageFeed.addEventListener("scroll", handleMessageHistoryScroll, { passive: true });
+window.addEventListener("scroll", scheduleChatScrollIndicatorUpdate, { passive: true });
+window.addEventListener("resize", scheduleChatScrollIndicatorUpdate, { passive: true });
+messageFeed.addEventListener("scroll", scheduleChatScrollIndicatorUpdate, { passive: true });
+globalThis.visualViewport?.addEventListener("resize", scheduleChatScrollIndicatorUpdate, { passive: true });
+globalThis.visualViewport?.addEventListener("scroll", scheduleChatScrollIndicatorUpdate, { passive: true });
+if (typeof ResizeObserver === "function") {
+  const transcriptResizeObserver = new ResizeObserver(scheduleChatScrollIndicatorUpdate);
+  transcriptResizeObserver.observe(messageFeed);
+  transcriptResizeObserver.observe(werewolfRoomStage);
+}
 messageFeed.addEventListener("wheel", handleMessageHistoryWheel, { passive: true });
 messageFeed.addEventListener("touchstart", handleMessageHistoryTouchStart, { passive: true });
 messageFeed.addEventListener("touchmove", handleMessageHistoryTouchMove, { passive: true });

@@ -971,6 +971,10 @@ html[data-theme="dark"] .button-werewolf {
   display: none;
 }
 
+.chat-scroll-indicator {
+  display: none;
+}
+
 .new-message-jump {
   position: fixed;
   z-index: 16;
@@ -3316,6 +3320,44 @@ html[data-theme="dark"] .mobile-room-switcher {
 }
 
 @media (max-width: 840px) {
+  html,
+  body {
+    scrollbar-width: none;
+  }
+
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  .chat-scroll-indicator {
+    position: fixed;
+    z-index: 14;
+    right: 3px;
+    display: block;
+    width: 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--ink) 10%, transparent);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+
+  .chat-scroll-indicator.is-active {
+    opacity: 1;
+  }
+
+  .chat-scroll-indicator-thumb {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    min-height: 38px;
+    border-radius: inherit;
+    background: color-mix(in srgb, var(--ink) 72%, transparent);
+    will-change: transform;
+  }
+
   .werewolf-shell {
     padding: 16px;
   }
