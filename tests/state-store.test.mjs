@@ -141,6 +141,30 @@ test("API Key 加密保存且不会返回给浏览器", async (context) => {
   assert.equal(credentials.extraHeaders, '{"X-App":"secret-header"}');
 });
 
+test("嘉宾头像会持久化且只接受受限大小的安全图片 data URL", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-avatar-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({ filePath: join(directory, "state.json"), secret: "avatar-secret" });
+  const validAvatar = "data:image/webp;base64,AAAA";
+  const saved = await store.save({
+    activeRoomId: "room-one",
+    agents: [
+      { id: "guest-one", name: "GPT", format: "openai", authType: "none", avatar: validAvatar },
+      { id: "guest-two", name: "Claude", format: "anthropic", authType: "none", avatar: "https://example.test/avatar.png" },
+    ],
+    rooms: [{ id: "room-one", name: "群聊", participantIds: ["guest-one", "guest-two"], messages: [] }],
+  });
+  assert.equal(saved.agents[0].avatar, validAvatar);
+  assert.equal(saved.agents[1].avatar, "");
+  assert.equal((await store.clientState()).agents[0].avatar, validAvatar);
+  const legacyClientSave = await store.save({
+    activeRoomId: "room-one",
+    agents: [{ id: "guest-one", name: "GPT", format: "openai", authType: "none" }],
+    rooms: [{ id: "room-one", name: "群聊", participantIds: ["guest-one"], messages: [] }],
+  });
+  assert.equal(legacyClientSave.agents[0].avatar, validAvatar);
+});
+
 test("留空时保留旧 Key，明确清除时才删除", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
   context.after(() => rm(directory, { recursive: true, force: true }));

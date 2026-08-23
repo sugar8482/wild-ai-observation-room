@@ -559,6 +559,20 @@
               <p class="field-help">会与 API Key 一起加密保存，适合第三方中转站的特殊请求头。</p>
             </div>
           </details>
+          <div class="field field-wide agent-avatar-field">
+            <div class="agent-avatar-copy">
+              <label>嘉宾头像 <span>可留空</span></label>
+              <p class="field-help">会自动居中裁成方形并压缩。以后换头像，普通群聊、狼人杀和旧局复盘会一起更新。</p>
+            </div>
+            <div class="agent-avatar-editor">
+              <div class="agent-avatar-preview" id="agent-avatar-preview" aria-live="polite"></div>
+              <div class="agent-avatar-actions">
+                <button class="button button-quiet" id="choose-agent-avatar-button" type="button">选择图片</button>
+                <button class="button button-quiet" id="clear-agent-avatar-button" type="button">恢复首字</button>
+              </div>
+              <input id="agent-avatar-file" type="file" accept="image/*" hidden />
+            </div>
+          </div>
           <div class="field field-wide persona-field">
             <div class="field-label-row">
               <label for="agent-persona">角色设定 <span>可留空</span></label>

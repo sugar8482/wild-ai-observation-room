@@ -50,6 +50,8 @@ const GUEST_CATALOG_KEY = "wild-ai-observation-room.guest-catalog.v2";
 const DIRECTOR_PREFS_KEY = "wild-ai-observation-room.director-prefs.v1";
 const THEME_KEY = "wild-ai-observation-room.theme.v1";
 const SUMMARY_AGENT_ID = "memory-summarizer";
+const MAX_AVATAR_DATA_LENGTH = 60_000;
+const AVATAR_DATA_URL_PATTERN = /^data:image\/(?:png|jpe?g|webp);base64,[a-z0-9+/=]+$/i;
 
 const FORMAT_META = {
   openai: {
@@ -182,6 +184,7 @@ let agentRoomFilter = "all";
 let guestCopyNameSuggestion = "";
 let accessProtectionEnabled = true;
 let agentMemoryDraftDirty = false;
+let agentAvatarDraft = "";
 let visitorInvites = [];
 let werewolfController = null;
 const summarizingRoomIds = new Set();
@@ -242,6 +245,7 @@ function hydrateAgent(profile) {
     model: String(profile?.model || ""),
     authType: String(profile?.authType || FORMAT_META[format].defaultAuth),
     customHeader: String(profile?.customHeader || ""),
+    avatar: normalizeAvatar(profile?.avatar),
     persona: String(profile?.persona || ""),
     memoryEnabled: profile?.memoryEnabled === true,
     memory: String(profile?.memory || ""),
@@ -436,6 +440,80 @@ function createElement(tag, className, text) {
   return element;
 }
 
+function avatarInitial(name) {
+  return String(name || "?").trim().slice(0, 1).toUpperCase() || "?";
+}
+
+function normalizeAvatar(value) {
+  const avatar = String(value || "").trim();
+  return avatar.length <= MAX_AVATAR_DATA_LENGTH && AVATAR_DATA_URL_PATTERN.test(avatar) ? avatar : "";
+}
+
+function createAvatarElement(name, avatar, className = "chat-avatar") {
+  const safeAvatar = normalizeAvatar(avatar);
+  if (safeAvatar) {
+    const image = document.createElement("img");
+    image.className = `${className} is-image`;
+    image.src = safeAvatar;
+    image.alt = `${String(name || "嘉宾")}的头像`;
+    image.decoding = "async";
+    return image;
+  }
+  const fallback = createElement("span", `${className} is-fallback`, avatarInitial(name));
+  fallback.setAttribute("aria-label", `${String(name || "嘉宾")}的默认头像`);
+  return fallback;
+}
+
+function renderAgentAvatarPreview() {
+  const preview = byId("agent-avatar-preview");
+  const name = String(agentForm.elements.namedItem("name")?.value || "嘉宾");
+  preview.replaceChildren(createAvatarElement(name, agentAvatarDraft, "agent-avatar-preview-image"));
+  byId("clear-agent-avatar-button").disabled = !agentAvatarDraft;
+}
+
+function loadImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("这张图片没有读取成功，换一张试试"));
+    };
+    image.src = objectUrl;
+  });
+}
+
+function squareAvatarDataUrl(image, size, quality) {
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) throw new Error("浏览器没有提供图片压缩能力");
+  const sourceSize = Math.min(image.naturalWidth || image.width, image.naturalHeight || image.height);
+  const sourceX = ((image.naturalWidth || image.width) - sourceSize) / 2;
+  const sourceY = ((image.naturalHeight || image.height) - sourceSize) / 2;
+  context.fillStyle = "#f7f7f3";
+  context.fillRect(0, 0, size, size);
+  context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, size, size);
+  const webp = canvas.toDataURL("image/webp", quality);
+  return webp.startsWith("data:image/webp") ? webp : canvas.toDataURL("image/jpeg", quality);
+}
+
+async function prepareAgentAvatar(file) {
+  if (!file?.type?.startsWith("image/")) throw new Error("请选择一张图片文件");
+  if (file.size > 12 * 1024 * 1024) throw new Error("图片超过 12MB，先换一张小一点的吧");
+  const image = await loadImageFile(file);
+  for (const [size, quality] of [[160, 0.86], [144, 0.8], [128, 0.74], [112, 0.68]]) {
+    const avatar = squareAvatarDataUrl(image, size, quality);
+    if (normalizeAvatar(avatar)) return avatar;
+  }
+  throw new Error("图片压缩后还是太大，换一张简单一点的图片吧");
+}
+
 function legacyCopyText(text) {
   const textarea = document.createElement("textarea");
   textarea.value = text;
@@ -597,6 +675,7 @@ function stateSnapshot() {
       model: agent.model,
       authType: agent.authType,
       customHeader: agent.customHeader,
+      avatar: agent.avatar,
       persona: agent.persona,
       memoryEnabled: agent.memoryEnabled,
       memory: agent.memory,
@@ -908,7 +987,7 @@ function renderAgents() {
     const participating = Boolean(membership && membership.status !== "left");
     const card = createElement("article", `agent-card${participating ? "" : " is-disabled"}${membership?.status === "away" ? " is-away" : ""}${membership?.status === "left" ? " is-left" : ""}`);
     const top = createElement("div", "agent-card-top");
-    const initial = createElement("span", "agent-initial", agent.name.trim().slice(0, 1).toUpperCase() || "?");
+    const initial = createAvatarElement(agent.name, agent.avatar, "agent-initial");
     const identity = createElement("div", "agent-identity");
     identity.append(
       createElement("strong", "", agent.name),
@@ -978,7 +1057,7 @@ function renderAgents() {
     for (const member of currentMembers.filter((item) => item.type !== "agent" || !state.agents.some((agent) => agent.id === item.id))) {
       const card = createElement("article", `agent-card external-member-card${member.status === "away" ? " is-away" : ""}${member.status === "left" ? " is-left is-disabled" : ""}`);
       const top = createElement("div", "agent-card-top");
-      const initial = createElement("span", "agent-initial", member.name.trim().slice(0, 1).toUpperCase() || "?");
+      const initial = createAvatarElement(member.name, "", "agent-initial");
       const identity = createElement("div", "agent-identity");
       identity.append(
         createElement("strong", "", member.name),
@@ -1109,6 +1188,8 @@ function renderMessages({ scroll = false } = {}) {
       "article",
       `message${message.kind === "user" ? " is-user" : ""}${message.kind === "error" ? " is-error" : ""}${privateMessage ? " is-private" : ""}${maskedForOwner ? " is-private-masked" : ""}`,
     );
+    const messageAgent = state.agents.find((agent) => agent.id === message.agentId);
+    const avatar = createAvatarElement(message.author, messageAgent?.avatar, "message-avatar");
     const meta = createElement("div", "message-meta");
     meta.append(createElement("span", "message-author", message.author));
     if (message.source === "visitor" || message.source === "mcp") {
@@ -1190,9 +1271,9 @@ function renderMessages({ scroll = false } = {}) {
         }
       });
       mask.append(dots, revealButton);
-      article.append(meta, mask, stack);
+      article.append(avatar, meta, mask, stack);
     } else {
-      article.append(meta, stack);
+      article.append(avatar, meta, stack);
     }
     messageFeed.append(article);
   }
@@ -2292,6 +2373,7 @@ function openAgentDialog(agentId = null) {
   });
   byId("dialog-title").textContent = agent ? `编辑 ${agent.name}` : "添加 AI 嘉宾";
   agentMemoryDraftDirty = false;
+  agentAvatarDraft = normalizeAvatar(draft.avatar);
   for (const key of ["id", "name", "format", "baseUrl", "model", "authType", "customHeader", "persona", "memory"]) {
     setFormValue(key, draft[key]);
   }
@@ -2309,6 +2391,7 @@ function openAgentDialog(agentId = null) {
   duplicateAgentButton.classList.toggle("is-hidden", !agent);
   syncAuthField();
   syncEndpointHelp();
+  renderAgentAvatarPreview();
   syncAgentMemoryField();
   agentDialog.showModal();
 }
@@ -2379,6 +2462,7 @@ function createGuestCopyFromForm() {
     hasApiKey: copyCredentials && source.hasApiKey,
     hasExtraHeaders: copyCredentials && source.hasExtraHeaders,
     credentialSourceId: copyCredentials ? source.id : "",
+    avatar: source.avatar,
     persona: copyPersona ? source.persona : "",
     memoryEnabled,
     memory: copyMemory ? source.memory : "",
@@ -2474,6 +2558,7 @@ function agentFromForm() {
     apiKey,
     customHeader: String(data.get("customHeader") || "").trim(),
     extraHeaders,
+    avatar: agentAvatarDraft,
     persona: String(data.get("persona") || "").trim(),
     memoryEnabled,
     memory,
@@ -3158,6 +3243,31 @@ guestCopyForm.addEventListener("submit", (event) => {
     showToast(error.message);
   }
 });
+byId("choose-agent-avatar-button").addEventListener("click", () => byId("agent-avatar-file").click());
+byId("agent-avatar-file").addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  const chooseButton = byId("choose-agent-avatar-button");
+  chooseButton.disabled = true;
+  chooseButton.textContent = "正在处理……";
+  try {
+    agentAvatarDraft = await prepareAgentAvatar(file);
+    renderAgentAvatarPreview();
+    showToast("头像已准备好，保存嘉宾后生效");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    chooseButton.disabled = false;
+    chooseButton.textContent = "选择图片";
+  }
+});
+byId("clear-agent-avatar-button").addEventListener("click", () => {
+  agentAvatarDraft = "";
+  renderAgentAvatarPreview();
+  showToast("已恢复首字头像，保存嘉宾后生效");
+});
+byId("agent-name").addEventListener("input", renderAgentAvatarPreview);
 byId("copy-persona-button").addEventListener("click", async () => {
   const persona = byId("agent-persona").value;
   if (!persona.trim()) {
@@ -3600,6 +3710,7 @@ tokensInput.value = String(
 werewolfController = createWerewolfController({
   getRoom: activeRoom,
   getRoomAgents: () => activeRoomAgents(activeRoom(), state.agents),
+  getAllAgents: () => state.agents,
   persist: queuePersist,
   toast: showToast,
 });

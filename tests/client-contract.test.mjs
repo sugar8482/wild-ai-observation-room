@@ -111,6 +111,26 @@ test("人设编辑器提供兼容 iPad 的复制文本与可撤销清空草稿",
   assert.match(script, /已清空人设草稿，保存嘉宾后生效/);
 });
 
+test("嘉宾头像可上传压缩并统一显示在普通聊天与狼人杀记录", async () => {
+  const [html, script, styles, werewolf] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8"),
+  ]);
+  for (const id of ["agent-avatar-preview", "choose-agent-avatar-button", "clear-agent-avatar-button", "agent-avatar-file"]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(script, /async function prepareAgentAvatar\(file\)/);
+  assert.match(script, /createAvatarElement\(message\.author, messageAgent\?\.avatar, "message-avatar"\)/);
+  assert.match(script, /avatar: agentAvatarDraft/);
+  assert.match(werewolf, /function logAvatar\(author, authorId\)/);
+  assert.match(werewolf, /"werewolf-entry-avatar is-image"/);
+  assert.match(styles, /\.message-avatar/);
+  assert.match(styles, /\.werewolf-entry-avatar/);
+  assert.match(styles, /\.message-author[\s\S]*font-size: 14px/);
+});
+
 test("房间氛围与个人设定在发言前按 Depth 0 顺序再次注入", async () => {
   const script = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(script, /function buildImmediatePrompt\(agent, room, visibleTokenTarget\)/);

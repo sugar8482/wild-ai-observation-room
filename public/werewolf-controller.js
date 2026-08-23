@@ -272,7 +272,7 @@ function fallbackTarget(players) {
   return players[0]?.id || null;
 }
 
-export function createWerewolfController({ getRoom, getRoomAgents, persist, toast }) {
+export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents, persist, toast }) {
   const dialog = byId("werewolf-dialog");
   const setup = byId("werewolf-setup");
   const gameSection = byId("werewolf-game");
@@ -298,7 +298,37 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
   }
 
   function agentFor(playerId) {
-    return getRoomAgents().find((agent) => agent.id === playerId) || null;
+    return (getAllAgents?.() || getRoomAgents()).find((agent) => agent.id === playerId) || null;
+  }
+
+  function logAvatar(author, authorId) {
+    const avatar = String(agentFor(authorId)?.avatar || "").trim();
+    if (/^data:image\/(?:png|jpe?g|webp);base64,[a-z0-9+/=]+$/i.test(avatar)) {
+      const image = document.createElement("img");
+      image.className = "werewolf-entry-avatar is-image";
+      image.src = avatar;
+      image.alt = `${author}的头像`;
+      image.decoding = "async";
+      return image;
+    }
+    const fallback = createElement("span", "werewolf-entry-avatar is-fallback", String(author || "?").trim().slice(0, 1) || "?");
+    fallback.setAttribute("aria-label", `${author}的默认头像`);
+    return fallback;
+  }
+
+  function logEntry(entry, { archived = false } = {}) {
+    const secret = entry.visibility !== "public";
+    const item = createElement("article", `werewolf-log-entry${entry.authorId === "system" ? " is-system" : ""}${secret ? " is-secret" : ""}`);
+    const content = createElement("div", "werewolf-entry-content");
+    const header = document.createElement("header");
+    const route = secret
+      ? { wolves: "🐺 狼队密谈", seer: "🔮 验人结果", witch: "🧪 女巫视角", god: "👁 法官暗牌" }[entry.visibility]
+      : WEREWOLF_PHASE_META[entry.phase];
+    const label = archived && !route ? entry.phase : route;
+    header.append(createElement("span", "", `${entry.author}${label ? ` · ${label}` : ""}`), createElement("time", "", formatTime(entry.timestamp)));
+    content.append(header, createElement("p", "", entry.text));
+    item.append(logAvatar(entry.author, entry.authorId), content);
+    return item;
   }
 
   function configuredAgents() {
@@ -483,15 +513,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
     const wasNearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 120;
     log.replaceChildren();
     for (const entry of entries) {
-      const secret = entry.visibility !== "public";
-      const item = createElement("article", `werewolf-log-entry${entry.authorId === "system" ? " is-system" : ""}${secret ? " is-secret" : ""}`);
-      const header = document.createElement("header");
-      const route = secret
-        ? { wolves: "🐺 狼队密谈", seer: "🔮 验人结果", witch: "🧪 女巫视角", god: "👁 法官暗牌" }[entry.visibility]
-        : WEREWOLF_PHASE_META[entry.phase];
-      header.append(createElement("span", "", `${entry.author}${route ? ` · ${route}` : ""}`), createElement("time", "", formatTime(entry.timestamp)));
-      item.append(header, createElement("p", "", entry.text));
-      log.append(item);
+      log.append(logEntry(entry));
     }
     if (wasNearBottom || !log.dataset.rendered) {
       requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
@@ -519,11 +541,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, persist, toas
       const recap = createElement("pre", "werewolf-archive-recap", archived.debrief?.recap || "本局没有生成事实复盘。");
       const transcript = createElement("div", "werewolf-archive-transcript");
       for (const entry of archived.log) {
-        const row = createElement("article", `werewolf-log-entry${entry.authorId === "system" ? " is-system" : ""}${entry.visibility !== "public" ? " is-secret" : ""}`);
-        const header = document.createElement("header");
-        header.append(createElement("span", "", `${entry.author} · ${WEREWOLF_PHASE_META[entry.phase] || entry.phase}`), createElement("time", "", formatTime(entry.timestamp)));
-        row.append(header, createElement("p", "", entry.text));
-        transcript.append(row);
+        transcript.append(logEntry(entry, { archived: true }));
       }
       details.append(summary, recap, transcript);
       list.append(details);

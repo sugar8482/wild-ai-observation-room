@@ -347,8 +347,8 @@ html[data-theme="dark"] .button-werewolf {
 
 .werewolf-main-log .werewolf-log-entry {
   max-width: min(86%, 720px);
-  padding: 12px 14px;
-  box-shadow: 0 5px 18px rgba(17, 17, 15, 0.035);
+  padding: 0;
+  box-shadow: none;
 }
 
 .werewolf-main-log .werewolf-log-entry.is-system {
@@ -415,13 +415,13 @@ html[data-theme="dark"] .button-werewolf {
 }
 
 .werewolf-speaker strong {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .werewolf-speaker span {
   margin-top: 3px;
   color: var(--quiet);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .werewolf-speaker.is-done {
@@ -715,20 +715,33 @@ html[data-theme="dark"] .button-werewolf {
 
 .agent-card-top {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
   gap: 9px;
   align-items: center;
 }
 
 .agent-initial {
-  width: 32px;
-  height: 32px;
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
   border: 1px solid var(--ink);
   border-radius: 50%;
+  object-fit: cover;
+  overflow: hidden;
   font-weight: 800;
   font-size: 13px;
+}
+
+.agent-initial.is-image {
+  background: var(--paper);
+}
+
+.agent-initial.is-fallback,
+.message-avatar.is-fallback,
+.werewolf-entry-avatar.is-fallback,
+.agent-avatar-preview-image.is-fallback {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--paper) 78%, #a9c9e8), color-mix(in srgb, var(--paper) 88%, #d7c3e7));
 }
 
 .agent-identity {
@@ -1016,23 +1029,51 @@ html[data-theme="dark"] .button-werewolf {
 .message {
   max-width: 760px;
   margin: 0 auto 26px;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  column-gap: 11px;
+  align-items: start;
+}
+
+.message-avatar {
+  grid-column: 1;
+  grid-row: 1 / span 3;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--soft-line);
+  border-radius: 50%;
+  object-fit: cover;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 800;
+  background: var(--paper);
 }
 
 .message-meta {
+  grid-column: 2;
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap;
   gap: 9px;
   margin-bottom: 7px;
 }
 
 .message-author {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
 }
 
 .message-time {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--quiet);
+}
+
+.message-bubble-stack,
+.message-bubble-single,
+.private-message-mask {
+  grid-column: 2;
 }
 
 .private-route {
@@ -1726,14 +1767,14 @@ input[type="range"] {
 }
 
 .werewolf-player-chip strong {
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .werewolf-player-chip span {
   min-height: 16px;
   margin-top: 3px;
   color: var(--quiet);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .werewolf-player-chip.is-dead {
@@ -1762,43 +1803,84 @@ html[data-theme="dark"] .werewolf-player-chip.is-wolf {
 
 .werewolf-log-entry {
   max-width: 82%;
-  margin: 0 0 9px;
-  padding: 9px 11px;
-  border-radius: 9px;
-  background: var(--paper);
-  border: 1px solid var(--soft-line);
+  margin: 0 0 18px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 11px;
+  align-items: start;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .werewolf-log-entry.is-system {
   max-width: 100%;
-  border-style: dashed;
   color: var(--muted);
 }
 
 .werewolf-log-entry.is-secret {
   margin-left: auto;
-  border-color: #ab8fba;
-  background: #fbf6ff;
+  background: transparent;
 }
 
-html[data-theme="dark"] .werewolf-log-entry.is-secret {
-  background: #312936;
+.werewolf-entry-avatar {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--soft-line);
+  border-radius: 50%;
+  object-fit: cover;
+  overflow: hidden;
+  background: var(--paper);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.werewolf-entry-content {
+  min-width: 0;
 }
 
 .werewolf-log-entry header {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 4px;
+  margin-bottom: 7px;
   color: var(--quiet);
-  font-size: 10px;
+  font-size: 11px;
+}
+
+.werewolf-log-entry header span:first-child {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 800;
 }
 
 .werewolf-log-entry p {
   margin: 0;
+  padding: 15px 17px;
+  border-left: 2px solid var(--ink);
+  background: var(--paper);
   white-space: pre-wrap;
-  font-size: 13px;
-  line-height: 1.62;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.72;
+}
+
+.werewolf-log-entry.is-system p {
+  border: 1px dashed var(--line);
+  border-left-width: 2px;
+  background: var(--wash);
+}
+
+.werewolf-log-entry.is-secret p {
+  border-color: #ab8fba;
+  background: #fbf6ff;
+}
+
+html[data-theme="dark"] .werewolf-log-entry.is-secret p {
+  background: #312936;
 }
 
 /* The room transcript uses the page itself as its scroll container. Keep this
@@ -2412,6 +2494,10 @@ html[data-theme="dark"] .agent-memory-field {
   background: #262626;
 }
 
+html[data-theme="dark"] .agent-avatar-field {
+  background: #262626;
+}
+
 html[data-theme="dark"] .guest-copy-option {
   background: #272727;
 }
@@ -2836,6 +2922,76 @@ html[data-theme="dark"] .mobile-room-switcher {
 .persona-field textarea {
   min-height: 118px;
   background: #fbfbf8;
+}
+
+.agent-avatar-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 13px 14px;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  background: var(--wash);
+}
+
+.agent-avatar-copy {
+  min-width: 0;
+}
+
+.agent-avatar-copy label {
+  font-weight: 800;
+}
+
+.agent-avatar-copy label span {
+  color: var(--quiet);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.agent-avatar-copy .field-help {
+  margin: 5px 0 0;
+}
+
+.agent-avatar-editor,
+.agent-avatar-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.agent-avatar-preview {
+  width: 66px;
+  height: 66px;
+  flex: 0 0 66px;
+  display: grid;
+  place-items: center;
+}
+
+.agent-avatar-preview-image {
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  object-fit: cover;
+  overflow: hidden;
+  background: var(--paper);
+  font-size: 21px;
+  font-weight: 800;
+}
+
+.agent-avatar-actions {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.agent-avatar-actions .button {
+  min-height: 30px;
+  padding: 6px 10px;
+  white-space: nowrap;
 }
 
 .field-label-row {
@@ -3267,6 +3423,34 @@ html[data-theme="dark"] .mobile-room-switcher {
 
   .werewolf-main-log .werewolf-log-entry {
     max-width: 94%;
+  }
+
+  .message,
+  .werewolf-log-entry {
+    grid-template-columns: 35px minmax(0, 1fr);
+    column-gap: 9px;
+  }
+
+  .message-avatar,
+  .werewolf-entry-avatar {
+    width: 35px;
+    height: 35px;
+    font-size: 12px;
+  }
+
+  .message-author,
+  .werewolf-log-entry header span:first-child {
+    font-size: 13px;
+  }
+
+  .agent-avatar-field {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .agent-avatar-editor {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .werewolf-speaker-grid {
