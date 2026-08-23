@@ -1305,7 +1305,7 @@ function observeMessageHistoryLoader(loader) {
   messageHistoryObserver = null;
   if (!loader || typeof IntersectionObserver !== "function") return;
   messageHistoryObserver = new IntersectionObserver((entries) => {
-    if (messageHistoryPullIntent && entries.some((entry) => entry.isIntersecting)) revealOlderMessages();
+    if (entries.some((entry) => entry.isIntersecting)) revealOlderMessages();
   }, { root: messageFeedOwnsScroll() ? messageFeed : null, rootMargin: "56px 0px 0px" });
   messageHistoryObserver.observe(loader);
 }
@@ -1424,6 +1424,10 @@ function renderMessages({ scroll = false, preservePrepend = false } = {}) {
   if (scroll) {
     loadingOlderMessages = false;
     scrollToLatest({ revealOnSmallScreen: true });
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => observeMessageHistoryLoader(historyLoader));
+    });
+    return;
   } else if (preservePrepend) {
     requestAnimationFrame(() => {
       const currentScroll = messageHistoryScrollMetrics();
