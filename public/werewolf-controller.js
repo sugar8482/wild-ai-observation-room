@@ -32,6 +32,7 @@ import {
   privateMemoryContext,
   privateMemoryOutputInstruction,
 } from "./agent-memory.js";
+import { DEFAULT_VISIBLE_REPLY_TOKENS } from "./reply-limits.js";
 import { appendBoldText } from "./rich-text.js";
 
 const byId = (id) => document.getElementById(id);
@@ -282,7 +283,8 @@ async function debriefChatRequest(agent, game, player, signal) {
       agent,
       requestMode: "werewolf-game",
       temperature: 0.9,
-      maxTokens: 520 + (agent.memoryEnabled === true ? PRIVATE_MEMORY_TOKEN_ALLOWANCE : 0),
+      maxTokens: DEFAULT_VISIBLE_REPLY_TOKENS
+        + (agent.memoryEnabled === true ? PRIVATE_MEMORY_TOKEN_ALLOWANCE : 0),
       messages: [
         { role: "system", content: system },
         { role: "user", content: `【法官事实复盘】\n${recap}\n\n【本局完整卷宗】\n${completeGameHistory(game)}\n\n【赛后茶话会最近发言】\n${recentDebrief || "还没人开口。"}\n\n现在轮到你复盘。优先回应晨曦最近点到你的内容；若没有明确追问，就说你最想认领、解释或吐槽的一件事。` },

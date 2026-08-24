@@ -240,6 +240,8 @@ test("狼人杀赛后复盘允许嘉宾自主写私人日记但仍隔离普通�
   assert.match(script, /parseAgentReply\(String\(payload\.text\)\)/);
   assert.match(script, /saveDebriefMemory\(agent, reply\.memoryItems\)/);
   assert.match(script, /本局卷宗与赛后公开发言不会写入普通聊天室长期总结/);
+  assert.match(script, /maxTokens: DEFAULT_VISIBLE_REPLY_TOKENS/);
+  assert.doesNotMatch(script, /maxTokens: 520/);
   assert.doesNotMatch(script, /本轮复盘不会写入普通聊天室长期总结或你的私人记忆/);
 });
 

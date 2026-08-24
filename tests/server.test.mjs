@@ -99,6 +99,27 @@ test("抢麦评分使用短输出并关闭 DeepSeek 隐藏思考", () => {
   assert.equal(privateSummaryPolicy.upstreamMaxTokens, 8192);
 });
 
+test("普通回复默认 1200、尊重手动值且总结兜底预算不变", () => {
+  const agent = {
+    format: "gemini",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    model: "gemini-test",
+  };
+  const defaultPolicy = chatRequestPolicy(agent, {});
+  assert.equal(defaultPolicy.visibleTokenTarget, 1200);
+  assert.equal(defaultPolicy.upstreamMaxTokens, 1200);
+
+  const manualPolicy = chatRequestPolicy(agent, { maxTokens: 640 });
+  assert.equal(manualPolicy.visibleTokenTarget, 640);
+  assert.equal(manualPolicy.upstreamMaxTokens, 640);
+
+  const summaryPolicy = chatRequestPolicy(agent, { requestMode: "memory-summary" });
+  assert.equal(summaryPolicy.visibleTokenTarget, 300);
+
+  const scorePolicy = chatRequestPolicy(agent, { requestMode: "willingness-score" });
+  assert.equal(scorePolicy.visibleTokenTarget, 8);
+});
+
 test("Kimi K3 正式发言有隐藏思考余量但抢麦评分仍保持短输出", () => {
   const agent = {
     format: "openai",
@@ -263,6 +284,65 @@ test("配置错误不会把请求转发到上游", async (context) => {
   const payload = await response.json();
   assert.equal(typeof payload.error, "string");
   assert.ok(payload.error.length > 0);
+});
+
+test("Gemini 普通回复超过旧 300 上限时仍完整返回并使用新默认预算", async (context) => {
+  const longReply = Array.from({ length: 640 }, () => "hello").join(" ");
+  const requestBodies = [];
+  const upstream = (await import("node:http")).createServer(async (request, response) => {
+    let raw = "";
+    for await (const chunk of request) raw += chunk;
+    requestBodies.push(JSON.parse(raw));
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      candidates: [{
+        content: { parts: [{ text: longReply }] },
+        finishReason: "STOP",
+      }],
+    }));
+  });
+  upstream.listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  context.after(() => upstream.close());
+
+  const server = createAppServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const agent = {
+    name: "Gemini（新）",
+    format: "gemini",
+    baseUrl: `http://127.0.0.1:${upstream.address().port}/v1beta`,
+    model: "gemini-test",
+    authType: "none",
+  };
+
+  const defaultResponse = await fetch(`${origin}/api/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      agent,
+      messages: [{ role: "user", content: "请自然回答。" }],
+    }),
+  });
+  const defaultPayload = await defaultResponse.json();
+  assert.equal(defaultResponse.status, 200);
+  assert.equal(defaultPayload.text, longReply);
+  assert.equal(defaultPayload.finishReason, "stop");
+  assert.equal(requestBodies[0].generationConfig.maxOutputTokens, 1200);
+
+  const manualResponse = await fetch(`${origin}/api/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      agent,
+      maxTokens: 640,
+      messages: [{ role: "user", content: "请自然回答。" }],
+    }),
+  });
+  assert.equal(manualResponse.status, 200);
+  assert.equal(requestBodies[1].generationConfig.maxOutputTokens, 640);
 });
 
 test("局域网模式要求访问码并签发仅限本站的会话 Cookie", async (context) => {

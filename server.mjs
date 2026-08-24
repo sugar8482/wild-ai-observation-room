@@ -16,6 +16,7 @@ import { createRoomScheduler } from "./lib/scheduled-chat.mjs";
 import { createRoomSummaryJobs } from "./lib/room-summary-jobs.mjs";
 import { createPostgresArchive } from "./lib/postgres-archive.mjs";
 import { createVisitorManager } from "./lib/visitor-mode.mjs";
+import { DEFAULT_VISIBLE_REPLY_TOKENS } from "./public/reply-limits.js";
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
 const publicRoot = resolve(projectRoot, "public");
@@ -132,7 +133,7 @@ export function chatRequestPolicy(agent, payload = {}) {
   const maximumTokens = isWillingnessScore ? 64 : 4096;
   const visibleTokenTarget = Number.isFinite(Number(payload.maxTokens))
     ? Math.min(maximumTokens, Math.max(minimumTokens, Math.round(Number(payload.maxTokens))))
-    : isWillingnessScore ? 8 : 300;
+    : isWillingnessScore ? 8 : isMemorySummary ? 300 : DEFAULT_VISIBLE_REPLY_TOKENS;
   const officialDeepSeek = isOfficialDeepSeekV4(agent);
   const usesDeepSeekThinking = officialDeepSeek && !isWillingnessScore;
   const usesKimiThinking = isKimiK3(agent) && !isWillingnessScore;

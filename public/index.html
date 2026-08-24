@@ -222,12 +222,12 @@
         </div>
 
         <div class="control-group">
-          <label for="tokens-input">正文长度目标</label>
+          <label for="tokens-input">正文长度上限</label>
           <div class="suffix-input">
-            <input id="tokens-input" type="number" min="64" max="4096" step="1" value="300" />
+            <input id="tokens-input" type="number" min="64" max="4096" step="1" value="1200" />
             <span>tokens</span>
           </div>
-          <p class="field-help">只管最终说出来的篇幅；思考模型会另留后台余量，优先保证句子完整。</p>
+          <p class="field-help">这是安全上限，不要求写满；短答仍可自然结束。思考模型会另留后台余量。</p>
         </div>
 
         <div class="director-tip">

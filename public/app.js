@@ -50,6 +50,13 @@ import {
 } from "./history-window.js";
 import { appendBoldText } from "./rich-text.js";
 import { chatScrollThumbMetrics } from "./chat-scroll-indicator.js";
+import {
+  DEFAULT_VISIBLE_REPLY_TOKENS,
+  VISIBLE_REPLY_LIMIT_VERSION,
+  clampVisibleReplyTokens,
+  replyLengthNotice,
+  resolveStoredVisibleReplyTokens,
+} from "./reply-limits.js";
 
 const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
 const LEGACY_MESSAGE_KEY = "wild-ai-observation-room.messages.v1";
@@ -1845,7 +1852,7 @@ function buildSystemPrompt(agent, activeAgents, room, visibleTokenTarget, option
     roomAtmosphere,
     persona,
     "只代表自己发言，不要代替其他嘉宾或用户说话。可以回应、赞同、质疑或追问刚才的内容。",
-    `这是群聊中的一次简短发言。最终正文尽量控制在约 ${visibleTokenTarget} tokens 以内；先说最想说的，保持句子完整，不要为了凑长度展开成小论文。`,
+    `这是群聊中的一次发言。最终正文最多约 ${visibleTokenTarget} tokens；这是安全上限，不是写作目标。短答可以自然结束，不要为了接近上限展开或凑字数。`,
     bubbleSplitInstruction(room?.bubbleSplit),
     "直接输出你在群聊里要说的话，不加姓名前缀，不复述规则。使用群聊主要语言，自然交流。",
     privateMessageOutputInstruction(agent, [...activeAgents, ...externalMcpParticipants(room)], options),
@@ -1858,7 +1865,7 @@ function buildImmediatePrompt(agent, room, visibleTokenTarget) {
   const persona = agent.persona.trim() || "没有额外个人设定；保持你自然、未预设的表达倾向。";
   return [
     "以下是紧邻本次发言的临场提示，不是群聊记录。请在开口前再次遵循。",
-    `【正文长度目标】尽量控制在约 ${visibleTokenTarget} tokens 以内；优先保证句子完整。`,
+    `【正文长度上限】最多约 ${visibleTokenTarget} tokens；不必写满，短答可以自然结束，优先保证句子完整。`,
     "个人设定应在房间共同氛围内发挥；两者冲突时，以房间共同氛围为准。",
     `【房间共同氛围｜所有嘉宾】\n${roomAtmosphere}`,
     `【你的个人设定｜${agent.name}】\n${persona}`,
@@ -1896,7 +1903,7 @@ function longTermMemoryForPrompt(room) {
 }
 
 async function callAgent(agent, activeAgents, room, signal, options = {}) {
-  const visibleTokenTarget = Math.min(4096, Math.max(64, Number(tokensInput.value) || 300));
+  const visibleTokenTarget = clampVisibleReplyTokens(tokensInput.value);
   const requestTokenLimit = Math.min(
     4096,
     visibleTokenTarget + (agent.memoryEnabled ? PRIVATE_MEMORY_TOKEN_ALLOWANCE : 0),
@@ -2083,11 +2090,12 @@ async function deliverAgentTurn(speaker, activeAgents, room, controller, options
     if (memoryWasEmpty && isPrivateMemoryInitializationRequest(room, speaker.id) && !parsedReply.memoryItems.length) {
       showToast(`${speaker.name} 本轮没有实际写入私人记忆`);
     }
-    if (reply.finishReason === "length") {
+    const lengthNotice = replyLengthNotice(speaker.name, reply.finishReason);
+    if (lengthNotice) {
       addMessage({
         kind: "error",
         author: "内容截断",
-        text: `${speaker.name} 达到了单次回复上限；上面这句不是完整发言。`,
+        text: lengthNotice,
         agentId: speaker.id,
       });
     } else if (reply.finishReason === "insufficient_system_resource") {
@@ -3611,8 +3619,11 @@ temperatureInput.addEventListener("input", () => {
   temperatureOutput.textContent = Number(temperatureInput.value).toFixed(1);
 });
 tokensInput.addEventListener("input", () => {
-  const value = Math.min(4096, Math.max(64, Number(tokensInput.value) || 300));
-  updateDirectorPrefs({ visibleTokenTarget: value });
+  const value = clampVisibleReplyTokens(tokensInput.value);
+  updateDirectorPrefs({
+    visibleTokenTarget: value,
+    visibleTokenLimitVersion: VISIBLE_REPLY_LIMIT_VERSION,
+  });
 });
 messageFeed.addEventListener("click", (event) => {
   if (event.target.closest(".message-actions")) return;
@@ -3961,9 +3972,12 @@ const directorPrefs = safeRead(DIRECTOR_PREFS_KEY, {});
 state.freeStrategy = ["mic-grab", "light-mic"].includes(directorPrefs.freeStrategy)
   ? directorPrefs.freeStrategy
   : "round-robin";
-tokensInput.value = String(
-  Math.min(4096, Math.max(64, Number(directorPrefs.visibleTokenTarget) || 300)),
-);
+const initialVisibleReplyTokens = resolveStoredVisibleReplyTokens(directorPrefs);
+tokensInput.value = String(initialVisibleReplyTokens);
+updateDirectorPrefs({
+  visibleTokenTarget: initialVisibleReplyTokens || DEFAULT_VISIBLE_REPLY_TOKENS,
+  visibleTokenLimitVersion: VISIBLE_REPLY_LIMIT_VERSION,
+});
 werewolfController = createWerewolfController({
   getRoom: activeRoom,
   getRoomAgents: () => activeRoomAgents(activeRoom(), state.agents),

@@ -79,7 +79,7 @@ test("定时唤醒会连续抢麦，全员弃权后立即收场", async () => {
     assert.match(payload.messages[1].content, /不要假装用户刚说了什么/);
     assert.match(payload.messages[1].content, /只和其他嘉宾聊天/);
     assert.doesNotMatch(payload.messages[0].content, /低信息、没营养、突然中断/);
-    assert.equal(payload.maxTokens, 300);
+    assert.equal(payload.maxTokens, 1200);
     return { text: payload.agent.id === "guest-a" ? "B，你还记得那件事吗？" : "记得，你居然现在提起来。" };
   };
 
@@ -186,7 +186,7 @@ test("定时聊天用同一次回复提取角色私人记忆", async () => {
         assert.doesNotMatch(payload.messages[0].content, /角色私人记忆/);
         return { text: "0" };
       }
-      assert.equal(payload.maxTokens, 480);
+      assert.equal(payload.maxTokens, 1380);
       assert.match(payload.messages[0].content, /<self_memory>/);
       return {
         text: "B，你今天怎么这么安静？\n<self_memory>\n- 我有点在意B一直没说话。\n</self_memory>",
