@@ -60,6 +60,29 @@ test("未配置数据库时保持 JSON-only 模式且不会建立连接", async 
   await archive.close();
 });
 
+test("PostgreSQL 可以直接保存和读取聊天室主状态", async () => {
+  const queries = [];
+  const storedState = { ...snapshot, activeRoomId: "room-one" };
+  const pool = {
+    async query(text, values = []) {
+      queries.push({ text, values });
+      if (/SELECT state_data FROM app_state_current/.test(text)) {
+        return { rows: [{ state_data: storedState }] };
+      }
+      return { rows: [] };
+    },
+    async end() {},
+  };
+  const archive = createPostgresArchive({ pool });
+
+  assert.deepEqual(await archive.loadState(), storedState);
+  assert.equal(await archive.saveState(storedState), true);
+  const write = queries.find((query) => /INSERT INTO app_state_current/.test(query.text));
+  assert.ok(write);
+  assert.equal(JSON.parse(write.values[0]).activeRoomId, "room-one");
+  await archive.close();
+});
+
 test("启用后会建表并在一个事务里镜像全部档案", async () => {
   const queries = [];
   const client = {

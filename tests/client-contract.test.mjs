@@ -234,16 +234,18 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
   assert.match(memoryPrompt, /不属于房间总结/);
 });
 
-test("狼人杀赛后复盘允许嘉宾自主写私人日记但仍隔离普通长期总结", async () => {
+test("狼人杀赛后复盘把本局日记和可跨房间私人记忆分成两个出口", async () => {
   const script = await readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8");
-  assert.match(script, /privateDiaryOutputInstruction\(agent\)/);
-  assert.match(script, /parseAgentReply\(String\(payload\.text\)\)/);
-  assert.match(script, /saveDebriefDiary\(current, agent, reply\.memoryItems\)/);
+  assert.match(script, /gameDiaryOutputInstruction\(agent\)/);
+  assert.match(script, /parseWerewolfDebriefReply\(String\(payload\.text\)\)/);
+  assert.match(script, /saveDebriefDiary\(current, agent, reply\.diaryItems\)/);
   assert.match(script, /appendWerewolfPrivateDiary/);
-  assert.match(script, /本局卷宗与赛后公开发言不会写入普通聊天室长期总结/);
+  assert.match(script, /本局卷宗与赛后公开发言不会整包灌进普通聊天室总结或长期私人记忆/);
   assert.match(script, /maxTokens: DEFAULT_VISIBLE_REPLY_TOKENS/);
   assert.doesNotMatch(script, /maxTokens: 520/);
-  assert.doesNotMatch(script, /appendAgentMemory/);
+  assert.match(script, /appendAgentMemory/);
+  assert.match(script, /privateMemoryContext\(agent\)/);
+  assert.match(script, /privateMemoryOutputInstruction\(agent\)/);
 });
 
 test("狼人杀历史外层按整局上拉加载，局内才使用一百条渲染窗口", async () => {

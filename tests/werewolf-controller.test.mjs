@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { gameSystemPrompt, roleKnowledge, validTargets, viewerRoleKnowledge } from "../public/werewolf-controller.js";
+import {
+  gameSystemPrompt,
+  parseWerewolfDebriefReply,
+  roleKnowledge,
+  validTargets,
+  viewerRoleKnowledge,
+} from "../public/werewolf-controller.js";
 import { WEREWOLF_USER_ID, createWerewolfGame } from "../public/werewolf-game.js";
 
 function manualGame() {
@@ -173,7 +179,7 @@ test("晨曦拿狼人时只看见自己和狼队友的身份", () => {
   assert.deepEqual(viewerRoleKnowledge(game, game.players.find((player) => player.id === "wolf-view-2")), { kind: "hidden" });
 });
 
-test("新局提示词不会读取旧局复盘、旧私人日记或嘉宾长期记忆", () => {
+test("新局隔离旧局卷宗，但允许嘉宾带着自己挑选的长期私人记忆入场", () => {
   const game = manualGame();
   const player = game.players[0];
   const prompt = gameSystemPrompt({
@@ -181,11 +187,30 @@ test("新局提示词不会读取旧局复盘、旧私人日记或嘉宾长期�
     name: player.name,
     persona: "保持冷静。",
     memoryEnabled: true,
-    memory: "旧局秘密：上一局二号是狼；旧私人日记：我记恨三号。",
+    memory: "- [群聊] 我答应晨曦，不会故意让她失望。",
   }, game, player, "现在进行白天发言。");
 
-  assert.doesNotMatch(prompt, /上一局二号是狼/);
-  assert.doesNotMatch(prompt, /我记恨三号/);
-  assert.match(prompt, /不要读取或引用任何旧局/);
+  assert.match(prompt, /我答应晨曦，不会故意让她失望/);
+  assert.match(prompt, /看不到任何旧局原文、旧复盘或旧局私人日记/);
+  assert.match(prompt, /不要把旧局身份当成本局身份/);
+  assert.match(prompt, /<self_memory>/);
   assert.match(prompt, /现在进行白天发言/);
+});
+
+test("赛后本局日记与可跨房间长期记忆使用两个独立出口", () => {
+  const parsed = parseWerewolfDebriefReply([
+    "公开复盘：这局我最后一天才看穿。",
+    "<game_diary>",
+    "- 我记住这局说对不等于让人信。",
+    "</game_diary>",
+    "<self_memory>",
+    "- 我发现晨曦生气时更希望有人陪她把话说完。",
+    "</self_memory>",
+  ].join("\n"));
+
+  assert.equal(parsed.text, "公开复盘：这局我最后一天才看穿。");
+  assert.equal(parsed.diaryItems.length, 1);
+  assert.match(parsed.diaryItems[0], /说对不等于让人信/);
+  assert.equal(parsed.memoryItems.length, 1);
+  assert.match(parsed.memoryItems[0], /晨曦生气时更希望有人陪她/);
 });

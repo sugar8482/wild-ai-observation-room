@@ -7,7 +7,11 @@ import { fileURLToPath } from "node:url";
 const projectRoot = resolve(process.argv[3] || fileURLToPath(new URL("..", import.meta.url)));
 const backupBase = resolve(process.argv[2] || "/root/backups/wild-ai-observation-room");
 const stamp = new Date().toISOString().replaceAll(":", "-").replace(/\.\d{3}Z$/, "Z");
-const backupRoot = join(backupBase, `${stamp}-pre-werewolf-v3`);
+const label = String(process.argv[4] || "manual")
+  .trim()
+  .replace(/[^a-zA-Z0-9_-]+/g, "-")
+  .replace(/^-+|-+$/g, "") || "manual";
+const backupRoot = join(backupBase, `${stamp}-${label}`);
 const stateRoot = resolve(projectRoot, "data");
 
 async function localSettings() {

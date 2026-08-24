@@ -3849,25 +3849,26 @@ function renderArchiveStatus(status = {}) {
   syncButton.disabled = !status.enabled || status.syncing;
 
   if (!status.enabled) {
-    badge.textContent = "本地模式";
-    copy.textContent = "没有配置数据库，聊天室仍会完整保存在本地 JSON；从 GitHub 下载后无需数据库也能正常使用。";
+    badge.textContent = "未启用";
+    copy.textContent = "数据库存储尚未启用。";
     return;
   }
   if (status.state === "error") {
     badge.classList.add("is-error");
-    badge.textContent = "等待补存";
-    copy.textContent = `数据库暂时没有接通，聊天不受影响；恢复后会自动补存。${status.lastError ? ` 最近错误：${status.lastError}` : ""}`;
+    badge.textContent = "存储异常";
+    copy.textContent = `数据库暂时无法写入。为避免产生两份互相冲突的数据，保存会明确报错。${status.lastError ? ` 最近错误：${status.lastError}` : ""}`;
     return;
   }
   if (status.syncing || status.pending || status.state === "connecting") {
-    badge.textContent = "同步中";
-    copy.textContent = "本地 JSON 已经保存，档案馆正在后台补存，不用停在这个页面等待。";
+    badge.textContent = "整理中";
+    copy.textContent = "主数据已经保存，数据库正在整理便于分页读取的房间、消息、记忆和狼人杀卷宗。";
     return;
   }
   badge.classList.add("is-ready");
-  badge.textContent = "已归档";
+  badge.textContent = status.backend === "sqlite" ? "本地 SQLite" : "PostgreSQL";
   const syncedAt = status.lastSuccessAt ? new Date(status.lastSuccessAt).toLocaleString("zh-CN") : "刚刚";
-  copy.textContent = `档案馆连接正常，最近一次完整同步：${syncedAt}。`;
+  const backendName = status.backend === "sqlite" ? "本地 SQLite" : "PostgreSQL";
+  copy.textContent = `${backendName} 主存储正常；JSON 灾备镜像也会随保存更新。最近一次分表整理：${syncedAt}。`;
 }
 
 async function refreshArchiveStatus() {
@@ -3906,9 +3907,9 @@ byId("archive-sync").addEventListener("click", async () => {
   try {
     const response = await fetch("/api/archive/sync", { method: "POST" });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || "没有开始补存");
+    if (!response.ok) throw new Error(payload.error || "没有开始整理存储");
     renderArchiveStatus(payload);
-    showToast("已交给 VPS 后台补存，可以关闭设置");
+    showToast("已开始整理存储，可以关闭设置");
     setTimeout(() => void refreshArchiveStatus(), 800);
   } catch (error) {
     showToast(error.message);

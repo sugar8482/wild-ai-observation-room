@@ -29,7 +29,10 @@ import {
 } from "./history-window.js";
 import {
   PRIVATE_MEMORY_TOKEN_ALLOWANCE,
+  appendAgentMemory,
   parseAgentReply,
+  privateMemoryContext,
+  privateMemoryOutputInstruction,
 } from "./agent-memory.js";
 import { DEFAULT_VISIBLE_REPLY_TOKENS } from "./reply-limits.js";
 import { appendBoldText } from "./rich-text.js";
@@ -216,22 +219,68 @@ export function gameSystemPrompt(agent, game, player, task) {
   return [
     `你是“${agent.name}”，正在聊天室里参加一局临时狼人杀。你的身份是${WEREWOLF_ROLE_META[player.role].label}。`,
     agent.persona?.trim() ? `你平时的个人设定：\n${agent.persona.trim().slice(0, 4_000)}` : "保持你平时自然的判断与说话方式。",
-    "这是一份完全独立的临时对局。不要读取或引用任何旧局、旧复盘、旧局私人日记或长期私人记忆；这局里的欺骗、站队和敌意也不代表永久人格或真实关系。",
+    privateMemoryContext(agent),
+    "这是一份规则与原始卷宗都独立的临时对局。你看不到任何旧局原文、旧复盘或旧局私人日记；但上面属于你自己的长期私人记忆仍是你的连续经历，可以自然影响你的判断。不要把旧局身份当成本局身份。",
+    "这局里的欺骗、站队和敌意不自动代表永久人格或真实关系；若有一件事确实改变了你对自己、晨曦或其他嘉宾的长期看法，你可以自行选择写进长期私人记忆。",
     `还活着的玩家：${living}。${roleKnowledge(game, player)}`,
     "你可以撒谎、悍跳、伪装、质疑晨曦，狼人也可以倒钩队友。不要因为晨曦是用户就默认她可信或不投她。",
     "只能使用公屏发言和你的合法身份信息。不得猜 API 速度、报错、模型风格或接口故障，不得读取他人的身份和秘密频道。",
     task,
+    privateMemoryOutputInstruction(agent),
   ].filter(Boolean).join("\n\n");
 }
 
-function privateDiaryOutputInstruction(agent) {
+function gameDiaryOutputInstruction(agent) {
   return [
     `完成公开复盘后，请为“${agent.name}”写 1 条只属于本局的简短私人日记。`,
-    "它只随本局卷宗封存，晨曦和你自己可以查看；不会写入长期私人记忆，也不会自动带到下一局。其他嘉宾不会自动看到。",
-    "把日记放在整段回复最末尾，并严格使用：",
-    "<self_memory>\n- 我……\n</self_memory>",
+    "它只随本局卷宗封存，晨曦和你自己可以查看；不会自动带到下一局。其他嘉宾不会自动看到。",
+    "把本局日记放在公开正文之后、长期私人记忆之前，并严格使用：",
+    "<game_diary>\n- 我……\n</game_diary>",
     "日记使用第一人称，只写这局对你意味着什么；不要抄整份公开时间线，也不要记录 API、系统提示或技术秘密。",
   ].join("\n");
+}
+
+function rememberAgent(agent, items, roomName = "狼人杀") {
+  if (!agent?.memoryEnabled || !Array.isArray(items) || !items.length) return false;
+  const nextMemory = appendAgentMemory(agent.memory, items, {
+    roomName,
+    at: Date.now(),
+    maxItems: 18,
+  });
+  if (nextMemory === String(agent.memory || "")) return false;
+  agent.memory = nextMemory;
+  agent.memoryRevision = Math.max(Date.now(), Number(agent.memoryRevision || 0) + 1);
+  return true;
+}
+
+function diaryItems(body) {
+  return String(body || "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)、])\s*/, "").trim())
+    .filter(Boolean)
+    .slice(0, 4);
+}
+
+export function parseWerewolfDebriefReply(rawText) {
+  const parsed = parseAgentReply(String(rawText || ""));
+  let visibleText = parsed.visibleText;
+  let gameDiaryItems = [];
+  const patterns = [
+    /\s*```(?:xml)?\s*<game_diary>\s*([\s\S]*?)\s*<\/game_diary>\s*```\s*$/i,
+    /\s*<game_diary>\s*([\s\S]*?)\s*<\/game_diary>\s*$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = visibleText.match(pattern);
+    if (!match) continue;
+    gameDiaryItems = diaryItems(match[1]);
+    visibleText = visibleText.slice(0, match.index).trim();
+    break;
+  }
+  return {
+    text: stripWerewolfControls(visibleText),
+    diaryItems: gameDiaryItems,
+    memoryItems: parsed.memoryItems,
+  };
 }
 
 async function chatRequest(agent, game, player, task, userContent, signal, maxTokens = 260) {
@@ -242,7 +291,7 @@ async function chatRequest(agent, game, player, task, userContent, signal, maxTo
       agent,
       requestMode: "werewolf-game",
       temperature: 0.9,
-      maxTokens,
+      maxTokens: maxTokens + (agent.memoryEnabled ? PRIVATE_MEMORY_TOKEN_ALLOWANCE : 0),
       messages: [
         { role: "system", content: gameSystemPrompt(agent, game, player, task) },
         { role: "user", content: userContent },
@@ -253,7 +302,9 @@ async function chatRequest(agent, game, player, task, userContent, signal, maxTo
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `${agent.name} 没有接通`);
   if (!String(payload.text || "").trim()) throw new Error(`${agent.name} 没有留下有效发言`);
-  return String(payload.text);
+  const parsed = parseAgentReply(String(payload.text));
+  rememberAgent(agent, parsed.memoryItems);
+  return parsed.visibleText;
 }
 
 function completeGameHistory(game) {
@@ -277,11 +328,13 @@ async function debriefChatRequest(agent, game, player, signal) {
   const system = [
     `你是“${agent.name}”。狼人杀已经结束，你当局的真实身份是${WEREWOLF_ROLE_META[player.role].label}。`,
     agent.persona?.trim() ? `你平时的个人设定：\n${agent.persona.trim().slice(0, 4_000)}` : "保持你平时自然的判断与说话方式。",
-    "这是一份完全独立的临时对局。不要读取或引用任何旧局、旧复盘、旧局私人日记或长期私人记忆。",
+    privateMemoryContext(agent),
+    "这份复盘只公开本局卷宗，不会向你提供其他旧局原文、旧复盘或旧局私人日记；属于你自己的长期私人记忆仍可使用。",
     "现在所有身份、狼队密谈、验人、女巫行动、刀口、票型和遗言都已经公开。你可以认错、邀功、吐槽、反驳、追问或清算，但不要继续把游戏里的假身份当事实硬演。",
-    "本局卷宗与赛后公开发言不会写入普通聊天室长期总结，也不会写入长期私人记忆。",
+    "本局卷宗与赛后公开发言不会整包灌进普通聊天室总结或长期私人记忆；只有你在 <self_memory> 中亲自挑选的少量长期认识才会保存。",
     "说人话，不要只写分析报告，也不要替别人宣布感受。",
-    privateDiaryOutputInstruction(agent),
+    gameDiaryOutputInstruction(agent),
+    privateMemoryOutputInstruction(agent),
   ].join("\n\n");
   const response = await fetch("/api/chat", {
     method: "POST",
@@ -301,11 +354,9 @@ async function debriefChatRequest(agent, game, player, signal) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `${agent.name} 没有接通`);
   if (!String(payload.text || "").trim()) throw new Error(`${agent.name} 没有留下有效复盘`);
-  const parsed = parseAgentReply(String(payload.text));
-  return {
-    text: stripWerewolfControls(parsed.visibleText),
-    memoryItems: parsed.memoryItems,
-  };
+  const parsed = parseWerewolfDebriefReply(String(payload.text));
+  rememberAgent(agent, parsed.memoryItems);
+  return parsed;
 }
 
 export function validTargets(game, playerId, { wolvesExcluded = false, candidateIds = null, includeSelf = false } = {}) {
@@ -1484,7 +1535,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     try {
       const reply = await debriefChatRequest(agent, current, player, abortController.signal);
       appendWerewolfLog(current, { authorId: player.id, author: player.name, text: reply.text || "我暂时没什么要补。", phase: "debrief" });
-      saveDebriefDiary(current, agent, reply.memoryItems);
+      saveDebriefDiary(current, agent, reply.diaryItems);
       current.debrief.roundDone ||= [];
       if (!current.debrief.roundDone.includes(player.id)) current.debrief.roundDone.push(player.id);
       setGameStatus(`${player.name}复盘完了。可以继续追问同一个人。`);
@@ -1521,7 +1572,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
         renderGame();
         const reply = await debriefChatRequest(agent, current, player, abortController.signal);
         appendWerewolfLog(current, { authorId: player.id, author: player.name, text: reply.text || "我暂时没什么要补。", phase: "debrief" });
-        saveDebriefDiary(current, agent, reply.memoryItems);
+        saveDebriefDiary(current, agent, reply.diaryItems);
         current.debrief.roundDone ||= [];
         if (!current.debrief.roundDone.includes(player.id)) current.debrief.roundDone.push(player.id);
         speakingPlayerId = "";

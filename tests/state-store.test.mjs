@@ -1,10 +1,116 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createStateStore } from "../lib/state-store.mjs";
 import { appendWerewolfLog, archiveWerewolfGame, createWerewolfGame, finishWerewolfGame } from "../public/werewolf-game.js";
+
+test("SQL 主状态优先于旧 JSON 镜像，保存时先写数据库再更新镜像", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-db-primary-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = join(directory, "state.json");
+  await writeFile(filePath, JSON.stringify({
+    version: 3,
+    agents: [],
+    activeRoomId: "json-room",
+    rooms: [{ id: "json-room", name: "过期镜像", participantIds: [], messages: [] }],
+  }), "utf8");
+  const databaseState = {
+    version: 3,
+    agents: [],
+    activeRoomId: "db-room",
+    rooms: [{ id: "db-room", name: "数据库正文", participantIds: [], messages: [] }],
+  };
+  const saved = [];
+  const database = {
+    async loadState() { return structuredClone(databaseState); },
+    async saveState(value) { saved.push(structuredClone(value)); return true; },
+  };
+  const store = createStateStore({ filePath, secret: "db-primary-secret", database });
+
+  const initial = await store.clientState();
+  assert.equal(initial.activeRoomId, "db-room");
+  assert.equal(initial.rooms[0].name, "数据库正文");
+  assert.equal(saved.length, 0);
+
+  initial.rooms[0].name = "数据库已更新";
+  await store.save(initial);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].rooms[0].name, "数据库已更新");
+  assert.match(await readFile(filePath, "utf8"), /数据库已更新/);
+});
+
+test("SQL 为空时会从现有 JSON 灾备镜像无损迁移一次", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-db-migrate-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = join(directory, "state.json");
+  await writeFile(filePath, JSON.stringify({
+    version: 3,
+    agents: [{ id: "guest-one", name: "GPT", memoryEnabled: true, memory: "重要旧记忆", memoryRevision: 4 }],
+    activeRoomId: "old-room",
+    rooms: [{ id: "old-room", name: "旧聊天室", participantIds: ["guest-one"], messages: [{ id: "old-one", text: "第一条", kind: "user", author: "晨曦" }] }],
+  }), "utf8");
+  const saved = [];
+  const store = createStateStore({
+    filePath,
+    secret: "db-migrate-secret",
+    database: {
+      async loadState() { return null; },
+      async saveState(value) { saved.push(structuredClone(value)); return true; },
+    },
+  });
+
+  const restored = await store.clientState();
+  assert.equal(restored.rooms[0].messages[0].text, "第一条");
+  assert.equal(restored.agents[0].memory, "重要旧记忆");
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].activeRoomId, "old-room");
+});
+
+test("主数据库读取失败时不会静默退回旧 JSON 形成分叉", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-db-unavailable-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = join(directory, "state.json");
+  await writeFile(filePath, JSON.stringify({
+    version: 3,
+    agents: [],
+    activeRoomId: "stale-room",
+    rooms: [{ id: "stale-room", name: "旧灾备镜像", participantIds: [], messages: [] }],
+  }), "utf8");
+  const store = createStateStore({
+    filePath,
+    secret: "db-unavailable-secret",
+    database: {
+      async loadState() { throw new Error("connection refused"); },
+      async saveState() { throw new Error("should not write"); },
+    },
+  });
+
+  await assert.rejects(() => store.clientState(), /主数据库暂时无法读取：connection refused/);
+});
+
+test("同一嘉宾可加入多个房间，离开一个房间不会删除全局嘉宾或私人记忆", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-global-agent-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({ filePath: join(directory, "state.json"), secret: "global-agent-secret" });
+  const initial = await store.save({
+    agents: [{ id: "guest-one", name: "GPT", memoryEnabled: true, memory: "跨房间记忆", memoryRevision: 5 }],
+    activeRoomId: "room-one",
+    rooms: [
+      { id: "room-one", name: "客厅", participantIds: ["guest-one"], messages: [] },
+      { id: "room-two", name: "书房", participantIds: ["guest-one"], messages: [] },
+    ],
+  });
+  assert.deepEqual(initial.rooms.map((room) => room.participantIds), [["guest-one"], ["guest-one"]]);
+
+  initial.activeRoomId = "room-two";
+  initial.rooms = [initial.rooms[1]];
+  const after = await store.save(initial);
+  assert.equal(after.agents.length, 1);
+  assert.equal(after.agents[0].memory, "跨房间记忆");
+  assert.deepEqual(after.rooms[0].participantIds, ["guest-one"]);
+});
 
 test("聊天记录超过五百条时不会静默丢掉最早消息", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-long-history-"));

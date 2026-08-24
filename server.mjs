@@ -15,6 +15,7 @@ import { createStateStore } from "./lib/state-store.mjs";
 import { createRoomScheduler } from "./lib/scheduled-chat.mjs";
 import { createRoomSummaryJobs } from "./lib/room-summary-jobs.mjs";
 import { createPostgresArchive } from "./lib/postgres-archive.mjs";
+import { createSqliteArchive } from "./lib/sqlite-archive.mjs";
 import { createVisitorManager } from "./lib/visitor-mode.mjs";
 import { DEFAULT_VISIBLE_REPLY_TOKENS } from "./public/reply-limits.js";
 
@@ -411,7 +412,7 @@ export function createAppServer(options = {}) {
           room.werewolf = stored;
         }
       } catch {
-        // The JSON mirror remains usable while PostgreSQL is temporarily unavailable.
+        // The canonical database state remains usable even if the relational werewolf view is rebuilding.
       }
     }
     return stateForClient(snapshot);
@@ -977,7 +978,7 @@ export function createAppServer(options = {}) {
         return;
       }
       if (!archive?.status?.().enabled || typeof archive.currentWerewolfGame !== "function") {
-        sendJson(response, 503, { error: "PostgreSQL 狼人杀档案尚未启用" });
+        sendJson(response, 503, { error: "狼人杀数据库尚未启用" });
         return;
       }
       try {
@@ -994,7 +995,7 @@ export function createAppServer(options = {}) {
         return;
       }
       if (!archive?.status?.().enabled || typeof archive.werewolfArchives !== "function") {
-        sendJson(response, 503, { error: "PostgreSQL 狼人杀档案尚未启用" });
+        sendJson(response, 503, { error: "狼人杀数据库尚未启用" });
         return;
       }
       try {
@@ -1015,7 +1016,7 @@ export function createAppServer(options = {}) {
         return;
       }
       if (!archive?.status?.().enabled || typeof archive.werewolfGame !== "function") {
-        sendJson(response, 503, { error: "PostgreSQL 狼人杀档案尚未启用" });
+        sendJson(response, 503, { error: "狼人杀数据库尚未启用" });
         return;
       }
       try {
@@ -1056,7 +1057,7 @@ export function createAppServer(options = {}) {
             try {
               await archive.syncWerewolfSnapshot(saved);
             } catch {
-              throw new Error("狼人杀已写入本机镜像，但数据库增量封存失败；请重试保存");
+              throw new Error("狼人杀主状态已保存，但分表卷宗同步失败；请重试保存");
             }
           }
           sendJson(response, 200, stateForClient(saved));
@@ -1089,7 +1090,7 @@ export function createAppServer(options = {}) {
         return;
       }
       if (!archive?.status?.().enabled) {
-        sendJson(response, 409, { error: "PostgreSQL 档案馆尚未启用；当前仍由本地 JSON 正常保存" });
+        sendJson(response, 409, { error: "数据库存储尚未启用" });
         return;
       }
       if (!stateStore) {
@@ -1260,13 +1261,13 @@ if (isMainModule) {
   const databaseUrl = process.env.OBSERVATION_DATABASE_URL || settings.OBSERVATION_DATABASE_URL || "";
   const databaseSsl = String(process.env.OBSERVATION_DATABASE_SSL || settings.OBSERVATION_DATABASE_SSL || "false")
     .toLowerCase() === "true";
-  const archive = createPostgresArchive({
-    connectionString: databaseUrl,
-    ssl: databaseSsl,
-  });
+  const archive = databaseUrl
+    ? createPostgresArchive({ connectionString: databaseUrl, ssl: databaseSsl })
+    : createSqliteArchive({ filePath: resolve(projectRoot, "data", "observation-room.sqlite") });
   const stateStore = createStateStore({
     filePath: resolve(projectRoot, "data", "state.json"),
     secret: dataSecret,
+    database: archive,
     onStateChange: (snapshot) => archive.enqueue(snapshot),
   });
   const visitorManager = createVisitorManager({
