@@ -84,8 +84,9 @@ export function createWerewolfGame({ participants, viewMode = "player", costMode
   }));
   const now = Date.now();
   return {
-    version: 2,
+    version: 3,
     id: gameId(),
+    revision: 1,
     status: "active",
     viewMode: viewMode === "god" ? "god" : "player",
     costMode: costMode === "standard" ? "standard" : "economy",
@@ -115,6 +116,7 @@ export function createWerewolfGame({ participants, viewMode = "player", costMode
       roundDone: [],
       openedAt: null,
     },
+    privateDiaries: [],
     incidents: [],
     createdAt: now,
     updatedAt: now,
@@ -149,8 +151,8 @@ function sanitizeLogEntry(entry) {
   };
 }
 
-function sanitizeRecordList(value, limit = 50) {
-  return (Array.isArray(value) ? value : []).slice(-limit).map((entry) => ({
+function sanitizeRecordList(value) {
+  return (Array.isArray(value) ? value : []).map((entry) => ({
     ...entry,
     day: boundedInteger(entry?.day, 1, 1, 99),
   }));
@@ -167,12 +169,30 @@ function sanitizeDebrief(value) {
 }
 
 function sanitizeIncidents(value) {
-  return (Array.isArray(value) ? value : []).slice(-50).map((entry) => ({
+  return (Array.isArray(value) ? value : []).map((entry) => ({
     day: boundedInteger(entry?.day, 1, 1, 99),
     phase: Object.hasOwn(WEREWOLF_PHASE_META, entry?.phase) ? entry.phase : "day_speech",
     text: text(entry?.text, 1_000).trim(),
     timestamp: Number.isFinite(Number(entry?.timestamp)) ? Number(entry.timestamp) : Date.now(),
   })).filter((entry) => entry.text);
+}
+
+function sanitizePrivateDiary(entry) {
+  const authorId = cleanId(entry?.authorId);
+  const body = text(entry?.body, 2_000).trim();
+  if (!authorId || !body) return null;
+  const audienceIds = [...new Set((Array.isArray(entry?.audienceIds) ? entry.audienceIds : [])
+    .map(cleanId)
+    .filter(Boolean))];
+  if (!audienceIds.includes(WEREWOLF_USER_ID)) audienceIds.push(WEREWOLF_USER_ID);
+  if (!audienceIds.includes(authorId)) audienceIds.push(authorId);
+  return {
+    id: cleanId(entry?.id) || `diary-${Math.random().toString(36).slice(2, 10)}`,
+    authorId,
+    body,
+    audienceIds,
+    timestamp: Number.isFinite(Number(entry?.timestamp)) ? Number(entry.timestamp) : Date.now(),
+  };
 }
 
 export function sanitizeWerewolfGame(game) {
@@ -187,8 +207,9 @@ export function sanitizeWerewolfGame(game) {
     ? (game.phase === "debrief" ? "debrief" : "ended")
     : (Object.hasOwn(WEREWOLF_PHASE_META, game.phase) ? game.phase : "night_wolves");
   return {
-    version: 2,
+    version: 3,
     id: cleanId(game.id) || gameId(),
+    revision: boundedInteger(game.revision, 1, 1, Number.MAX_SAFE_INTEGER),
     status,
     viewMode: game.viewMode === "god" ? "god" : "player",
     costMode: game.costMode === "standard" ? "standard" : "economy",
@@ -196,10 +217,10 @@ export function sanitizeWerewolfGame(game) {
     day: boundedInteger(game.day, 1, 1, 99),
     phase,
     players,
-    log: (Array.isArray(game.log) ? game.log : []).slice(-500).map(sanitizeLogEntry),
+    log: (Array.isArray(game.log) ? game.log : []).map(sanitizeLogEntry),
     nights: sanitizeRecordList(game.nights),
     days: sanitizeRecordList(game.days),
-    seerChecks: sanitizeRecordList(game.seerChecks, 100),
+    seerChecks: sanitizeRecordList(game.seerChecks),
     witch: {
       healAvailable: game.witch?.healAvailable !== false,
       poisonAvailable: game.witch?.poisonAvailable !== false,
@@ -208,6 +229,9 @@ export function sanitizeWerewolfGame(game) {
     tieRound: boundedInteger(game.tieRound, 0, 0, 2),
     winner: ["good", "wolf"].includes(game.winner) ? game.winner : null,
     debrief: sanitizeDebrief(game.debrief),
+    privateDiaries: (Array.isArray(game.privateDiaries) ? game.privateDiaries : [])
+      .map(sanitizePrivateDiary)
+      .filter(Boolean),
     incidents: sanitizeIncidents(game.incidents),
     archiveTitle: text(game.archiveTitle, 180),
     archivedAt: Number.isFinite(Number(game.archivedAt)) ? Number(game.archivedAt) : null,
@@ -227,7 +251,30 @@ export function recordWerewolfIncident(game, body) {
   if (!content) return;
   game.incidents ||= [];
   game.incidents.push({ day: game.day, phase: game.phase, text: content, timestamp: Date.now() });
-  game.incidents = game.incidents.slice(-50);
+  game.updatedAt = Date.now();
+}
+
+export function appendWerewolfPrivateDiary(game, {
+  id = "",
+  authorId,
+  body,
+  audienceIds = [],
+  timestamp = Date.now(),
+} = {}) {
+  game.privateDiaries ||= [];
+  const entry = sanitizePrivateDiary({ id, authorId, body, audienceIds, timestamp });
+  if (!entry) return null;
+  const existing = game.privateDiaries.find((item) => item.id === entry.id);
+  if (existing) return existing;
+  game.privateDiaries.push(entry);
+  game.updatedAt = Math.max(Number(game.updatedAt) || 0, entry.timestamp);
+  return entry;
+}
+
+export function visibleWerewolfPrivateDiaries(game, viewerId = WEREWOLF_USER_ID) {
+  if (!game) return [];
+  return (Array.isArray(game.privateDiaries) ? game.privateDiaries : [])
+    .filter((entry) => viewerId === WEREWOLF_USER_ID || entry.audienceIds?.includes(viewerId));
 }
 
 export function buildWerewolfRecap(game) {
@@ -286,6 +333,8 @@ export function archiveWerewolfGame(game, sequence = 1) {
   beginWerewolfDebrief(game);
   const archived = sanitizeWerewolfGame(structuredClone(game));
   archived.archivedAt = Date.now();
+  archived.updatedAt = archived.archivedAt;
+  archived.revision = Math.max(1, Number(archived.revision) || 1) + 1;
   const result = archived.winner === "wolf" ? "狼人胜利" : archived.winner === "good" ? "好人胜利" : "提前结束";
   archived.archiveTitle = `第 ${sequence} 局｜${result}`;
   return archived;
@@ -306,7 +355,6 @@ export function appendWerewolfLog(game, { visibility = "public", authorId = "sys
     timestamp,
   });
   game.log.push(entry);
-  game.log = game.log.slice(-500);
   game.updatedAt = timestamp;
   return entry;
 }

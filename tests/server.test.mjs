@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import test from "node:test";
 import { chatRequestPolicy, createAppServer } from "../server.mjs";
+import { appendWerewolfLog, createWerewolfGame } from "../public/werewolf-game.js";
 
 test("数据库档案馆状态可查询并能手动触发补存", async (context) => {
   let queued = null;
@@ -25,6 +26,96 @@ test("数据库档案馆状态可查询并能手动触发补存", async (context
   const sync = await fetch(`${origin}/api/archive/sync`, { method: "POST" });
   assert.equal(sync.status, 202);
   assert.deepEqual(queued, { rooms: [{ id: "room-one" }], agents: [] });
+});
+
+test("刷新时优先恢复数据库中较新的狼人杀进度并同步每次保存", async (context) => {
+  const participants = Array.from({ length: 6 }, (_, index) => ({
+    id: `server-werewolf-${index + 1}`,
+    name: `服务端玩家${index + 1}`,
+    type: "agent",
+  }));
+  const stale = createWerewolfGame({ participants, random: () => 0.2 });
+  const recovered = structuredClone(stale);
+  appendWerewolfLog(recovered, { visibility: "wolves", text: "数据库中的较新夜间进度" });
+  recovered.revision = 5;
+  let synced = null;
+  const snapshot = {
+    version: 3,
+    agents: [],
+    activeRoomId: "werewolf-room",
+    rooms: [{
+      id: "werewolf-room",
+      roomType: "werewolf",
+      werewolf: stale,
+      werewolfArchives: [{ id: "sealed-game" }],
+      messages: [],
+    }],
+  };
+  const stateStore = {
+    clientState: async () => structuredClone(snapshot),
+    save: async (payload) => payload,
+  };
+  const archive = {
+    status: () => ({ enabled: true, state: "ready" }),
+    currentWerewolfGame: async () => structuredClone(recovered),
+    syncWerewolfSnapshot: async (value) => { synced = structuredClone(value); },
+  };
+  const server = createAppServer({ stateStore, archive });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${server.address().port}`;
+
+  const refreshed = await fetch(`${origin}/api/state`);
+  assert.equal(refreshed.status, 200);
+  const restored = await refreshed.json();
+  assert.equal(restored.rooms[0].werewolf.revision, 5);
+  assert.ok(restored.rooms[0].werewolf.log.some((entry) => entry.text === "数据库中的较新夜间进度"));
+  assert.deepEqual(restored.rooms[0].werewolfArchives, []);
+  assert.equal(restored.rooms[0].werewolfArchiveCount, 1);
+
+  const saved = await fetch(`${origin}/api/state`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(snapshot),
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(synced.rooms[0].werewolf.id, stale.id);
+});
+
+test("狼人杀历史 API 按整局列目录，并在单局内部单独分页事件", async (context) => {
+  const calls = [];
+  const archive = {
+    status: () => ({ enabled: true, state: "ready" }),
+    werewolfArchives: async (roomId, options) => {
+      calls.push({ kind: "catalog", roomId, options });
+      return { items: [{ id: "game-one", archiveTitle: "第 1 局｜狼人胜利" }], offset: 2, limit: 1, total: 4 };
+    },
+    werewolfGame: async (gameId, options) => {
+      calls.push({ kind: "game", gameId, options });
+      return { game: { id: gameId, log: [] }, events: { offset: 100, limit: 100, total: 620, hasMore: true } };
+    },
+  };
+  const server = createAppServer({ archive });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${server.address().port}`;
+
+  const catalog = await fetch(`${origin}/api/werewolf/archives?roomId=room-one&offset=2&limit=1`);
+  assert.equal(catalog.status, 200);
+  assert.equal((await catalog.json()).items.length, 1);
+  const game = await fetch(`${origin}/api/werewolf/games/game-one?roomId=room-one&offset=100&limit=100`);
+  assert.equal(game.status, 200);
+  assert.equal((await game.json()).events.total, 620);
+  assert.deepEqual(calls, [
+    { kind: "catalog", roomId: "room-one", options: { offset: "2", limit: "1" } },
+    {
+      kind: "game",
+      gameId: "game-one",
+      options: { roomId: "room-one", eventOffset: "100", eventLimit: "100", includeDiaries: true },
+    },
+  ]);
 });
 
 test("后台总结任务接口可以提交、查询和取消任务", async (context) => {

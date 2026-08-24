@@ -388,6 +388,10 @@ function hydrateRoom(room, fallbackParticipants = [], agents = []) {
     mic: hydrateRoomMic(room?.mic),
     werewolf: sanitizeWerewolfGame(room?.werewolf),
     werewolfArchives: sanitizeWerewolfArchives(room?.werewolfArchives),
+    werewolfArchiveCount: Math.max(
+      Number(room?.werewolfArchiveCount) || 0,
+      Array.isArray(room?.werewolfArchives) ? room.werewolfArchives.length : 0,
+    ),
     externalRevision: Math.max(0, Number(room?.externalRevision) || 0),
     participantIds: Array.isArray(room?.participantIds) ? [...new Set(room.participantIds)] : fallbackParticipants,
     messages: Array.isArray(room?.messages) ? room.messages : [],
@@ -767,6 +771,10 @@ function mergeServerRoomUpdates(serverRooms = []) {
         roomForm.elements.namedItem("memorySummary").value = room.memory.summary;
       }
     }
+    room.werewolfArchiveCount = Math.max(
+      Number(room.werewolfArchiveCount) || 0,
+      Number(remote.werewolfArchiveCount) || 0,
+    );
     room.externalRevision = Math.max(Number(room.externalRevision) || 0, Number(remote.externalRevision) || 0);
     room.updatedAt = Math.max(Number(room.updatedAt) || 0, Number(remote.updatedAt) || 0);
   }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createStateStore } from "../lib/state-store.mjs";
-import { archiveWerewolfGame, createWerewolfGame, finishWerewolfGame } from "../public/werewolf-game.js";
+import { appendWerewolfLog, archiveWerewolfGame, createWerewolfGame, finishWerewolfGame } from "../public/werewolf-game.js";
 
 test("聊天记录超过五百条时不会静默丢掉最早消息", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-long-history-"));
@@ -640,4 +640,96 @@ test("狼人杀房会单独保存临时卷宗，不混入普通聊天与长期�
   assert.ok(saved.rooms[0].werewolfArchives[0].log.some((entry) => entry.phase === "debrief"));
   assert.deepEqual(saved.rooms[0].messages, []);
   assert.equal(saved.rooms[0].memory.summary, "这段普通房间总结不应被游戏改写");
+});
+
+test("中途刷新与滞后重复保存不会回退狼人杀当前进度", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-werewolf-refresh-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({ filePath: join(directory, "state.json"), secret: "refresh-secret" });
+  const participants = Array.from({ length: 6 }, (_, index) => ({
+    id: `refresh-${index + 1}`,
+    name: `刷新玩家${index + 1}`,
+    type: "agent",
+  }));
+  const agents = participants.map((player) => ({ ...player, format: "openai", authType: "none" }));
+  const game = createWerewolfGame({ participants, random: () => 0.2 });
+  const first = await store.save({
+    agents,
+    activeRoomId: "werewolf-refresh-room",
+    rooms: [{
+      id: "werewolf-refresh-room",
+      name: "刷新恢复局",
+      roomType: "werewolf",
+      participantIds: participants.map((player) => player.id),
+      messages: [],
+      werewolf: game,
+      werewolfArchives: [],
+    }],
+  });
+
+  const progressed = structuredClone(first);
+  const progressedGame = progressed.rooms[0].werewolf;
+  appendWerewolfLog(progressedGame, { visibility: "wolves", text: "第二次增量已经落库。" });
+  progressedGame.revision = 8;
+  const savedProgress = await store.save(progressed);
+  assert.equal(savedProgress.rooms[0].werewolf.revision, 8);
+
+  const afterStaleRetry = await store.save(first);
+  assert.equal(afterStaleRetry.rooms[0].werewolf.revision, 8);
+  assert.ok(afterStaleRetry.rooms[0].werewolf.log.some((entry) => entry.text === "第二次增量已经落库。"));
+  assert.equal((await store.clientState()).rooms[0].werewolf.revision, 8);
+});
+
+test("封存后旧局不会被滞后请求复活，新局也不会继承旧复盘或私人日记", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-werewolf-seal-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({ filePath: join(directory, "state.json"), secret: "seal-secret" });
+  const participants = Array.from({ length: 6 }, (_, index) => ({
+    id: `seal-${index + 1}`,
+    name: `封存玩家${index + 1}`,
+    type: "agent",
+  }));
+  const agents = participants.map((player) => ({ ...player, format: "openai", authType: "none" }));
+  const oldGame = createWerewolfGame({ participants, random: () => 0.3 });
+  finishWerewolfGame(oldGame, "wolf");
+  oldGame.privateDiaries.push({
+    id: "old-private-diary",
+    authorId: participants[0].id,
+    body: "只属于旧局。",
+    audienceIds: [participants[0].id, "werewolf-user"],
+    timestamp: Date.now(),
+  });
+  const activeSnapshot = await store.save({
+    agents,
+    activeRoomId: "werewolf-seal-room",
+    rooms: [{
+      id: "werewolf-seal-room",
+      name: "封存测试",
+      roomType: "werewolf",
+      participantIds: participants.map((player) => player.id),
+      messages: [],
+      werewolf: oldGame,
+      werewolfArchives: [],
+    }],
+  });
+
+  const archived = archiveWerewolfGame(oldGame, 1);
+  const sealed = structuredClone(activeSnapshot);
+  sealed.rooms[0].werewolf = null;
+  sealed.rooms[0].werewolfArchives = [archived];
+  await store.save(sealed);
+
+  const newGame = createWerewolfGame({ participants, random: () => 0.6 });
+  const next = structuredClone(sealed);
+  next.rooms[0].werewolf = newGame;
+  const started = await store.save(next);
+  assert.equal(started.rooms[0].werewolf.id, newGame.id);
+  assert.equal(started.rooms[0].werewolf.privateDiaries.length, 0);
+  assert.ok(!started.rooms[0].werewolf.log.some((entry) => entry.phase === "debrief"));
+  assert.equal(started.rooms[0].werewolfArchives.length, 1);
+  assert.equal(started.rooms[0].werewolfArchives[0].privateDiaries[0].body, "只属于旧局。");
+
+  const afterStaleRetry = await store.save(activeSnapshot);
+  assert.equal(afterStaleRetry.rooms[0].werewolf.id, newGame.id);
+  assert.equal(afterStaleRetry.rooms[0].werewolfArchives.length, 1);
 });

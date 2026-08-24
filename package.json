@@ -29,6 +29,7 @@
     "dev": "node server.mjs",
     "start": "node server.mjs",
     "build": "node scripts/build.mjs",
+    "migrate:werewolf": "node scripts/migrate-werewolf-archive.mjs",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {

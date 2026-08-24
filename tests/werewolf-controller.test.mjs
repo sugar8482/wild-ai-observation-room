@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { roleKnowledge, validTargets, viewerRoleKnowledge } from "../public/werewolf-controller.js";
+import { gameSystemPrompt, roleKnowledge, validTargets, viewerRoleKnowledge } from "../public/werewolf-controller.js";
 import { WEREWOLF_USER_ID, createWerewolfGame } from "../public/werewolf-game.js";
 
 function manualGame() {
@@ -171,4 +171,21 @@ test("晨曦拿狼人时只看见自己和狼队友的身份", () => {
 
   assert.deepEqual(viewerRoleKnowledge(game, game.players.find((player) => player.id === "wolf-view-1")), { kind: "role", role: "wolf" });
   assert.deepEqual(viewerRoleKnowledge(game, game.players.find((player) => player.id === "wolf-view-2")), { kind: "hidden" });
+});
+
+test("新局提示词不会读取旧局复盘、旧私人日记或嘉宾长期记忆", () => {
+  const game = manualGame();
+  const player = game.players[0];
+  const prompt = gameSystemPrompt({
+    id: player.id,
+    name: player.name,
+    persona: "保持冷静。",
+    memoryEnabled: true,
+    memory: "旧局秘密：上一局二号是狼；旧私人日记：我记恨三号。",
+  }, game, player, "现在进行白天发言。");
+
+  assert.doesNotMatch(prompt, /上一局二号是狼/);
+  assert.doesNotMatch(prompt, /我记恨三号/);
+  assert.match(prompt, /不要读取或引用任何旧局/);
+  assert.match(prompt, /现在进行白天发言/);
 });

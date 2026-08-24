@@ -236,13 +236,26 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
 
 test("狼人杀赛后复盘允许嘉宾自主写私人日记但仍隔离普通长期总结", async () => {
   const script = await readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8");
-  assert.match(script, /privateMemoryOutputInstruction\(agent\)/);
+  assert.match(script, /privateDiaryOutputInstruction\(agent\)/);
   assert.match(script, /parseAgentReply\(String\(payload\.text\)\)/);
-  assert.match(script, /saveDebriefMemory\(agent, reply\.memoryItems\)/);
+  assert.match(script, /saveDebriefDiary\(current, agent, reply\.memoryItems\)/);
+  assert.match(script, /appendWerewolfPrivateDiary/);
   assert.match(script, /本局卷宗与赛后公开发言不会写入普通聊天室长期总结/);
   assert.match(script, /maxTokens: DEFAULT_VISIBLE_REPLY_TOKENS/);
   assert.doesNotMatch(script, /maxTokens: 520/);
-  assert.doesNotMatch(script, /本轮复盘不会写入普通聊天室长期总结或你的私人记忆/);
+  assert.doesNotMatch(script, /appendAgentMemory/);
+});
+
+test("狼人杀历史外层按整局上拉加载，局内才使用一百条渲染窗口", async () => {
+  const script = await readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8");
+  assert.match(script, /offset=\$\{offset\}&limit=1/);
+  assert.match(script, /loadPreviousArchive\(\{ preservePosition: true \}\)/);
+  assert.match(script, /nextScroll\.height - previousScroll\.height/);
+  assert.match(script, /restoreLogScroll\(previousScroll\.owner, previousScroll\.top \+ addedHeight\)/);
+  assert.match(script, /limit=\$\{HISTORY_WINDOW_BATCH\}/);
+  assert.match(script, /本局还有 \$\{remaining\} 条较早记录/);
+  assert.match(script, /加载上一整局/);
+  assert.match(script, /archiveDiarySection/);
 });
 
 test("群聊时间线支持真正隔离的私聊与房主遮罩查看", async () => {

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   WEREWOLF_USER_ID,
   appendWerewolfLog,
+  appendWerewolfPrivateDiary,
   archiveWerewolfGame,
   beginWerewolfDebrief,
   buildWerewolfRecap,
@@ -15,6 +16,7 @@ import {
   sanitizeWerewolfGame,
   sanitizeWerewolfArchives,
   visibleWerewolfLog,
+  visibleWerewolfPrivateDiaries,
   voteOutcome,
 } from "../public/werewolf-game.js";
 
@@ -118,7 +120,7 @@ test("结构化目标与女巫行动兼容名字，平票不会误放逐", () =>
   assert.deepEqual(new Set(outcome.tiedIds), new Set([first.id, second.id]));
 });
 
-test("狼人杀状态会限长清洗，但不会混进普通消息或长期总结", () => {
+test("狼人杀状态不会按五百条裁剪，也不会混进普通消息或长期总结", () => {
   const game = createWerewolfGame({ participants: participants(6), random: () => 0.1 });
   game.log.push(...Array.from({ length: 510 }, (_, index) => ({
     id: `log-${index}`,
@@ -131,10 +133,35 @@ test("狼人杀状态会限长清洗，但不会混进普通消息或长期总�
     timestamp: index,
   })));
   const saved = sanitizeWerewolfGame(game);
-  assert.equal(saved.log.length, 500);
+  assert.equal(saved.log.length, 511);
+  assert.equal(saved.log[0].text, "身份牌已经发好。天黑请闭眼。");
   assert.equal(saved.log.at(-1).text, "密谈509");
   assert.equal(Object.hasOwn(saved, "messages"), false);
   assert.equal(Object.hasOwn(saved, "memory"), false);
+});
+
+test("局内私人日记随游戏保存，并只按当局权限向用户和作者开放", () => {
+  const game = createWerewolfGame({ participants: participants(6), random: () => 0.1 });
+  const author = game.players[0];
+  const stranger = game.players[1];
+  appendWerewolfPrivateDiary(game, {
+    id: "diary-one",
+    authorId: author.id,
+    body: "我这局不该在第三天改票。",
+    audienceIds: [author.id, WEREWOLF_USER_ID],
+    timestamp: 1234,
+  });
+  appendWerewolfPrivateDiary(game, {
+    id: "diary-one",
+    authorId: author.id,
+    body: "重复请求不应生成第二条。",
+  });
+
+  const saved = sanitizeWerewolfGame(game);
+  assert.equal(saved.privateDiaries.length, 1);
+  assert.equal(visibleWerewolfPrivateDiaries(saved, WEREWOLF_USER_ID).length, 1);
+  assert.equal(visibleWerewolfPrivateDiaries(saved, author.id).length, 1);
+  assert.equal(visibleWerewolfPrivateDiaries(saved, stranger.id).length, 0);
 });
 
 test("散场会生成完整事实复盘，封存后保留茶话会但不会串进下一局", () => {

@@ -21,6 +21,7 @@ import { DEFAULT_VISIBLE_REPLY_TOKENS } from "./public/reply-limits.js";
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
 const publicRoot = resolve(projectRoot, "public");
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_STATE_BODY_BYTES = 16 * 1024 * 1024;
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const MAX_LOGIN_FAILURES = 8;
 const SESSION_MAX_AGE_SECONDS = 180 * 24 * 60 * 60;
@@ -59,12 +60,12 @@ function htmlText(value) {
     .replaceAll("'", "&#39;");
 }
 
-async function readJson(request) {
+async function readJson(request, maxBytes = MAX_BODY_BYTES) {
   const chunks = [];
   let total = 0;
   for await (const chunk of request) {
     total += chunk.length;
-    if (total > MAX_BODY_BYTES) throw new ProviderConfigError("请求内容太大");
+    if (total > maxBytes) throw new ProviderConfigError("请求内容太大");
     chunks.push(chunk);
   }
   try {
@@ -395,6 +396,34 @@ export function createAppServer(options = {}) {
 
   function sendMcpError(response, id, code, message, statusCode = 200) {
     sendJson(response, statusCode, { jsonrpc: "2.0", id: id ?? null, error: { code, message } });
+  }
+
+  async function clientStateWithWerewolfRecovery() {
+    const snapshot = await stateStore.clientState();
+    if (!archive?.status?.().enabled || typeof archive.currentWerewolfGame !== "function") return stateForClient(snapshot);
+    for (const room of snapshot.rooms || []) {
+      if (room.roomType !== "werewolf") continue;
+      try {
+        const stored = await archive.currentWerewolfGame(room.id);
+        if (stored && (!room.werewolf
+          || Number(stored.revision) > Number(room.werewolf.revision)
+          || Number(stored.updatedAt) > Number(room.werewolf.updatedAt))) {
+          room.werewolf = stored;
+        }
+      } catch {
+        // The JSON mirror remains usable while PostgreSQL is temporarily unavailable.
+      }
+    }
+    return stateForClient(snapshot);
+  }
+
+  function stateForClient(snapshot) {
+    for (const room of snapshot?.rooms || []) {
+      if (room.roomType !== "werewolf") continue;
+      room.werewolfArchiveCount = room.werewolfArchives?.length || 0;
+      room.werewolfArchives = [];
+    }
+    return snapshot;
   }
 
   function failureState(request) {
@@ -942,6 +971,67 @@ export function createAppServer(options = {}) {
       return;
     }
 
+    if (url.pathname === "/api/werewolf/current" && request.method === "GET") {
+      if (!isAuthorized(request)) {
+        sendJson(response, 401, { error: "需要先输入访问码" });
+        return;
+      }
+      if (!archive?.status?.().enabled || typeof archive.currentWerewolfGame !== "function") {
+        sendJson(response, 503, { error: "PostgreSQL 狼人杀档案尚未启用" });
+        return;
+      }
+      try {
+        sendJson(response, 200, { game: await archive.currentWerewolfGame(url.searchParams.get("roomId")) });
+      } catch {
+        sendJson(response, 500, { error: "读取狼人杀当前进度时出错" });
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/werewolf/archives" && request.method === "GET") {
+      if (!isAuthorized(request)) {
+        sendJson(response, 401, { error: "需要先输入访问码" });
+        return;
+      }
+      if (!archive?.status?.().enabled || typeof archive.werewolfArchives !== "function") {
+        sendJson(response, 503, { error: "PostgreSQL 狼人杀档案尚未启用" });
+        return;
+      }
+      try {
+        sendJson(response, 200, await archive.werewolfArchives(url.searchParams.get("roomId"), {
+          offset: url.searchParams.get("offset"),
+          limit: url.searchParams.get("limit"),
+        }));
+      } catch {
+        sendJson(response, 500, { error: "读取狼人杀历史目录时出错" });
+      }
+      return;
+    }
+
+    const werewolfGameMatch = url.pathname.match(/^\/api\/werewolf\/games\/([a-zA-Z0-9_-]+)$/);
+    if (werewolfGameMatch && request.method === "GET") {
+      if (!isAuthorized(request)) {
+        sendJson(response, 401, { error: "需要先输入访问码" });
+        return;
+      }
+      if (!archive?.status?.().enabled || typeof archive.werewolfGame !== "function") {
+        sendJson(response, 503, { error: "PostgreSQL 狼人杀档案尚未启用" });
+        return;
+      }
+      try {
+        const result = await archive.werewolfGame(werewolfGameMatch[1], {
+          roomId: url.searchParams.get("roomId"),
+          eventOffset: url.searchParams.get("offset"),
+          eventLimit: url.searchParams.get("limit"),
+          includeDiaries: true,
+        });
+        sendJson(response, result ? 200 : 404, result || { error: "没有找到这份狼人杀卷宗" });
+      } catch {
+        sendJson(response, 500, { error: "读取狼人杀卷宗时出错" });
+      }
+      return;
+    }
+
     if (url.pathname === "/api/state") {
       if (!isAuthorized(request)) {
         sendJson(response, 401, { error: "需要先输入访问码" });
@@ -953,15 +1043,31 @@ export function createAppServer(options = {}) {
       }
       try {
         if (request.method === "GET") {
-          sendJson(response, 200, await stateStore.clientState());
+          sendJson(response, 200, await clientStateWithWerewolfRecovery());
           return;
         }
         if (request.method === "PUT") {
-          sendJson(response, 200, await stateStore.save(await readJson(request)));
+          const saved = await stateStore.save(await readJson(request, MAX_STATE_BODY_BYTES));
+          if (
+            archive?.status?.().enabled
+            && typeof archive.syncWerewolfSnapshot === "function"
+            && saved.rooms.some((room) => room.roomType === "werewolf")
+          ) {
+            try {
+              await archive.syncWerewolfSnapshot(saved);
+            } catch {
+              throw new Error("狼人杀已写入本机镜像，但数据库增量封存失败；请重试保存");
+            }
+          }
+          sendJson(response, 200, stateForClient(saved));
           return;
         }
-      } catch {
-        sendJson(response, 500, { error: "保存观察室数据时出错" });
+      } catch (error) {
+        sendJson(response, 500, {
+          error: error?.message?.includes("狼人杀")
+            ? error.message
+            : "保存观察室数据时出错",
+        });
         return;
       }
     }
