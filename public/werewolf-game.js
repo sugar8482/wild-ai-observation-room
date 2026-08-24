@@ -136,14 +136,18 @@ function sanitizePlayer(player) {
 }
 
 function sanitizeLogEntry(entry) {
-  const visibility = ["public", "wolves", "seer", "witch", "god"].includes(entry?.visibility)
+  const visibility = ["public", "private", "wolves", "seer", "witch", "god"].includes(entry?.visibility)
     ? entry.visibility
     : "public";
+  const recipientIds = [...new Set((Array.isArray(entry?.recipientIds) ? entry.recipientIds : [])
+    .map(cleanId)
+    .filter(Boolean))];
   return {
     id: cleanId(entry?.id) || `game-log-${Math.random().toString(36).slice(2, 10)}`,
     day: boundedInteger(entry?.day, 1, 1, 99),
     phase: Object.hasOwn(WEREWOLF_PHASE_META, entry?.phase) ? entry.phase : "day_speech",
     visibility,
+    recipientIds: visibility === "private" ? recipientIds : [],
     authorId: cleanId(entry?.authorId) || "system",
     author: text(entry?.author, 80).trim() || "法官",
     text: text(entry?.text, 20_000),
@@ -340,7 +344,14 @@ export function archiveWerewolfGame(game, sequence = 1) {
   return archived;
 }
 
-export function appendWerewolfLog(game, { visibility = "public", authorId = "system", author = "法官", text: body, phase = game.phase }) {
+export function appendWerewolfLog(game, {
+  visibility = "public",
+  recipientIds = [],
+  authorId = "system",
+  author = "法官",
+  text: body,
+  phase = game.phase,
+}) {
   const content = text(body, 20_000).trim();
   if (!content) return null;
   const timestamp = Date.now();
@@ -349,6 +360,7 @@ export function appendWerewolfLog(game, { visibility = "public", authorId = "sys
     day: game.day,
     phase,
     visibility,
+    recipientIds,
     authorId,
     author,
     text: content,
@@ -368,14 +380,23 @@ export function werewolfPlayer(game, id) {
 }
 
 export function visibleWerewolfLog(game, viewerId = WEREWOLF_USER_ID) {
-  if (game.viewMode === "god" || game.status === "ended") return game.log;
+  const canSeePrivate = (entry) => (
+    entry.visibility !== "private"
+    || viewerId === WEREWOLF_USER_ID
+    || entry.authorId === viewerId
+    || entry.recipientIds?.includes(viewerId)
+  );
+  if (game.viewMode === "god" || game.status === "ended") return game.log.filter(canSeePrivate);
   const viewer = werewolfPlayer(game, viewerId);
   return game.log.filter((entry) => (
-    entry.visibility === "public"
+    canSeePrivate(entry) && (
+      entry.visibility === "public"
+      || entry.visibility === "private"
     || (entry.visibility === "wolves" && viewer?.role === "wolf")
     || (entry.visibility === "seer" && viewer?.role === "seer")
     || (entry.visibility === "witch" && viewer?.role === "witch")
     || entry.authorId === viewerId
+    )
   ));
 }
 

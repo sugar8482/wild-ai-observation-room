@@ -164,6 +164,33 @@ test("局内私人日记随游戏保存，并只按当局权限向用户和作�
   assert.equal(visibleWerewolfPrivateDiaries(saved, stranger.id).length, 0);
 });
 
+test("狼人杀公开与私聊事件严格按晨曦、发送者和收件者可见", () => {
+  const game = createWerewolfGame({ participants: participants(6, true), viewMode: "player", random: () => 0.2 });
+  const sender = game.players.find((player) => player.type === "agent");
+  const recipient = game.players.find((player) => player.type === "agent" && player.id !== sender.id);
+  const stranger = game.players.find((player) => (
+    player.type === "agent" && ![sender.id, recipient.id].includes(player.id)
+  ));
+  const privateEntry = appendWerewolfLog(game, {
+    visibility: "private",
+    recipientIds: [recipient.id],
+    authorId: sender.id,
+    author: sender.name,
+    text: "这句只给指定的人。",
+    phase: "debrief",
+  });
+  appendWerewolfLog(game, { authorId: sender.id, author: sender.name, text: "这句公开。", phase: "debrief" });
+
+  assert.ok(visibleWerewolfLog(game, WEREWOLF_USER_ID).some((entry) => entry.id === privateEntry.id));
+  assert.ok(visibleWerewolfLog(game, sender.id).some((entry) => entry.id === privateEntry.id));
+  assert.ok(visibleWerewolfLog(game, recipient.id).some((entry) => entry.id === privateEntry.id));
+  assert.ok(!visibleWerewolfLog(game, stranger.id).some((entry) => entry.id === privateEntry.id));
+  assert.ok(visibleWerewolfLog(game, stranger.id).some((entry) => entry.text === "这句公开。"));
+
+  finishWerewolfGame(game, "good");
+  assert.ok(!visibleWerewolfLog(game, stranger.id).some((entry) => entry.id === privateEntry.id));
+});
+
 test("散场会生成完整事实复盘，封存后保留茶话会但不会串进下一局", () => {
   const game = createWerewolfGame({ participants: participants(6), random: () => 0.1 });
   const [wolf, , seer, witch] = game.players;

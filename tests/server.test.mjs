@@ -118,6 +118,53 @@ test("狼人杀历史 API 按整局列目录，并在单局内部单独分页事
   ]);
 });
 
+test("当前局与历史局狼人杀消息删除会同步主状态和数据库且重复删除安全", async (context) => {
+  const knownGames = new Set(["current-game", "archived-game"]);
+  const deleted = new Set();
+  const calls = [];
+  const stateStore = {
+    async deleteWerewolfEvent(roomId, gameId, eventId) {
+      calls.push({ kind: "state", roomId, gameId, eventId });
+      const key = `${gameId}:${eventId}`;
+      const first = !deleted.has(key);
+      deleted.add(key);
+      return {
+        gameFound: knownGames.has(gameId),
+        deleted: first,
+        snapshot: { rooms: [{ id: roomId, roomType: "werewolf" }] },
+      };
+    },
+  };
+  const archive = {
+    status: () => ({ enabled: true, state: "ready" }),
+    async syncWerewolfSnapshot(snapshot) { calls.push({ kind: "sync", snapshot }); },
+    async flush() { calls.push({ kind: "flush" }); return true; },
+    async deleteWerewolfEvent(roomId, gameId, eventId) {
+      calls.push({ kind: "database", roomId, gameId, eventId });
+      return { gameFound: true, deleted: false };
+    },
+  };
+  const server = createAppServer({ stateStore, archive });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${server.address().port}`;
+
+  for (const gameId of knownGames) {
+    const response = await fetch(`${origin}/api/werewolf/games/${gameId}/events/event-one?roomId=werewolf-room`, { method: "DELETE" });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).deleted, true);
+  }
+  const retry = await fetch(`${origin}/api/werewolf/games/current-game/events/event-one?roomId=werewolf-room`, { method: "DELETE" });
+  assert.equal(retry.status, 200);
+  assert.equal((await retry.json()).deleted, false);
+  assert.equal(calls.filter((call) => call.kind === "database").length, 3);
+  assert.ok(calls.some((call) => call.kind === "database" && call.gameId === "archived-game"));
+
+  const wrongRoom = await fetch(`${origin}/api/werewolf/games/missing-game/events/event-one?roomId=werewolf-room`, { method: "DELETE" });
+  assert.equal(wrongRoom.status, 404);
+});
+
 test("后台总结任务接口可以提交、查询和取消任务", async (context) => {
   const job = {
     id: "summary-test",

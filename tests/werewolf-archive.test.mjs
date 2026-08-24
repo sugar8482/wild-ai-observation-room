@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   WEREWOLF_ARCHIVE_SCHEMA_SQL,
+  deleteWerewolfEvent,
   listWerewolfArchives,
   loadWerewolfGame,
   snapshotToWerewolfRows,
@@ -64,6 +65,14 @@ function completeGame() {
 
 test("狼人杀数据库行保存完整结构化事实、私人日记与超过五百条事件", () => {
   const game = completeGame();
+  const privateEvent = appendWerewolfLog(game, {
+    visibility: "private",
+    recipientIds: [game.players[1].id],
+    authorId: game.players[0].id,
+    author: game.players[0].name,
+    text: "只给一位嘉宾的赛后私聊。",
+    phase: "debrief",
+  });
   for (let index = 0; index < 620; index += 1) {
     appendWerewolfLog(game, {
       visibility: index % 2 ? "wolves" : "public",
@@ -87,6 +96,9 @@ test("狼人杀数据库行保存完整结构化事实、私人日记与超过�
   assert.equal(rows.events.length, archived.log.length);
   assert.ok(rows.events.length > 500);
   assert.equal(rows.diaries.length, 1);
+  assert.deepEqual(rows.events.find((row) => row.event_id === privateEvent.id).payload, {
+    recipientIds: [game.players[1].id],
+  });
   assert.equal(rows.games[0].game_state.nights[0].wolfVotes[game.players[0].id], game.players[4].id);
   assert.equal(rows.games[0].game_state.seerChecks[0].result, "wolf");
   assert.equal(rows.games[0].game_state.witch.healAvailable, false);
@@ -149,7 +161,8 @@ test("历史目录外层严格按一整局分页，单局内部事件窗口独�
     event_id: `event-${520 + index}`,
     day: 3,
     phase: "debrief",
-    visibility: "public",
+    visibility: index === 0 ? "private" : "public",
+    payload: index === 0 ? { recipientIds: ["archive-player-2"] } : {},
     author_id: "system",
     author: "法官",
     body: `事件 ${520 + index}`,
@@ -180,6 +193,42 @@ test("历史目录外层严格按一整局分页，单局内部事件窗口独�
     eventLimit: 100,
   });
   assert.equal(loaded.game.log.length, 100);
+  assert.deepEqual(loaded.game.log.find((entry) => entry.visibility === "private").recipientIds, ["archive-player-2"]);
   assert.equal(loaded.events.total, 620);
   assert.equal(loaded.events.hasMore, true);
+});
+
+test("PostgreSQL 狼人杀事件删除校验房间并且重复删除安全", async () => {
+  let deleteCount = 0;
+  const queries = [];
+  const pool = {
+    async query(sql, values) {
+      queries.push({ sql, values });
+      if (/SELECT \* FROM werewolf_games/.test(sql)) {
+        return values[1] === "werewolf-room" ? { rows: [{ game_id: values[0], room_id: values[1] }] } : { rows: [] };
+      }
+      if (/DELETE FROM werewolf_events/.test(sql)) {
+        deleteCount += 1;
+        return { rowCount: deleteCount === 1 ? 1 : 0, rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+
+  assert.deepEqual(await deleteWerewolfEvent(pool, {
+    roomId: "werewolf-room",
+    gameId: "game-one",
+    eventId: "event-one",
+  }), { gameFound: true, deleted: true });
+  assert.deepEqual(await deleteWerewolfEvent(pool, {
+    roomId: "werewolf-room",
+    gameId: "game-one",
+    eventId: "event-one",
+  }), { gameFound: true, deleted: false });
+  assert.deepEqual(await deleteWerewolfEvent(pool, {
+    roomId: "other-room",
+    gameId: "game-one",
+    eventId: "event-one",
+  }), { gameFound: false, deleted: false });
+  assert.equal(queries.filter((query) => /DELETE FROM werewolf_events/.test(query.sql)).length, 2);
 });

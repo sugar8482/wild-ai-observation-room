@@ -237,15 +237,34 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
 test("狼人杀赛后复盘把本局日记和可跨房间私人记忆分成两个出口", async () => {
   const script = await readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8");
   assert.match(script, /gameDiaryOutputInstruction\(agent\)/);
-  assert.match(script, /parseWerewolfDebriefReply\(String\(payload\.text\)\)/);
+  assert.match(script, /requestWerewolfDebrief/);
+  assert.match(script, /parseWerewolfDebriefReply\(String\(payload\.text\),/);
   assert.match(script, /saveDebriefDiary\(current, agent, reply\.diaryItems\)/);
   assert.match(script, /appendWerewolfPrivateDiary/);
   assert.match(script, /本局卷宗与赛后公开发言不会整包灌进普通聊天室总结或长期私人记忆/);
-  assert.match(script, /maxTokens: DEFAULT_VISIBLE_REPLY_TOKENS/);
-  assert.doesNotMatch(script, /maxTokens: 520/);
+  assert.match(script, /maxTokens: DEBRIEF_VISIBLE_REPLY_TOKENS[\s\S]{0,80}\+ DEBRIEF_FORMAT_TOKEN_ALLOWANCE/);
+  assert.doesNotMatch(script, /maxTokens: DEFAULT_VISIBLE_REPLY_TOKENS/);
+  assert.match(script, /160～320 个简体中文字/);
+  assert.match(script, /visibility: "private"/);
+  assert.match(script, /recipientIds: privateMessage\.recipientIds/);
   assert.match(script, /appendAgentMemory/);
   assert.match(script, /privateMemoryContext\(agent\)/);
   assert.match(script, /privateMemoryOutputInstruction\(agent\)/);
+});
+
+test("狼人杀消息复用普通消息的触摸操作层，并通过鉴权接口持久删除", async () => {
+  const [app, script, styles] = await Promise.all([
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(script, /createElement\("div", "message-actions"\)/);
+  assert.match(script, /copy-message/);
+  assert.match(script, /delete-message/);
+  assert.match(script, /method: "DELETE"/);
+  assert.match(script, /werewolf-log-entry\.is-actions-visible/);
+  assert.match(styles, /\.werewolf-log-entry\.is-actions-visible \.message-actions/);
+  assert.match(app, /recipientId = messageRecipient\.value/);
 });
 
 test("狼人杀历史外层按整局上拉加载，局内才使用一百条渲染窗口", async () => {

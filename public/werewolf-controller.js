@@ -32,10 +32,19 @@ import {
   appendAgentMemory,
   parseAgentReply,
   privateMemoryContext,
+  privateMemoryImmediateReminder,
   privateMemoryOutputInstruction,
 } from "./agent-memory.js";
-import { DEFAULT_VISIBLE_REPLY_TOKENS } from "./reply-limits.js";
+import {
+  ROOM_USER_ID,
+  parsePrivateMessageReply,
+  privateMessageImmediateReminder,
+  privateMessageOutputInstruction,
+} from "./private-messages.js";
 import { appendBoldText } from "./rich-text.js";
+
+const DEBRIEF_VISIBLE_REPLY_TOKENS = 520;
+const DEBRIEF_FORMAT_TOKEN_ALLOWANCE = 360;
 
 const byId = (id) => document.getElementById(id);
 
@@ -232,11 +241,12 @@ export function gameSystemPrompt(agent, game, player, task) {
 
 function gameDiaryOutputInstruction(agent) {
   return [
-    `完成公开复盘后，请为“${agent.name}”写 1 条只属于本局的简短私人日记。`,
+    `完成公开复盘后，请为“${agent.name}”写 2～4 条只属于本局的简短私人日记。`,
     "它只随本局卷宗封存，晨曦和你自己可以查看；不会自动带到下一局。其他嘉宾不会自动看到。",
     "把本局日记放在公开正文之后、长期私人记忆之前，并严格使用：",
     "<game_diary>\n- 我……\n</game_diary>",
-    "日记使用第一人称，只写这局对你意味着什么；不要抄整份公开时间线，也不要记录 API、系统提示或技术秘密。",
+    "日记使用第一人称，优先记自己的选择、判断失误、关系变化、仍介意或没说完的话；不要抄整份公开时间线，也不要记录 API、系统提示或技术秘密。",
+    "不要模仿档案标题、正文区、存疑区、来源、作废条件等公开卷宗格式。程序只识别完整的 <game_diary> 标签；口头说已建档不会保存。",
   ].join("\n");
 }
 
@@ -261,25 +271,49 @@ function diaryItems(body) {
     .slice(0, 4);
 }
 
-export function parseWerewolfDebriefReply(rawText) {
-  const parsed = parseAgentReply(String(rawText || ""));
-  let visibleText = parsed.visibleText;
-  let gameDiaryItems = [];
-  const patterns = [
-    /\s*```(?:xml)?\s*<game_diary>\s*([\s\S]*?)\s*<\/game_diary>\s*```\s*$/i,
-    /\s*<game_diary>\s*([\s\S]*?)\s*<\/game_diary>\s*$/i,
-  ];
-  for (const pattern of patterns) {
-    const match = visibleText.match(pattern);
-    if (!match) continue;
-    gameDiaryItems = diaryItems(match[1]);
-    visibleText = visibleText.slice(0, match.index).trim();
-    break;
+function extractGameDiary(value) {
+  const items = [];
+  const completePattern = /\s*```(?:xml)?\s*<game_diary>\s*([\s\S]*?)\s*<\/game_diary>\s*```|\s*<game_diary>\s*([\s\S]*?)\s*<\/game_diary>/gi;
+  let visibleText = String(value || "").replace(completePattern, (_match, fencedBody, plainBody) => {
+    items.push(...diaryItems(fencedBody || plainBody));
+    return "";
+  }).trim();
+  const lower = visibleText.toLowerCase();
+  const openIndex = lower.lastIndexOf("<game_diary>");
+  if (openIndex >= 0 && lower.indexOf("</game_diary>", openIndex) < 0) {
+    visibleText = visibleText.slice(0, openIndex).trim();
   }
+  return { visibleText, diaryItems: items.slice(0, 4) };
+}
+
+export function stripPseudoDebriefArchive(value) {
+  const original = String(value || "").trim();
+  const markerPattern = /^(?:#{1,6}\s*)?(?:【\s*)?(私人记忆档案|正文区|存疑区|来源|作废条件)(?:\s*】)?\s*[:：]?\s*$/gmi;
+  const markers = [...original.matchAll(markerPattern)];
+  if (markers.length < 2) return original;
+  const firstIndex = markers[0].index || 0;
+  const prefix = original.slice(0, firstIndex).trim();
+  if (prefix.length >= 20) return prefix;
+  const bodyMarkerIndex = markers.findIndex((match) => match[1] === "正文区");
+  if (bodyMarkerIndex < 0) return "";
+  const bodyStart = (markers[bodyMarkerIndex].index || 0) + markers[bodyMarkerIndex][0].length;
+  const nextMarker = markers[bodyMarkerIndex + 1];
+  return original.slice(bodyStart, nextMarker?.index ?? original.length).trim();
+}
+
+export function parseWerewolfDebriefReply(rawText, { recipients = [], agentId = "" } = {}) {
+  const privateParsed = parsePrivateMessageReply(String(rawText || ""), { agentId, recipients });
+  const diaryParsed = extractGameDiary(privateParsed.publicText);
+  const parsed = parseAgentReply(diaryParsed.visibleText);
   return {
-    text: stripWerewolfControls(visibleText),
-    diaryItems: gameDiaryItems,
+    text: stripPseudoDebriefArchive(stripWerewolfControls(parsed.visibleText)),
+    diaryItems: diaryParsed.diaryItems,
     memoryItems: parsed.memoryItems,
+    privateMessages: privateParsed.privateMessages.map((message) => ({
+      ...message,
+      recipientIds: message.recipientIds.map((id) => id === ROOM_USER_ID ? WEREWOLF_USER_ID : id),
+    })),
+    invalidRecipients: privateParsed.invalidRecipients,
   };
 }
 
@@ -307,8 +341,8 @@ async function chatRequest(agent, game, player, task, userContent, signal, maxTo
   return parsed.visibleText;
 }
 
-function completeGameHistory(game) {
-  return game.log
+function completeGameHistory(game, viewerId) {
+  return visibleWerewolfLog(game, viewerId)
     .filter((entry) => entry.phase !== "debrief")
     .map((entry) => {
       const channel = entry.visibility === "public" ? "公屏" : entry.visibility;
@@ -318,9 +352,59 @@ function completeGameHistory(game) {
     .slice(-45_000);
 }
 
-async function debriefChatRequest(agent, game, player, signal) {
+function latestDebriefUserMessage(game, viewerId) {
+  return [...visibleWerewolfLog(game, viewerId)]
+    .reverse()
+    .find((entry) => entry.phase === "debrief" && entry.authorId === WEREWOLF_USER_ID)?.text || "";
+}
+
+function explicitMemoryRequest(value) {
+  return /(?:记住|记一下|记下来|私人记忆|写进.{0,8}记忆|存进.{0,8}记忆|记到.{0,8}记忆)/.test(String(value || ""));
+}
+
+async function repairDebriefFormats(agent, game, player, signal, sourceText, {
+  needDiary = false,
+  needMemory = false,
+} = {}) {
+  if (!needDiary && !needMemory) return { diaryItems: [], memoryItems: [] };
+  const required = [
+    needDiary ? "必须补交 <game_diary>，写 2～4 条第一人称局内私人日记。" : "不要输出 <game_diary>。",
+    needMemory ? "晨曦明确要求写入长期私人记忆；必须补交 <self_memory>，写 1～2 条第一人称长期记忆。" : "不要输出 <self_memory>。",
+  ].join("\n");
+  const response = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      agent,
+      requestMode: "werewolf-game",
+      temperature: 0.3,
+      maxTokens: DEBRIEF_FORMAT_TOKEN_ALLOWANCE + (needMemory ? PRIVATE_MEMORY_TOKEN_ALLOWANCE : 0),
+      messages: [
+        { role: "system", content: [
+          `你是“${agent.name}”。刚才的狼人杀复盘正文已经发送，但机器便笺格式缺失。`,
+          "现在只补机器标签，不要重写公开正文，不要写标题、解释、卷宗格式或 Markdown 代码块。",
+          required,
+        ].join("\n") },
+        { role: "user", content: `你刚才的复盘正文：\n${String(sourceText || "").slice(0, 4_000)}` },
+      ],
+    }),
+    signal,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !String(payload.text || "").trim()) return { diaryItems: [], memoryItems: [] };
+  // parseAgentReply intentionally rejects a bare memory tag in ordinary chat.
+  // The hidden repair path is tag-only by design, so add a disposable sentinel.
+  const parsed = parseWerewolfDebriefReply(`格式补交\n${String(payload.text)}`, { agentId: agent.id, recipients: [] });
+  return { diaryItems: parsed.diaryItems, memoryItems: parsed.memoryItems };
+}
+
+export async function requestWerewolfDebrief(agent, game, player, signal, {
+  agents = [],
+  defaultPrivateToUser = false,
+} = {}) {
   const recap = game.debrief?.recap || "";
-  const recentDebrief = game.log
+  const visibleLog = visibleWerewolfLog(game, agent.id);
+  const recentDebrief = visibleLog
     .filter((entry) => entry.phase === "debrief")
     .slice(-24)
     .map((entry) => `${entry.author}：${entry.text}`)
@@ -333,9 +417,15 @@ async function debriefChatRequest(agent, game, player, signal) {
     "现在所有身份、狼队密谈、验人、女巫行动、刀口、票型和遗言都已经公开。你可以认错、邀功、吐槽、反驳、追问或清算，但不要继续把游戏里的假身份当事实硬演。",
     "本局卷宗与赛后公开发言不会整包灌进普通聊天室总结或长期私人记忆；只有你在 <self_memory> 中亲自挑选的少量长期认识才会保存。",
     "说人话，不要只写分析报告，也不要替别人宣布感受。",
+    "公开复盘只说一个最值得回应的新观点，控制在 160～320 个简体中文字、1～3 个短段落；不要重抄身份表、逐日流水账或别人刚说过的结论。字数是上限，不是必须写满。",
+    privateMessageOutputInstruction(agent, agents, { defaultPrivateToUser }),
     gameDiaryOutputInstruction(agent),
     privateMemoryOutputInstruction(agent),
+    privateMessageImmediateReminder({ defaultPrivateToUser }),
+    privateMemoryImmediateReminder(agent, { defaultPrivateToUser }),
+    "【最终输出顺序】公开复盘正文（直接私聊时是保密正文）→ 可选 <private_message> → 必交 <game_diary> → 可选 <self_memory>。机器标签不要出现在公开正文里。",
   ].join("\n\n");
+  const latestUserMessage = latestDebriefUserMessage(game, agent.id);
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -343,10 +433,12 @@ async function debriefChatRequest(agent, game, player, signal) {
       agent,
       requestMode: "werewolf-game",
       temperature: 0.9,
-      maxTokens: DEFAULT_VISIBLE_REPLY_TOKENS + PRIVATE_MEMORY_TOKEN_ALLOWANCE,
+      maxTokens: DEBRIEF_VISIBLE_REPLY_TOKENS
+        + DEBRIEF_FORMAT_TOKEN_ALLOWANCE
+        + (agent.memoryEnabled ? PRIVATE_MEMORY_TOKEN_ALLOWANCE : 0),
       messages: [
         { role: "system", content: system },
-        { role: "user", content: `【法官事实复盘】\n${recap}\n\n【本局完整卷宗】\n${completeGameHistory(game)}\n\n【赛后茶话会最近发言】\n${recentDebrief || "还没人开口。"}\n\n现在轮到你复盘。优先回应晨曦最近点到你的内容；若没有明确追问，就说你最想认领、解释或吐槽的一件事。` },
+        { role: "user", content: `【法官事实复盘】\n${recap}\n\n【本局完整卷宗】\n${completeGameHistory(game, agent.id)}\n\n【赛后茶话会最近发言】\n${recentDebrief || "还没人开口。"}\n\n现在轮到你复盘。优先回应晨曦最近点到你的内容；若没有明确追问，就只说你最想认领、解释或吐槽的一件事。` },
       ],
     }),
     signal,
@@ -354,7 +446,19 @@ async function debriefChatRequest(agent, game, player, signal) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `${agent.name} 没有接通`);
   if (!String(payload.text || "").trim()) throw new Error(`${agent.name} 没有留下有效复盘`);
-  const parsed = parseWerewolfDebriefReply(String(payload.text));
+  const parsed = parseWerewolfDebriefReply(String(payload.text), { agentId: agent.id, recipients: agents });
+  const needMemory = agent.memoryEnabled === true && explicitMemoryRequest(latestUserMessage) && !parsed.memoryItems.length;
+  if (parsed.diaryItems.length < 2 || needMemory) {
+    const repaired = await repairDebriefFormats(agent, game, player, signal, parsed.text, {
+      needDiary: parsed.diaryItems.length < 2,
+      needMemory,
+    });
+    parsed.diaryItems = [...parsed.diaryItems, ...repaired.diaryItems].slice(0, 4);
+    parsed.memoryItems.push(...repaired.memoryItems);
+  }
+  if (!parsed.text && !parsed.privateMessages.length) {
+    throw new Error(`${agent.name} 只交了机器便笺，没有留下复盘正文或私聊`);
+  }
   rememberAgent(agent, parsed.memoryItems);
   return parsed;
 }
@@ -372,7 +476,7 @@ function fallbackTarget(players) {
   return players[0]?.id || null;
 }
 
-export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents, persist, toast }) {
+export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents, persist, toast, copyText, openCopyFallback }) {
   const dialog = byId("werewolf-dialog");
   const setup = byId("werewolf-setup");
   const gameSection = byId("werewolf-game");
@@ -388,6 +492,8 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
   const archiveButton = byId("werewolf-archive-game");
   const composer = byId("composer");
   const messageInput = byId("message-input");
+  const messageRecipient = byId("message-recipient");
+  const composerPrivacyNote = byId("composer-privacy-note");
   const sendButton = byId("send-button");
   let running = false;
   let abortController = null;
@@ -411,6 +517,13 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
 
   function agentFor(playerId) {
     return (getAllAgents?.() || getRoomAgents()).find((agent) => agent.id === playerId) || null;
+  }
+
+  function debriefAgents(current) {
+    const participantIds = new Set(current.players
+      .filter((player) => player.type === "agent")
+      .map((player) => player.id));
+    return (getAllAgents?.() || getRoomAgents()).filter((agent) => participantIds.has(agent.id));
   }
 
   function baseAvatar(author, authorId) {
@@ -469,15 +582,50 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     const item = createElement("article", `werewolf-log-entry${entry.authorId === "system" ? " is-system" : ""}${secret ? " is-secret" : ""}`);
     const content = createElement("div", "werewolf-entry-content");
     const header = document.createElement("header");
+    const privateRecipients = (entry.recipientIds || []).map((id) => (
+      id === WEREWOLF_USER_ID ? "晨曦" : (werewolfPlayer(current, id)?.name || id)
+    )).join("、");
     const route = secret
-      ? { wolves: "🐺 狼队密谈", seer: "🔮 验人结果", witch: "🧪 女巫视角", god: "👁 法官暗牌" }[entry.visibility]
+      ? entry.visibility === "private"
+        ? `🔒 私聊给 ${privateRecipients || "指定对象"}`
+        : { wolves: "🐺 狼队密谈", seer: "🔮 验人结果", witch: "🧪 女巫视角", god: "👁 法官暗牌" }[entry.visibility]
       : WEREWOLF_PHASE_META[entry.phase];
     const label = archived && !route ? entry.phase : route;
     header.append(createElement("span", "", `${entry.author}${label ? ` · ${label}` : ""}`), createElement("time", "", formatTime(entry.timestamp)));
     const body = createElement("p");
     appendBoldText(body, entry.text);
+    body.classList.add("has-actions");
+    const actions = createElement("div", "message-actions");
+    const copyButton = createElement("button", "copy-message", "复制");
+    copyButton.type = "button";
+    copyButton.setAttribute("aria-label", `复制 ${entry.author} 的这条狼人杀消息`);
+    copyButton.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      if (await copyText?.(entry.text)) toast("已复制");
+      else {
+        openCopyFallback?.(entry.text);
+        toast("浏览器拦住了自动复制，已为你选中原文");
+      }
+    });
+    const deleteButton = createElement("button", "delete-message", "删除");
+    deleteButton.type = "button";
+    deleteButton.setAttribute("aria-label", `删除 ${entry.author} 的这条狼人杀消息`);
+    deleteButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void deleteWerewolfLogEntry(current.id, entry.id, { archived });
+    });
+    actions.append(copyButton, deleteButton);
+    body.append(actions);
     content.append(header, body);
     item.append(playerAvatar(current, entry.author, entry.authorId), content);
+    item.addEventListener("click", (event) => {
+      if (event.target.closest(".message-actions")) return;
+      const wasVisible = item.classList.contains("is-actions-visible");
+      for (const message of roomStage.querySelectorAll(".werewolf-log-entry.is-actions-visible")) {
+        message.classList.remove("is-actions-visible");
+      }
+      if (!wasVisible) item.classList.add("is-actions-visible");
+    });
     return item;
   }
 
@@ -498,6 +646,42 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     return persist();
   }
 
+  async function deleteWerewolfLogEntry(gameId, eventId, { archived = false } = {}) {
+    if (running) {
+      toast("先停下当前狼人杀发言，再删除消息");
+      return;
+    }
+    const room = getRoom();
+    if (!room?.id || !gameId || !eventId) return;
+    if (!globalThis.confirm("删除这条狼人杀消息？\n\n只删除显示日志，不会改写身份、刀口、验人、用药、票型或胜负。")) return;
+    try {
+      const response = await fetch(`/api/werewolf/games/${encodeURIComponent(gameId)}/events/${encodeURIComponent(eventId)}?roomId=${encodeURIComponent(room.id)}`, {
+        method: "DELETE",
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "狼人杀消息没有删除成功");
+      if (room.werewolf?.id === gameId) {
+        room.werewolf.log = room.werewolf.log.filter((entry) => entry.id !== eventId);
+      }
+      const localArchive = room.werewolfArchives?.find((entry) => entry.id === gameId);
+      if (localArchive) localArchive.log = localArchive.log.filter((entry) => entry.id !== eventId);
+      const record = loadedArchives.find((entry) => entry.game.id === gameId);
+      if (record) {
+        const before = record.game.log.length;
+        record.game.log = record.game.log.filter((entry) => entry.id !== eventId);
+        if (record.game.log.length !== before) {
+          record.loadedEventCount = Math.max(0, record.loadedEventCount - 1);
+          record.events.total = Math.max(0, Number(record.events.total) - 1);
+        }
+      }
+      if (archived) renderArchives({ openGameId: gameId });
+      else renderGame();
+      toast(payload.deleted ? "这一条已经从狼人杀卷宗中删除" : "这条消息此前已经删除");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
   function saveDebriefDiary(current, agent, diaryItems) {
     let saved = false;
     for (const body of Array.isArray(diaryItems) ? diaryItems : []) {
@@ -509,6 +693,30 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
       saved ||= Boolean(entry);
     }
     return saved;
+  }
+
+  function appendDebriefReply(current, player, agent, reply, { defaultPrivateToUser = false } = {}) {
+    if (reply.text) {
+      appendWerewolfLog(current, {
+        visibility: defaultPrivateToUser ? "private" : "public",
+        recipientIds: defaultPrivateToUser ? [WEREWOLF_USER_ID] : [],
+        authorId: player.id,
+        author: player.name,
+        text: reply.text,
+        phase: "debrief",
+      });
+    }
+    for (const privateMessage of reply.privateMessages || []) {
+      appendWerewolfLog(current, {
+        visibility: "private",
+        recipientIds: privateMessage.recipientIds,
+        authorId: player.id,
+        author: player.name,
+        text: privateMessage.text,
+        phase: "debrief",
+      });
+    }
+    saveDebriefDiary(current, agent, reply.diaryItems);
   }
 
   function setGameStatus(message, isError = false) {
@@ -1176,10 +1384,33 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
       && current.pending?.eliminatedId === user?.id
       && !current.pending?.userLastWordsReady;
     const enabled = Boolean(canDaySpeak || canTieSpeak || canLastWords || canDebrief);
+    const previousRecipient = messageRecipient.value;
+    messageRecipient.replaceChildren();
+    const publicOption = document.createElement("option");
+    publicOption.value = "public";
+    publicOption.textContent = canDebrief ? "公开复盘" : "公开";
+    messageRecipient.append(publicOption);
+    if (canDebrief) {
+      for (const player of current.players.filter((item) => item.type === "agent")) {
+        const option = document.createElement("option");
+        option.value = player.id;
+        option.textContent = `私聊 · ${player.name}${player.alive ? "" : "（已出局）"}`;
+        messageRecipient.append(option);
+      }
+    }
+    const privateTarget = canDebrief
+      ? current.players.find((player) => player.type === "agent" && player.id === previousRecipient)
+      : null;
+    messageRecipient.value = privateTarget?.id || "public";
+    messageRecipient.disabled = !canDebrief;
+    composer.classList.toggle("is-private-compose", Boolean(privateTarget));
+    composerPrivacyNote.textContent = privateTarget
+      ? `只有你和 ${privateTarget.name} 能看到；发送后自动回到公开复盘`
+      : canDebrief ? "本局赛后公屏可供全部嘉宾复盘" : "游戏进行中只开放依法可见的阶段发言";
     messageInput.disabled = !enabled;
     sendButton.disabled = !enabled || running;
     messageInput.placeholder = canDebrief
-      ? "赛后想审谁、夸谁、骂谁，直接说……"
+      ? privateTarget ? `私聊给 ${privateTarget.name}……` : "赛后想审谁、夸谁、骂谁，直接说……"
       : canLastWords
         ? "留下最后一句话；发出后再让法官继续……"
       : canTieSpeak
@@ -1189,7 +1420,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
           : current
             ? "当前阶段不需要公开发言，请打开身份与行动……"
             : "先开一局狼人杀……";
-    sendButton.textContent = canDebrief ? "加入复盘" : canLastWords ? "留下遗言" : "公开发言";
+    sendButton.textContent = canDebrief ? (privateTarget ? "发送私聊" : "加入复盘") : canLastWords ? "留下遗言" : "公开发言";
   }
 
   function renderGame() {
@@ -1521,7 +1752,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     }
   }
 
-  async function runDebriefSpeaker(playerId) {
+  async function runDebriefSpeaker(playerId, { defaultPrivateToUser = false } = {}) {
     const current = game();
     if (!current || current.status !== "ended" || running) return;
     const player = werewolfPlayer(current, playerId);
@@ -1533,12 +1764,16 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     setGameStatus(`${player.name}正在看完整卷宗……`);
     renderGame();
     try {
-      const reply = await debriefChatRequest(agent, current, player, abortController.signal);
-      appendWerewolfLog(current, { authorId: player.id, author: player.name, text: reply.text || "我暂时没什么要补。", phase: "debrief" });
-      saveDebriefDiary(current, agent, reply.diaryItems);
+      const reply = await requestWerewolfDebrief(agent, current, player, abortController.signal, {
+        agents: debriefAgents(current),
+        defaultPrivateToUser,
+      });
+      appendDebriefReply(current, player, agent, reply, { defaultPrivateToUser });
       current.debrief.roundDone ||= [];
       if (!current.debrief.roundDone.includes(player.id)) current.debrief.roundDone.push(player.id);
-      setGameStatus(`${player.name}复盘完了。可以继续追问同一个人。`);
+      setGameStatus(defaultPrivateToUser
+        ? `${player.name}私下回复了你。`
+        : `${player.name}复盘完了。可以继续追问同一个人。`);
       await persistGame();
     } catch (error) {
       if (error.name === "AbortError") setGameStatus("复盘暂停了，前面的内容都还在。", true);
@@ -1570,9 +1805,10 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
         speakingPlayerId = playerId;
         setGameStatus(`${player.name}正在看完整卷宗……`);
         renderGame();
-        const reply = await debriefChatRequest(agent, current, player, abortController.signal);
-        appendWerewolfLog(current, { authorId: player.id, author: player.name, text: reply.text || "我暂时没什么要补。", phase: "debrief" });
-        saveDebriefDiary(current, agent, reply.diaryItems);
+        const reply = await requestWerewolfDebrief(agent, current, player, abortController.signal, {
+          agents: debriefAgents(current),
+        });
+        appendDebriefReply(current, player, agent, reply);
         current.debrief.roundDone ||= [];
         if (!current.debrief.roundDone.includes(player.id)) current.debrief.roundDone.push(player.id);
         speakingPlayerId = "";
@@ -1762,14 +1998,25 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     toast(viewMode === "god" ? "上帝视角已开，今晚谁刀谁都瞒不过你" : "身份发好了——先别露牌 😼");
   }
 
-  function submitUserMessage(rawText) {
+  function submitUserMessage(rawText, { recipientId = "public" } = {}) {
     const current = game();
     const body = String(rawText || "").trim();
     if (!current || !body || running) return false;
     if (current.status === "ended") {
-      appendWerewolfLog(current, { authorId: WEREWOLF_USER_ID, author: "晨曦", text: body, phase: "debrief" });
+      const privateTarget = current.players.find((player) => (
+        player.type === "agent" && player.id === recipientId
+      ));
+      appendWerewolfLog(current, {
+        visibility: privateTarget ? "private" : "public",
+        recipientIds: privateTarget ? [privateTarget.id] : [],
+        authorId: WEREWOLF_USER_ID,
+        author: "晨曦",
+        text: body,
+        phase: "debrief",
+      });
       void persistGame();
       renderGame();
+      if (privateTarget) void runDebriefSpeaker(privateTarget.id, { defaultPrivateToUser: true });
       return true;
     }
     const user = werewolfPlayer(current, WEREWOLF_USER_ID);
@@ -1871,6 +2118,12 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     }
     logLastTouchY = nextY;
   }, { passive: true });
+  document.addEventListener("click", (event) => {
+    if (roomStage.contains(event.target)) return;
+    for (const message of roomStage.querySelectorAll(".werewolf-log-entry.is-actions-visible")) {
+      message.classList.remove("is-actions-visible");
+    }
+  });
 
-  return { open, render: renderGame, submitUserMessage };
+  return { open, render: renderGame, renderComposer: () => syncWerewolfComposer(game()), submitUserMessage };
 }

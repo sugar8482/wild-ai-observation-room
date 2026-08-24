@@ -22,6 +22,14 @@ function sampleState() {
   }));
   const game = createWerewolfGame({ participants, viewMode: "god", random: () => 0.4 });
   appendWerewolfLog(game, { authorId: "guest-global", author: "GPT", text: "本局第一句。" });
+  appendWerewolfLog(game, {
+    visibility: "private",
+    recipientIds: ["wolf-guest-2"],
+    authorId: "guest-global",
+    author: "GPT",
+    text: "这句只写进本局私聊事件。",
+    phase: "debrief",
+  });
   appendWerewolfPrivateDiary(game, {
     authorId: "guest-global",
     body: "只随这局封存的日记。",
@@ -96,11 +104,31 @@ test("SQLite 零配置存储以数据库为主，并保留跨房间嘉宾、全�
     eventLimit: 100,
   });
   assert.ok(restored.game.log.some((entry) => entry.text === "本局第一句。"));
+  const privateEvent = restored.game.log.find((entry) => entry.text === "这句只写进本局私聊事件。");
+  assert.deepEqual(privateEvent.recipientIds, ["wolf-guest-2"]);
   assert.equal(restored.game.privateDiaries[0].body, "只随这局封存的日记。");
 
-  const database = new DatabaseSync(filePath, { readOnly: true });
+  let database = new DatabaseSync(filePath, { readOnly: true });
   assert.equal(database.prepare("SELECT count(*) AS total FROM room_members WHERE member_id=?").get("guest-global").total, 3);
   assert.equal(database.prepare("SELECT count(*) AS total FROM agent_private_memories WHERE agent_id=?").get("guest-global").total, 1);
+  assert.deepEqual(
+    JSON.parse(database.prepare("SELECT payload_json FROM werewolf_events WHERE game_id=? AND event_id=?").get(restored.game.id, privateEvent.id).payload_json),
+    { recipientIds: ["wolf-guest-2"] },
+  );
+  database.close();
+
+  assert.deepEqual(
+    await archive.deleteWerewolfEvent("werewolf-room", restored.game.id, privateEvent.id),
+    { gameFound: true, deleted: true },
+  );
+  assert.deepEqual(
+    await archive.deleteWerewolfEvent("werewolf-room", restored.game.id, privateEvent.id),
+    { gameFound: true, deleted: false },
+  );
+  assert.ok(!(await archive.werewolfGame(restored.game.id, { roomId: "werewolf-room" })).game.log
+    .some((entry) => entry.id === privateEvent.id));
+  database = new DatabaseSync(filePath, { readOnly: true });
+  assert.equal(database.prepare("SELECT count(*) AS total FROM werewolf_events WHERE game_id=? AND event_id=?").get(restored.game.id, privateEvent.id).total, 0);
   database.close();
   await archive.close();
 });

@@ -1985,6 +1985,7 @@ html[data-theme="dark"] .werewolf-player-chip.is-known-good {
 }
 
 .werewolf-log-entry p {
+  position: relative;
   grid-column: 1 / -1;
   margin: 9px 0 0;
   padding: 15px 17px;
@@ -1994,6 +1995,18 @@ html[data-theme="dark"] .werewolf-player-chip.is-known-good {
   overflow-wrap: anywhere;
   font-size: 14px;
   line-height: 1.72;
+}
+
+.werewolf-log-entry p.has-actions {
+  padding-right: 82px;
+}
+
+.werewolf-log-entry p:hover .message-actions,
+.werewolf-log-entry.is-actions-visible .message-actions,
+.werewolf-log-entry .message-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
 }
 
 .werewolf-log-entry.is-system p {

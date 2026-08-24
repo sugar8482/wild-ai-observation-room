@@ -1008,6 +1008,47 @@ export function createAppServer(options = {}) {
       return;
     }
 
+    const werewolfEventMatch = url.pathname.match(/^\/api\/werewolf\/games\/([a-zA-Z0-9_-]+)\/events\/([a-zA-Z0-9_-]+)$/);
+    if (werewolfEventMatch && request.method === "DELETE") {
+      if (!isAuthorized(request)) {
+        sendJson(response, 401, { error: "需要先输入访问码" });
+        return;
+      }
+      const roomId = String(url.searchParams.get("roomId") || "");
+      if (!/^[a-zA-Z0-9_-]+$/.test(roomId)) {
+        sendJson(response, 400, { error: "狼人杀房间编号无效" });
+        return;
+      }
+      if (!stateStore || typeof stateStore.deleteWerewolfEvent !== "function") {
+        sendJson(response, 503, { error: "狼人杀主状态尚未启用删除能力" });
+        return;
+      }
+      if (!archive?.status?.().enabled || typeof archive.deleteWerewolfEvent !== "function") {
+        sendJson(response, 503, { error: "狼人杀数据库尚未启用删除能力" });
+        return;
+      }
+      try {
+        const [gameId, eventId] = werewolfEventMatch.slice(1);
+        const stateResult = await stateStore.deleteWerewolfEvent(roomId, gameId, eventId);
+        if (!stateResult.gameFound) {
+          sendJson(response, 404, { error: "没有找到这份狼人杀卷宗" });
+          return;
+        }
+        if (typeof archive.syncWerewolfSnapshot === "function") {
+          await archive.syncWerewolfSnapshot(stateResult.snapshot);
+        }
+        if (typeof archive.flush === "function") await archive.flush({ timeoutMs: 10_000 });
+        const databaseResult = await archive.deleteWerewolfEvent(roomId, gameId, eventId);
+        sendJson(response, 200, {
+          ok: true,
+          deleted: stateResult.deleted || databaseResult.deleted,
+        });
+      } catch {
+        sendJson(response, 500, { error: "删除狼人杀消息时没有完整同步，请重试" });
+      }
+      return;
+    }
+
     const werewolfGameMatch = url.pathname.match(/^\/api\/werewolf\/games\/([a-zA-Z0-9_-]+)$/);
     if (werewolfGameMatch && request.method === "GET") {
       if (!isAuthorized(request)) {

@@ -1161,6 +1161,7 @@ function privateActorsForRoom(room = activeRoom()) {
 
 function renderPrivateRecipientOptions() {
   const previous = messageRecipient.value;
+  messageRecipient.disabled = false;
   const room = activeRoom();
   const participants = activeRoomAgents(room, state.agents);
   const mcpVisitors = externalMcpParticipants(room);
@@ -3663,17 +3664,34 @@ messageFeed.addEventListener("scroll", clearNewMessageNoticeAtLatest, { passive:
 composer.addEventListener("submit", (event) => {
   event.preventDefault();
   if (activeRoom()?.roomType === "werewolf") {
-    if (werewolfController?.submitUserMessage(messageInput.value)) messageInput.value = "";
+    const recipientId = messageRecipient.value;
+    if (werewolfController?.submitUserMessage(messageInput.value, { recipientId })) {
+      messageInput.value = "";
+      if (recipientId !== "public") {
+        messageRecipient.value = "public";
+        werewolfController.renderComposer();
+      }
+    }
     return;
   }
   startConversation();
 });
-messageRecipient.addEventListener("change", renderComposerPrivacy);
+messageRecipient.addEventListener("change", () => {
+  if (activeRoom()?.roomType === "werewolf") werewolfController?.renderComposer();
+  else renderComposerPrivacy();
+});
 messageInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     if (activeRoom()?.roomType === "werewolf") {
-      if (werewolfController?.submitUserMessage(messageInput.value)) messageInput.value = "";
+      const recipientId = messageRecipient.value;
+      if (werewolfController?.submitUserMessage(messageInput.value, { recipientId })) {
+        messageInput.value = "";
+        if (recipientId !== "public") {
+          messageRecipient.value = "public";
+          werewolfController.renderComposer();
+        }
+      }
       return;
     }
     startConversation();
@@ -3993,6 +4011,8 @@ werewolfController = createWerewolfController({
   getAllAgents: () => state.agents,
   persist: queuePersist,
   toast: showToast,
+  copyText,
+  openCopyFallback,
 });
 byId("open-werewolf-room").addEventListener("click", () => werewolfController.open());
 renderAll();

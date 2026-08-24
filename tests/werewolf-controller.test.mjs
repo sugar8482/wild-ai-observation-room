@@ -3,11 +3,18 @@ import test from "node:test";
 import {
   gameSystemPrompt,
   parseWerewolfDebriefReply,
+  requestWerewolfDebrief,
   roleKnowledge,
+  stripPseudoDebriefArchive,
   validTargets,
   viewerRoleKnowledge,
 } from "../public/werewolf-controller.js";
-import { WEREWOLF_USER_ID, createWerewolfGame } from "../public/werewolf-game.js";
+import {
+  WEREWOLF_USER_ID,
+  appendWerewolfLog,
+  createWerewolfGame,
+  finishWerewolfGame,
+} from "../public/werewolf-game.js";
 
 function manualGame() {
   const participants = Array.from({ length: 6 }, (_, index) => ({
@@ -213,4 +220,98 @@ test("赛后本局日记与可跨房间长期记忆使用两个独立出口", ()
   assert.match(parsed.diaryItems[0], /说对不等于让人信/);
   assert.equal(parsed.memoryItems.length, 1);
   assert.match(parsed.memoryItems[0], /晨曦生气时更希望有人陪她/);
+});
+
+test("赛后公开正文、私聊、本局日记与长期记忆可以在同次回复中独立解析", () => {
+  const parsed = parseWerewolfDebriefReply([
+    "我只回应最后一天那次站边：当时我把语气笃定误当成了逻辑完整。",
+    '<private_message to="user">晨曦，我其实更介意你没让我把那句话说完。</private_message>',
+    "<game_diary>",
+    "- 我把笃定误判成了可信。",
+    "- 我仍介意自己的解释没有说完。",
+    "</game_diary>",
+    "<self_memory>",
+    "- 我希望以后和晨曦争执时先把彼此的话听完整。",
+    "</self_memory>",
+  ].join("\n"), { agentId: "guest-1", recipients: manualGame().players });
+
+  assert.match(parsed.text, /我只回应最后一天/);
+  assert.equal(parsed.privateMessages.length, 1);
+  assert.deepEqual(parsed.privateMessages[0].recipientIds, [WEREWOLF_USER_ID]);
+  assert.equal(parsed.diaryItems.length, 2);
+  assert.equal(parsed.memoryItems.length, 1);
+  assert.doesNotMatch(parsed.text, /game_diary|self_memory|private_message/);
+});
+
+test("Kimi 式公开伪档案不会冒充已保存的本局日记", () => {
+  const raw = [
+    "这局我最该认的是，我把连续发言的自信错当成了证据；下次我会先查矛盾，而不是先站队。",
+    "私人记忆档案",
+    "正文区",
+    "我已经把整局身份和时间线整理成档案。",
+    "存疑区",
+    "来源：公屏和夜间记录。",
+    "作废条件",
+    "下一局重新判断。",
+  ].join("\n");
+  const parsed = parseWerewolfDebriefReply(raw);
+  assert.equal(parsed.text, raw.split("\n")[0]);
+  assert.deepEqual(parsed.diaryItems, []);
+  assert.deepEqual(parsed.memoryItems, []);
+  assert.equal(stripPseudoDebriefArchive(raw), raw.split("\n")[0]);
+});
+
+test("复盘漏机器标签时最多补交一次，并且补交内容不进入公屏", async (context) => {
+  const game = manualGame();
+  finishWerewolfGame(game, "good");
+  appendWerewolfLog(game, {
+    authorId: WEREWOLF_USER_ID,
+    author: "晨曦",
+    text: "请你记住这次我让你把话说完了。",
+    phase: "debrief",
+  });
+  const player = game.players[0];
+  const agent = {
+    id: player.id,
+    name: player.name,
+    persona: "",
+    memoryEnabled: true,
+    memory: "",
+    memoryRevision: 0,
+  };
+  const requests = [];
+  const originalFetch = globalThis.fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return {
+      ok: true,
+      async json() {
+        if (requests.length === 1) {
+          return { text: "我只认一个判断失误：我把你的犹豫当成了心虚，后来才发现你是在给别人留发言空间。" };
+        }
+        return { text: [
+          "<game_diary>",
+          "- 我误读了晨曦的犹豫。",
+          "- 我后来意识到她是在给别人留空间。",
+          "</game_diary>",
+          "<self_memory>",
+          "- 我记得晨曦愿意让我把话说完。",
+          "</self_memory>",
+        ].join("\n") };
+      },
+    };
+  };
+
+  const reply = await requestWerewolfDebrief(agent, game, player, undefined, {
+    agents: game.players,
+  });
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].maxTokens, 1_060);
+  assert.equal(requests[1].maxTokens, 540);
+  assert.match(requests[1].messages[0].content, /只补机器标签/);
+  assert.equal(reply.diaryItems.length, 2);
+  assert.equal(reply.memoryItems.length, 1);
+  assert.doesNotMatch(reply.text, /game_diary|self_memory|格式补交/);
+  assert.match(agent.memory, /晨曦愿意让我把话说完/);
 });

@@ -786,6 +786,65 @@ test("中途刷新与滞后重复保存不会回退狼人杀当前进度", async
   assert.equal((await store.clientState()).rooms[0].werewolf.revision, 8);
 });
 
+test("删除当前局和历史局消息只改显示日志，不改结构化游戏事实也不会被滞后保存复活", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-werewolf-delete-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = join(directory, "state.json");
+  const store = createStateStore({ filePath, secret: "delete-werewolf-secret" });
+  const participants = Array.from({ length: 6 }, (_, index) => ({
+    id: `delete-${index + 1}`,
+    name: `删除玩家${index + 1}`,
+    type: "agent",
+  }));
+  const agents = participants.map((player) => ({ ...player, format: "openai", authType: "none" }));
+  const current = createWerewolfGame({ participants, random: () => 0.2 });
+  current.nights = [{ day: 1, killTargetId: participants[4].id, deaths: [participants[4].id], resolved: true }];
+  current.days = [{ day: 1, votes: { [participants[0].id]: participants[1].id }, eliminatedId: participants[1].id }];
+  const currentMessage = appendWerewolfLog(current, { authorId: participants[0].id, author: participants[0].name, text: "删除当前局这条。" });
+  const ended = createWerewolfGame({ participants, random: () => 0.3 });
+  ended.nights = [{ day: 1, killTargetId: participants[3].id, deaths: [], resolved: true }];
+  finishWerewolfGame(ended, "wolf");
+  const historyMessage = appendWerewolfLog(ended, { authorId: participants[1].id, author: participants[1].name, text: "删除历史局这条。", phase: "debrief" });
+  const archived = archiveWerewolfGame(ended, 1);
+  const original = await store.save({
+    agents,
+    activeRoomId: "werewolf-delete-room",
+    rooms: [{
+      id: "werewolf-delete-room",
+      name: "删除测试",
+      roomType: "werewolf",
+      participantIds: participants.map((player) => player.id),
+      messages: [],
+      werewolf: current,
+      werewolfArchives: [archived],
+    }],
+  });
+  const factsBefore = {
+    currentNights: original.rooms[0].werewolf.nights,
+    currentDays: original.rooms[0].werewolf.days,
+    archivedNights: original.rooms[0].werewolfArchives[0].nights,
+    winner: original.rooms[0].werewolfArchives[0].winner,
+  };
+
+  assert.equal((await store.deleteWerewolfEvent("werewolf-delete-room", current.id, currentMessage.id)).deleted, true);
+  assert.equal((await store.deleteWerewolfEvent("werewolf-delete-room", archived.id, historyMessage.id)).deleted, true);
+  assert.equal((await store.deleteWerewolfEvent("werewolf-delete-room", archived.id, historyMessage.id)).deleted, false);
+  let after = await store.clientState();
+  assert.ok(!after.rooms[0].werewolf.log.some((entry) => entry.id === currentMessage.id));
+  assert.ok(!after.rooms[0].werewolfArchives[0].log.some((entry) => entry.id === historyMessage.id));
+  assert.deepEqual({
+    currentNights: after.rooms[0].werewolf.nights,
+    currentDays: after.rooms[0].werewolf.days,
+    archivedNights: after.rooms[0].werewolfArchives[0].nights,
+    winner: after.rooms[0].werewolfArchives[0].winner,
+  }, factsBefore);
+
+  after = await store.save(original);
+  assert.ok(!after.rooms[0].werewolf.log.some((entry) => entry.id === currentMessage.id));
+  assert.ok(!after.rooms[0].werewolfArchives[0].log.some((entry) => entry.id === historyMessage.id));
+  assert.doesNotMatch(await readFile(filePath, "utf8"), /删除当前局这条|删除历史局这条/);
+});
+
 test("封存后旧局不会被滞后请求复活，新局也不会继承旧复盘或私人日记", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-werewolf-seal-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
