@@ -15,7 +15,6 @@ import { createStateStore } from "./lib/state-store.mjs";
 import { createRoomScheduler } from "./lib/scheduled-chat.mjs";
 import { createRoomSummaryJobs } from "./lib/room-summary-jobs.mjs";
 import { createPostgresArchive } from "./lib/postgres-archive.mjs";
-import { createSqliteArchive } from "./lib/sqlite-archive.mjs";
 import { createVisitorManager } from "./lib/visitor-mode.mjs";
 import { DEFAULT_VISIBLE_REPLY_TOKENS } from "./public/reply-limits.js";
 
@@ -1263,7 +1262,9 @@ if (isMainModule) {
     .toLowerCase() === "true";
   const archive = databaseUrl
     ? createPostgresArchive({ connectionString: databaseUrl, ssl: databaseSsl })
-    : createSqliteArchive({ filePath: resolve(projectRoot, "data", "observation-room.sqlite") });
+    : (await import("./lib/sqlite-archive.mjs")).createSqliteArchive({
+      filePath: resolve(projectRoot, "data", "observation-room.sqlite"),
+    });
   const stateStore = createStateStore({
     filePath: resolve(projectRoot, "data", "state.json"),
     secret: dataSecret,
