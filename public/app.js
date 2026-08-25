@@ -154,6 +154,9 @@ const temperatureInput = byId("temperature-input");
 const temperatureOutput = byId("temperature-output");
 const tokensInput = byId("tokens-input");
 const modeHelp = byId("mode-help");
+const speakerSelectLabel = byId("speaker-select-label");
+const directorSpeakerStatus = byId("director-speaker-status");
+const directorActionControl = byId("director-action-control");
 const agentDialog = byId("agent-dialog");
 const agentForm = byId("agent-form");
 const connectionResult = byId("connection-result");
@@ -1572,8 +1575,15 @@ function renderRoomHeader() {
 }
 
 function renderMode() {
+  if (activeRoom()?.roomType === "werewolf") {
+    werewolfController?.renderDirector();
+    return;
+  }
+  const modeLabels = { point: "点名", roundtable: "圆桌", free: "自由聊" };
   document.querySelectorAll("[data-mode]").forEach((button) => {
+    button.textContent = modeLabels[button.dataset.mode] || button.textContent;
     button.classList.toggle("is-active", button.dataset.mode === state.mode);
+    button.disabled = false;
   });
   document.querySelectorAll("[data-free-strategy]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.freeStrategy === state.freeStrategy);
@@ -1591,6 +1601,13 @@ function renderMode() {
     : isLightMic
       ? "本地参考点名、冷场和发言间隔抽一位接话；不先询问 AI，也不增加评分调用。"
       : meta.help;
+  speakerSelectLabel.textContent = "下一位发言";
+  speakerSelect.disabled = false;
+  directorSpeakerStatus.classList.add("is-hidden");
+  directorActionControl.classList.add("is-hidden");
+  for (const element of document.querySelectorAll("#director-panel [data-director-chat-only]")) {
+    element.classList.remove("is-hidden");
+  }
   speakerControl.classList.toggle("is-hidden", state.mode !== "point");
   freeStrategyControl.classList.toggle("is-hidden", !isFree);
   roundsControl.classList.toggle("is-hidden", !isFree);
@@ -1629,7 +1646,8 @@ function renderAll(options = {}) {
   composer.classList.remove("is-hidden");
   composer.classList.toggle("is-werewolf-compose", isWerewolfRoom);
   newMessageJump.classList.toggle("is-hidden", isWerewolfRoom || unseenMessageCount === 0);
-  directorPanel.classList.toggle("is-hidden", isWerewolfRoom);
+  directorPanel.classList.remove("is-hidden");
+  directorPanel.classList.toggle("is-werewolf-director", isWerewolfRoom);
   if (isWerewolfRoom) {
     roomModeLabel.textContent = "狼人杀 · 临时身份局";
     mobileRoomMeta.textContent = activeRoom()?.werewolf?.status === "active" ? "游戏进行中" : "等待开局";
@@ -3603,6 +3621,10 @@ messageFeed.addEventListener("touchmove", handleMessageHistoryTouchMove, { passi
 
 document.querySelectorAll("[data-mode]").forEach((button) => {
   button.addEventListener("click", () => {
+    if (activeRoom()?.roomType === "werewolf") {
+      werewolfController?.setDirectorMode(button.dataset.mode);
+      return;
+    }
     state.mode = button.dataset.mode;
     renderMode();
   });

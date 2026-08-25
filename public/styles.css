@@ -507,10 +507,6 @@ html[data-theme="dark"] .button-werewolf {
   background: var(--wash);
 }
 
-.composer.is-werewolf-compose .composer-route {
-  display: none;
-}
-
 .panel,
 .chat-panel {
   min-width: 0;
@@ -1475,6 +1471,71 @@ html[data-theme="dark"] .button-werewolf {
 .mode-switch button.is-active {
   background: var(--ink);
   color: var(--paper);
+}
+
+.mode-switch button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.director-speaker-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.director-speaker-item {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 8px;
+  border: 1px solid var(--soft-line);
+  border-radius: 7px;
+  background: var(--paper);
+}
+
+.director-speaker-seat,
+.director-speaker-state {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.director-speaker-seat {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+}
+
+.director-speaker-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.director-speaker-state {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.director-speaker-item.is-done {
+  background: var(--wash);
+}
+
+.director-speaker-item.is-eliminated {
+  opacity: 0.58;
+}
+
+.director-speaker-item.is-speaking {
+  border-color: var(--ink);
+  box-shadow: inset 3px 0 0 var(--ink);
+  opacity: 1;
+}
+
+.director-action-button {
+  width: 100%;
 }
 
 .free-strategy-switch {

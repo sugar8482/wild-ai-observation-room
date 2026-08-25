@@ -132,6 +132,89 @@ function currentDay(game) {
   return day;
 }
 
+function werewolfSpeechSeatIds(game, tiedOnly = game?.phase === "tie_speech") {
+  if (!game) return [];
+  const candidateIds = tiedOnly
+    ? new Set(game.pending?.tieIds || game.days?.find((entry) => entry.day === game.day)?.tiedIds || [])
+    : null;
+  return game.players
+    .filter((player) => player.alive && (!candidateIds || candidateIds.has(player.id)))
+    .map((player) => player.id);
+}
+
+function werewolfPlayerHasSpoken(game, playerId, tiedOnly = game?.phase === "tie_speech") {
+  const day = game?.days?.find((entry) => entry.day === game.day);
+  return Boolean(day?.speeches?.[tiedOnly ? `${playerId}-tie` : playerId]);
+}
+
+export function werewolfDirectorSnapshot(game, { speakingPlayerId = "" } = {}) {
+  if (!game) {
+    return {
+      kind: "setup",
+      locked: true,
+      tiedOnly: false,
+      roster: [],
+      eligibleSpeakerIds: [],
+      roundSpeakerIds: [],
+    };
+  }
+  const ended = game.status === "ended";
+  const tiedOnly = !ended && game.phase === "tie_speech";
+  const speechPhase = !ended && ["day_speech", "tie_speech"].includes(game.phase);
+  const visibleIds = tiedOnly ? new Set(werewolfSpeechSeatIds(game, true)) : null;
+  const visiblePlayers = ended
+    ? game.players.filter((player) => player.type === "agent")
+    : game.players.filter((player) => !visibleIds || visibleIds.has(player.id));
+  const seatById = new Map(game.players.map((player, index) => [player.id, index + 1]));
+  const eligibleSpeakerIds = ended
+    ? visiblePlayers.map((player) => player.id)
+    : speechPhase
+      ? visiblePlayers
+        .filter((player) => player.type === "agent" && player.alive && !werewolfPlayerHasSpoken(game, player.id, tiedOnly))
+        .map((player) => player.id)
+      : [];
+  const roundDone = new Set(game.debrief?.roundDone || []);
+  const roster = visiblePlayers.map((player) => {
+    const speaking = player.id === speakingPlayerId;
+    const spoken = ended ? roundDone.has(player.id) : werewolfPlayerHasSpoken(game, player.id, tiedOnly);
+    let status = "等待行动";
+    if (speaking) status = ended ? "正在复盘……" : "正在发言……";
+    else if (ended && spoken) status = "已复盘 · 可再点";
+    else if (ended && !player.alive) status = "已出局 · 可复盘";
+    else if (ended) status = "可复盘";
+    else if (!player.alive) status = "已出局";
+    else if (spoken) status = "已发言";
+    else if (speechPhase && player.type === "user") status = "用主输入框";
+    else if (speechPhase) status = "待发言";
+    return {
+      id: player.id,
+      name: player.name,
+      type: player.type,
+      seat: seatById.get(player.id) || 0,
+      alive: player.alive !== false,
+      speaking,
+      spoken,
+      status,
+    };
+  });
+  return {
+    kind: ended ? "debrief" : tiedOnly ? "tie" : speechPhase ? "day" : "locked",
+    locked: !ended && !speechPhase,
+    tiedOnly,
+    roster,
+    eligibleSpeakerIds,
+    roundSpeakerIds: [...eligibleSpeakerIds],
+  };
+}
+
+export function pickWerewolfDirectorSpeaker(speakerIds, random = Math.random) {
+  const ids = Array.isArray(speakerIds) ? speakerIds.filter(Boolean) : [];
+  if (!ids.length) return null;
+  const roll = Number(random());
+  const index = Math.min(ids.length - 1, Math.max(0, Math.floor((Number.isFinite(roll) ? roll : 0) * ids.length)));
+  return ids[index] || null;
+}
+
 function namesFor(game, ids) {
   return ids.map((id) => werewolfPlayer(game, id)?.name || id).join("、");
 }
@@ -488,16 +571,25 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
   const roomStage = byId("werewolf-room-stage");
   const roomEmpty = byId("werewolf-room-empty");
   const mainTable = byId("werewolf-main-table");
-  const roundtable = byId("werewolf-roundtable");
   const archiveButton = byId("werewolf-archive-game");
   const composer = byId("composer");
   const messageInput = byId("message-input");
   const messageRecipient = byId("message-recipient");
   const composerPrivacyNote = byId("composer-privacy-note");
   const sendButton = byId("send-button");
+  const modeButtons = [...document.querySelectorAll("#mode-switch [data-mode]")];
+  const modeHelp = byId("mode-help");
+  const speakerControl = byId("speaker-control");
+  const speakerSelect = byId("speaker-select");
+  const speakerSelectLabel = byId("speaker-select-label");
+  const speakerStatus = byId("director-speaker-status");
+  const speakerList = byId("director-speaker-list");
+  const actionControl = byId("director-action-control");
+  const actionButton = byId("director-action-button");
   let running = false;
   let abortController = null;
   let speakingPlayerId = "";
+  let directorMode = "point";
   let renderedGameId = "";
   let logRenderLimit = HISTORY_WINDOW_BATCH;
   let logHistoryObserver = null;
@@ -1171,81 +1263,112 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
   }
 
   function speechPlayerIds(current, tiedOnly = current.phase === "tie_speech") {
-    const day = currentDay(current);
-    const ids = tiedOnly ? (current.pending?.tieIds || day.tiedIds || []) : day.speechOrder;
-    return ids.filter((id) => werewolfPlayer(current, id)?.alive);
+    return werewolfSpeechSeatIds(current, tiedOnly);
   }
 
   function playerHasSpoken(current, playerId, tiedOnly = current.phase === "tie_speech") {
-    const day = currentDay(current);
-    return Boolean(day.speeches[tiedOnly ? `${playerId}-tie` : playerId]);
+    return werewolfPlayerHasSpoken(current, playerId, tiedOnly);
   }
 
   function allSpeakersDone(current, tiedOnly = current.phase === "tie_speech") {
     return speechPlayerIds(current, tiedOnly).every((id) => playerHasSpoken(current, id, tiedOnly));
   }
 
-  function renderRoundtable(current) {
-    roundtable.replaceChildren();
-    if (!current) return;
-    if (current.status === "ended") {
-      const heading = createElement("div", "werewolf-roundtable-heading");
-      const copy = createElement("div");
-      copy.append(createElement("strong", "", "赛后茶话会"), createElement("p", "", "身份和全部秘密已经解锁。点谁谁复盘，也可以让全员依次说；说过的人仍能继续追问。"));
-      const runAll = createElement("button", "button button-quiet", "全体依次复盘");
-      runAll.type = "button";
-      runAll.disabled = running;
-      runAll.addEventListener("click", () => void runDebriefRound());
-      heading.append(copy, runAll);
-      const speakers = createElement("div", "werewolf-speaker-grid");
-      for (const player of current.players.filter((item) => item.type === "agent")) {
-        const done = current.debrief?.roundDone?.includes(player.id);
-        const button = createElement("button", `werewolf-speaker${done ? " is-done" : ""}${speakingPlayerId === player.id ? " is-speaking" : ""}`);
-        button.type = "button";
-        button.disabled = running;
-        const copy = createElement("span", "werewolf-speaker-copy");
-        copy.append(createElement("strong", "", player.name), createElement("span", "", speakingPlayerId === player.id ? "正在复盘……" : done ? "已复盘 · 可再点" : WEREWOLF_ROLE_META[player.role].label));
-        button.append(playerAvatar(current, player.name, player.id, "werewolf-speaker-avatar"), copy);
-        button.addEventListener("click", () => void runDebriefSpeaker(player.id));
-        speakers.append(button);
-      }
-      roundtable.append(heading, speakers);
-      return;
+  function directorHelp(snapshot) {
+    if (snapshot.kind === "setup") return "先从“身份与行动”开一局，导演台会在白天自动解锁。";
+    if (snapshot.kind === "locked") return "夜晚、投票和遗言阶段暂不开放导演台，请去“身份与行动”完成本阶段。";
+    if (snapshot.kind === "debrief") {
+      if (directorMode === "point") return "可反复点名同一位嘉宾追问；主输入框仍可公开或私聊。";
+      if (directorMode === "roundtable") return "每次都按座位顺序请全体嘉宾复盘，不限制轮数。";
+      return "从全部嘉宾中本地随机抽一位复盘，不会额外调用意愿评分。";
     }
-    if (!["day_speech", "tie_speech"].includes(current.phase)) {
-      roundtable.append(createElement("p", "werewolf-roundtable-idle", "现在是夜间或投票阶段。打开“身份与行动”完成本阶段。"));
-      return;
+    if (!snapshot.eligibleSpeakerIds.length) return "可点名的 AI 嘉宾都已发言；晨曦仍可用主输入框最后压轴。";
+    if (directorMode === "point") return snapshot.tiedOnly
+      ? "只列出进入平票的候选人；点一位只调用一位。"
+      : "只列出尚未发言的存活嘉宾；晨曦可以一直等到最后再用主输入框发言。";
+    if (directorMode === "roundtable") return "按座位顺序依次请尚未发言的存活嘉宾发言，已发言者会自动跳过。";
+    return "从尚未发言的存活嘉宾中本地随机抽一位，只调用抽中的嘉宾，不做 AI 评分。";
+  }
+
+  function directorActionCopy(snapshot) {
+    if (snapshot.locked) return "当前阶段已锁定";
+    if (directorMode === "point") return snapshot.kind === "debrief" ? "请 TA 复盘" : "请 TA 发言";
+    if (directorMode === "roundtable") return snapshot.kind === "debrief" ? "开始全体圆桌" : "开始依次圆桌";
+    return "随机抽一位";
+  }
+
+  function renderDirector() {
+    if (getRoom()?.roomType !== "werewolf") return;
+    const current = game();
+    const snapshot = werewolfDirectorSnapshot(current, { speakingPlayerId });
+    const labels = { point: "点名", roundtable: "依次圆桌", free: "随机" };
+    for (const button of modeButtons) {
+      button.textContent = labels[button.dataset.mode] || button.textContent;
+      button.classList.toggle("is-active", button.dataset.mode === directorMode);
+      button.disabled = running || snapshot.locked;
     }
-    const tiedOnly = current.phase === "tie_speech";
-    const ids = speechPlayerIds(current, tiedOnly);
-    const heading = createElement("div", "werewolf-roundtable-heading");
-    const copy = createElement("div");
-    copy.append(
-      createElement("strong", "", tiedOnly ? "平票辩护席" : `第 ${current.day} 天 · 自由点名发言`),
-      createElement("p", "", "点一位只调用一位，回复会立刻落在上方。晨曦想压轴，就最后再用下面输入框发言。"),
-    );
-    const runAll = createElement("button", "button button-quiet", "依次叫未发言嘉宾");
-    runAll.type = "button";
-    runAll.disabled = running || allSpeakersDone(current, tiedOnly);
-    runAll.addEventListener("click", () => void runSpeechRound(tiedOnly));
-    heading.append(copy, runAll);
-    const speakers = createElement("div", "werewolf-speaker-grid");
-    for (const id of ids) {
-      const player = werewolfPlayer(current, id);
-      const done = playerHasSpoken(current, id, tiedOnly);
-      const button = createElement("button", `werewolf-speaker${done ? " is-done" : ""}${speakingPlayerId === id ? " is-speaking" : ""}`);
-      button.type = "button";
-      button.disabled = running || done || player.type === "user";
-      const copy = createElement("span", "werewolf-speaker-copy");
-      copy.append(
-        createElement("strong", "", player.name),
-        createElement("span", "", speakingPlayerId === id ? "正在发言……" : done ? "已发言" : player.type === "user" ? "用下方输入框" : "点名发言"),
+    for (const element of document.querySelectorAll("#director-panel [data-director-chat-only]")) {
+      element.classList.add("is-hidden");
+    }
+    byId("free-strategy-control").classList.add("is-hidden");
+    byId("rounds-control").classList.add("is-hidden");
+    speakerStatus.classList.remove("is-hidden");
+    actionControl.classList.remove("is-hidden");
+    modeHelp.textContent = directorHelp(snapshot);
+    speakerSelectLabel.textContent = snapshot.kind === "debrief" ? "点名复盘" : snapshot.tiedOnly ? "平票候选人" : "下一位发言";
+    const previous = speakerSelect.value;
+    speakerSelect.replaceChildren();
+    for (const playerId of snapshot.eligibleSpeakerIds) {
+      const row = snapshot.roster.find((item) => item.id === playerId);
+      if (!row) continue;
+      const option = document.createElement("option");
+      option.value = row.id;
+      option.textContent = `${row.seat} 号 · ${row.name}`;
+      speakerSelect.append(option);
+    }
+    if (snapshot.eligibleSpeakerIds.includes(previous)) speakerSelect.value = previous;
+    speakerSelect.disabled = running || snapshot.locked || !snapshot.eligibleSpeakerIds.length;
+    speakerControl.classList.toggle("is-hidden", directorMode !== "point" || snapshot.locked);
+    speakerList.replaceChildren();
+    for (const row of snapshot.roster) {
+      const item = createElement("div", `director-speaker-item${row.speaking ? " is-speaking" : ""}${row.spoken ? " is-done" : ""}${!row.alive ? " is-eliminated" : ""}`);
+      item.dataset.playerId = row.id;
+      item.append(
+        createElement("span", "director-speaker-seat", String(row.seat).padStart(2, "0")),
+        createElement("strong", "director-speaker-name", row.name),
+        createElement("span", "director-speaker-state", row.status),
       );
-      button.append(playerAvatar(current, player.name, player.id, "werewolf-speaker-avatar"), copy);
-      if (player.type === "agent") button.addEventListener("click", () => void runSpeechSpeaker(id, tiedOnly));
-      speakers.append(button);
+      speakerList.append(item);
     }
-    roundtable.append(heading, speakers);
+    if (!snapshot.roster.length) speakerList.append(createElement("p", "field-help", "开局后这里会显示发言状态。"));
+    actionButton.textContent = directorActionCopy(snapshot);
+    actionButton.disabled = running
+      || snapshot.locked
+      || !snapshot.eligibleSpeakerIds.length
+      || (directorMode === "point" && !speakerSelect.value);
+  }
+
+  function setDirectorMode(mode) {
+    if (!["point", "roundtable", "free"].includes(mode)) return;
+    directorMode = mode;
+    renderDirector();
+  }
+
+  async function runDirectorAction() {
+    const current = game();
+    const snapshot = werewolfDirectorSnapshot(current, { speakingPlayerId });
+    if (!current || snapshot.locked || running || !snapshot.eligibleSpeakerIds.length) return;
+    if (directorMode === "roundtable") {
+      if (snapshot.kind === "debrief") await runDebriefRound();
+      else await runSpeechRound(snapshot.tiedOnly);
+      return;
+    }
+    const playerId = directorMode === "free"
+      ? pickWerewolfDirectorSpeaker(snapshot.eligibleSpeakerIds)
+      : speakerSelect.value;
+    if (!playerId || !snapshot.eligibleSpeakerIds.includes(playerId)) return;
+    if (snapshot.kind === "debrief") await runDebriefSpeaker(playerId);
+    else await runSpeechSpeaker(playerId, snapshot.tiedOnly);
   }
 
   function selectField(id, labelText, candidates, selected = "") {
@@ -1434,7 +1557,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     dialog.classList.toggle("is-control-mode", hasGame);
     if (!current) {
       renderParticipantSetup();
-      roundtable.replaceChildren();
+      renderDirector();
       syncWerewolfComposer(null);
       return;
     }
@@ -1464,7 +1587,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     renderPlayerBoard(current);
     renderLog(current);
     renderActionPanel(current);
-    renderRoundtable(current);
+    renderDirector();
     syncWerewolfComposer(current);
   }
 
@@ -1798,7 +1921,6 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     abortController = new AbortController();
     try {
       for (const playerId of ids) {
-        if (current.debrief?.roundDone?.includes(playerId)) continue;
         const player = werewolfPlayer(current, playerId);
         const agent = agentFor(playerId);
         if (!player || !agent) continue;
@@ -1815,7 +1937,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
         await persistGame();
         renderGame();
       }
-      setGameStatus("第一轮复盘说完了。现在可以自由点名继续审。" );
+      setGameStatus("这一轮全体复盘说完了。可以继续点名、随机抽人或再开一轮。" );
     } catch (error) {
       const failedId = speakingPlayerId;
       if (error.name === "AbortError") setGameStatus("复盘停在这里了；已经说完的都保留。", true);
@@ -2091,6 +2213,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
   byId("start-werewolf-game").addEventListener("click", start);
   byId("werewolf-advance").addEventListener("click", () => void advance());
   byId("werewolf-stop").addEventListener("click", () => abortController?.abort());
+  actionButton.addEventListener("click", () => void runDirectorAction());
   byId("werewolf-new-game").addEventListener("click", () => clearGame(true));
   archiveButton.addEventListener("click", () => archiveCurrentGame(false));
   byId("werewolf-end-game").addEventListener("click", endGame);
@@ -2125,5 +2248,12 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     }
   });
 
-  return { open, render: renderGame, renderComposer: () => syncWerewolfComposer(game()), submitUserMessage };
+  return {
+    open,
+    render: renderGame,
+    renderComposer: () => syncWerewolfComposer(game()),
+    renderDirector,
+    setDirectorMode,
+    submitUserMessage,
+  };
 }

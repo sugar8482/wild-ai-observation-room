@@ -267,6 +267,27 @@ test("狼人杀消息复用普通消息的触摸操作层，并通过鉴权接�
   assert.match(app, /recipientId = messageRecipient\.value/);
 });
 
+test("狼人杀复用普通导演台，并把阶段资格留在狼人杀控制器", async () => {
+  const [html, app, controller, styles] = await Promise.all([
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(html, /id="director-panel"/);
+  assert.match(html, /id="director-speaker-list"/);
+  assert.match(html, /id="director-action-button"/);
+  assert.doesNotMatch(html, /id="werewolf-roundtable"/);
+  assert.match(app, /werewolfController\?\.setDirectorMode\(button\.dataset\.mode\)/);
+  assert.match(app, /directorPanel\.classList\.toggle\("is-werewolf-director", isWerewolfRoom\)/);
+  assert.match(controller, /werewolfDirectorSnapshot/);
+  assert.match(controller, /pickWerewolfDirectorSpeaker\(snapshot\.eligibleSpeakerIds\)/);
+  assert.match(controller, /for \(const playerId of speechPlayerIds\(current, tiedOnly\)\)/);
+  assert.doesNotMatch(controller, /current\.debrief\?\.roundDone\?\.includes\(playerId\)\) continue/);
+  assert.match(styles, /\.director-speaker-item\.is-speaking/);
+  assert.doesNotMatch(styles, /\.composer\.is-werewolf-compose \.composer-route\s*\{\s*display:\s*none/);
+});
+
 test("狼人杀历史外层按整局上拉加载，局内才使用一百条渲染窗口", async () => {
   const script = await readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8");
   assert.match(script, /offset=\$\{offset\}&limit=1/);

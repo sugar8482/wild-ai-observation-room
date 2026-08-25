@@ -8,6 +8,8 @@ import {
   stripPseudoDebriefArchive,
   validTargets,
   viewerRoleKnowledge,
+  pickWerewolfDirectorSpeaker,
+  werewolfDirectorSnapshot,
 } from "../public/werewolf-controller.js";
 import {
   WEREWOLF_USER_ID,
@@ -35,6 +37,93 @@ function manualGame() {
     },
   });
 }
+
+test("狼人杀共享导演台按座位顺序筛出尚未发言的存活嘉宾", () => {
+  const game = createWerewolfGame({
+    participants: [
+      { id: WEREWOLF_USER_ID, name: "晨曦", type: "user" },
+      ...Array.from({ length: 5 }, (_, index) => ({ id: `director-${index + 1}`, name: `嘉宾${index + 1}`, type: "agent" })),
+    ],
+    viewMode: "player",
+    roleAssignments: {
+      [WEREWOLF_USER_ID]: "villager",
+      "director-1": "wolf",
+      "director-2": "wolf",
+      "director-3": "seer",
+      "director-4": "witch",
+      "director-5": "villager",
+    },
+  });
+  game.phase = "day_speech";
+  game.players.find((player) => player.id === "director-2").alive = false;
+  game.days = [{
+    day: 1,
+    speechOrder: ["director-5", "director-1", WEREWOLF_USER_ID, "director-4", "director-3"],
+    speeches: { "director-1": "我已经说过了。" },
+    provisionalVotes: {},
+    votes: {},
+    tieVotes: {},
+    voteCounts: {},
+    tiedIds: [],
+    eliminatedId: "director-2",
+  }];
+
+  const snapshot = werewolfDirectorSnapshot(game, { speakingPlayerId: "director-4" });
+  assert.equal(snapshot.kind, "day");
+  assert.deepEqual(snapshot.eligibleSpeakerIds, ["director-3", "director-4", "director-5"]);
+  assert.deepEqual(snapshot.roundSpeakerIds, ["director-3", "director-4", "director-5"]);
+  assert.equal(snapshot.roster.find((row) => row.id === "director-1").status, "已发言");
+  assert.equal(snapshot.roster.find((row) => row.id === "director-2").status, "已出局");
+  assert.equal(snapshot.roster.find((row) => row.id === "director-4").status, "正在发言……");
+  assert.equal(snapshot.roster.find((row) => row.id === WEREWOLF_USER_ID).status, "用主输入框");
+  assert.deepEqual(snapshot.roster.map((row) => row.seat), [1, 2, 3, 4, 5, 6]);
+});
+
+test("平票导演台只列候选人，夜晚投票遗言阶段会锁住", () => {
+  const game = manualGame();
+  game.phase = "tie_speech";
+  game.days = [{
+    day: 1,
+    speechOrder: game.players.map((player) => player.id),
+    speeches: { "guest-5-tie": "我已经辩护。" },
+    provisionalVotes: {},
+    votes: {},
+    tieVotes: {},
+    voteCounts: {},
+    tiedIds: ["guest-5", "guest-2"],
+    eliminatedId: null,
+  }];
+  game.pending = { tieIds: ["guest-5", "guest-2"] };
+
+  const tied = werewolfDirectorSnapshot(game);
+  assert.equal(tied.kind, "tie");
+  assert.deepEqual(tied.roster.map((row) => row.id), ["guest-2", "guest-5"]);
+  assert.deepEqual(tied.roster.map((row) => row.seat), [2, 5]);
+  assert.deepEqual(tied.eligibleSpeakerIds, ["guest-2"]);
+
+  for (const phase of ["night_wolves", "day_vote", "tie_vote", "last_words"]) {
+    game.phase = phase;
+    const locked = werewolfDirectorSnapshot(game);
+    assert.equal(locked.locked, true, `${phase} 应锁住导演台`);
+    assert.deepEqual(locked.eligibleSpeakerIds, []);
+  }
+});
+
+test("赛后点名随机和全体圆桌不受首轮复盘标记限制", () => {
+  const game = manualGame();
+  finishWerewolfGame(game, "wolf");
+  game.debrief.roundDone = ["guest-1", "guest-2"];
+
+  const snapshot = werewolfDirectorSnapshot(game);
+  assert.equal(snapshot.kind, "debrief");
+  assert.equal(snapshot.locked, false);
+  assert.deepEqual(snapshot.eligibleSpeakerIds, game.players.map((player) => player.id));
+  assert.deepEqual(snapshot.roundSpeakerIds, game.players.map((player) => player.id));
+  assert.equal(snapshot.roster.find((row) => row.id === "guest-1").status, "已复盘 · 可再点");
+  assert.equal(pickWerewolfDirectorSpeaker(snapshot.eligibleSpeakerIds, () => 0), "guest-1");
+  assert.equal(pickWerewolfDirectorSpeaker(snapshot.eligibleSpeakerIds, () => 0.999), "guest-6");
+  assert.equal(pickWerewolfDirectorSpeaker([], () => 0.5), null);
+});
 
 test("狼人夜间目标允许自己与狼队友，普通投票仍不能投自己", () => {
   const game = manualGame();

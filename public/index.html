@@ -123,7 +123,6 @@
               <button class="button button-quiet" id="werewolf-open-controls" type="button">身份与行动</button>
             </header>
             <div class="werewolf-log werewolf-main-log" id="werewolf-log" aria-live="polite"></div>
-            <section class="werewolf-roundtable" id="werewolf-roundtable" aria-live="polite"></section>
           </section>
         </section>
 
@@ -177,7 +176,7 @@
           </div>
         </div>
 
-        <fieldset class="control-group">
+        <fieldset class="control-group" id="director-mode-control">
           <legend>发言方式</legend>
           <div class="mode-switch" id="mode-switch">
             <button type="button" data-mode="point">点名</button>
@@ -188,8 +187,17 @@
         </fieldset>
 
         <div class="control-group is-hidden" id="speaker-control">
-          <label for="speaker-select">下一位发言</label>
+          <label for="speaker-select" id="speaker-select-label">下一位发言</label>
           <select id="speaker-select"></select>
+        </div>
+
+        <div class="control-group is-hidden" id="director-speaker-status">
+          <span class="control-label">发言席</span>
+          <div class="director-speaker-list" id="director-speaker-list" aria-live="polite"></div>
+        </div>
+
+        <div class="control-group is-hidden" id="director-action-control">
+          <button class="button button-primary director-action-button" id="director-action-button" type="button">请 TA 发言</button>
         </div>
 
         <div class="control-group is-hidden" id="free-strategy-control">
@@ -212,7 +220,7 @@
           <p class="field-help" id="rounds-help">一轮 = 每位启用的嘉宾发言一次。设了上限，不会无限烧额度。</p>
         </div>
 
-        <div class="control-group">
+        <div class="control-group" data-director-chat-only>
           <div class="label-row">
             <label for="temperature-input">表达自由度</label>
             <output id="temperature-output">0.8</output>
@@ -221,7 +229,7 @@
           <div class="range-labels"><span>克制</span><span>放飞</span></div>
         </div>
 
-        <div class="control-group">
+        <div class="control-group" data-director-chat-only>
           <label for="tokens-input">正文长度上限</label>
           <div class="suffix-input">
             <input id="tokens-input" type="number" min="64" max="4096" step="1" value="1200" />
@@ -230,7 +238,7 @@
           <p class="field-help">这是安全上限，不要求写满；短答仍可自然结束。思考模型会另留后台余量。</p>
         </div>
 
-        <div class="director-tip">
+        <div class="director-tip" data-director-chat-only>
           <p class="tip-number">导演提示 01</p>
           <p>想磕 CP 时，给两位嘉宾各写一份人设，再选“自由聊”。你负责递话题，他们负责发展剧情。</p>
         </div>
