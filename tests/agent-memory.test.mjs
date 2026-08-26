@@ -35,7 +35,7 @@ test("日常私人记忆会主动检查细小但持久的个人意义，而不�
   assert.match(instruction, /如果遗忘它会让未来的反应少一层依据/);
   assert.match(instruction, /一次被选择或被忽略/);
   assert.match(instruction, /值得留下的不一定是大事件/);
-  assert.match(instruction, /都不满足才写 0 条/);
+  assert.match(instruction, /即使没有大事件，也至少保留 1 条/);
   assert.match(instruction, /不要换句话重复记录/);
 });
 
@@ -47,7 +47,7 @@ test("空白私人记忆在用户要求初始化时允许从既有对话实际�
   });
   assert.match(instruction, /首次初始化私人记忆/);
   assert.match(instruction, /必须实际写入至少 1 条/);
-  assert.match(instruction, /首次初始化同样可写 1～3 条/);
+  assert.match(instruction, /首次初始化同样写 1～3 条/);
   assert.match(instruction, /不能只口头表示完成/);
   assert.match(instruction, /不能只写在思考、推理或草稿中/);
 });
@@ -60,10 +60,10 @@ test("已有私人记忆时不会反复要求执行首次初始化", () => {
   });
   assert.doesNotMatch(instruction, /你当前的私人记忆还是空的/);
   assert.match(instruction, /不能只口头表示完成/);
-  assert.match(instruction, /日常回复允许写 0～3 条/);
+  assert.match(instruction, /日常回复必须写 1～3 条/);
   assert.match(instruction, /不必追求一份共同标准答案/);
-  assert.match(instruction, /不得因为懒得整理、正文写上头或嫌格式麻烦/);
-  assert.match(instruction, /不要为了证明自己有在记录而凑数/);
+  assert.match(instruction, /至少保留 1 条/);
+  assert.match(instruction, /不要为了凑数编造、重复旧记忆/);
 });
 
 test("临场提醒把私聊和私人记忆拆成两个独立通道", () => {
@@ -77,7 +77,8 @@ test("临场提醒把私聊和私人记忆拆成两个独立通道", () => {
   assert.match(reminder, /<self_memory> 才会写进你自己的长期私人记忆/);
   assert.match(reminder, /公开正文 → <private_message> → <self_memory>/);
   assert.match(reminder, /“我记了”“已经存档”“放进抽屉”都不算写入/);
-  assert.match(reminder, /不要因已发送私聊而跳过这次检查/);
+  assert.match(reminder, /本轮必须写 1～3 条 <self_memory>/);
+  assert.match(reminder, /不能因已发送私聊或正文已经完成而漏掉/);
 });
 
 test("直接回复用户私聊时仍提醒正文不等于私人记忆", () => {

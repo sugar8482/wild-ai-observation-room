@@ -196,7 +196,7 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.match(html, /其他嘉宾看不到/);
-  assert.match(html, /选择写 0～3 条/);
+  assert.match(html, /必须按自己的在意程度写 1～3 条/);
   assert.match(html, /不同嘉宾也不必记成同一份答案/);
   assert.match(script, /parseAgentReply\(reply\.text\)/);
   assert.match(script, /privateMemoryOutputInstruction\(agent\)/);
@@ -224,8 +224,7 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
   assert.match(html, /30,000 字只是建议整理线/);
   assert.match(html, /每条最多合并两条旧记忆/);
   assert.match(html, /目标是校订而不是缩短/);
-  assert.match(html, /日常每轮可按自己的在意程度选择写 0～3 条/);
-  assert.match(html, /首次初始化可写 1～3 条/);
+  assert.match(html, /即使没有大事件，也至少保留一条真实的个人反应/);
   assert.doesNotMatch(script, /agent: state\.summarizer,[\s\S]{0,240}requestMode: "private-memory-summary"/);
   assert.match(memoryModule, /如果遗忘它会让未来的反应少一层依据/);
   assert.match(memoryModule, /值得留下的不一定是大事件/);
