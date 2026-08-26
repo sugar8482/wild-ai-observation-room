@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   WEREWOLF_ARCHIVE_SCHEMA_SQL,
   deleteWerewolfEvent,
+  editWerewolfEvent,
   listWerewolfArchives,
   loadWerewolfGame,
   snapshotToWerewolfRows,
@@ -231,4 +232,34 @@ test("PostgreSQL 狼人杀事件删除校验房间并且重复删除安全", asy
     eventId: "event-one",
   }), { gameFound: false, deleted: false });
   assert.equal(queries.filter((query) => /DELETE FROM werewolf_events/.test(query.sql)).length, 2);
+});
+
+test("PostgreSQL 狼人杀事件修改只更新正文并校验房间", async () => {
+  const queries = [];
+  const pool = {
+    async query(sql, values) {
+      queries.push({ sql, values });
+      if (/SELECT \* FROM werewolf_games/.test(sql)) {
+        return values[1] === "werewolf-room" ? { rows: [{ game_id: values[0], room_id: values[1] }] } : { rows: [] };
+      }
+      if (/UPDATE werewolf_events/.test(sql)) {
+        return values[2] === "event-one" ? { rowCount: 1, rows: [{ body: values[3] }] } : { rowCount: 0, rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+
+  assert.deepEqual(await editWerewolfEvent(pool, {
+    roomId: "werewolf-room",
+    gameId: "game-one",
+    eventId: "event-one",
+    text: "改好的正文。",
+  }), { gameFound: true, eventFound: true, updated: true, text: "改好的正文。" });
+  assert.deepEqual(await editWerewolfEvent(pool, {
+    roomId: "other-room",
+    gameId: "game-one",
+    eventId: "event-one",
+    text: "不应写入。",
+  }), { gameFound: false, eventFound: false, updated: false, text: "不应写入。" });
+  assert.equal(queries.filter((query) => /UPDATE werewolf_events/.test(query.sql)).length, 1);
 });

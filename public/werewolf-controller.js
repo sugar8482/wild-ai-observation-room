@@ -313,12 +313,11 @@ export function gameSystemPrompt(agent, game, player, task) {
     agent.persona?.trim() ? `你平时的个人设定：\n${agent.persona.trim().slice(0, 4_000)}` : "保持你平时自然的判断与说话方式。",
     privateMemoryContext(agent),
     "这是一份规则与原始卷宗都独立的临时对局。你看不到任何旧局原文、旧复盘或旧局私人日记；但上面属于你自己的长期私人记忆仍是你的连续经历，可以自然影响你的判断。不要把旧局身份当成本局身份。",
-    "这局里的欺骗、站队和敌意不自动代表永久人格或真实关系；若有一件事确实改变了你对自己、晨曦或其他嘉宾的长期看法，你可以自行选择写进长期私人记忆。",
+    "这局里的欺骗、站队和敌意不自动代表永久人格或真实关系。局中没有私人记忆、局内日记或长期记忆写入功能：不得输出 <self_memory>、<game_diary>、私人记忆便笺或声称已经存档。有想长期保留的内容，等游戏结束进入赛后复盘后再决定。",
     `还活着的玩家：${living}。${roleKnowledge(game, player)}`,
     "你可以撒谎、悍跳、伪装、质疑晨曦，狼人也可以倒钩队友。不要因为晨曦是用户就默认她可信或不投她。",
     "只能使用公屏发言和你的合法身份信息。不得猜 API 速度、报错、模型风格或接口故障，不得读取他人的身份和秘密频道。",
     task,
-    privateMemoryOutputInstruction(agent),
   ].filter(Boolean).join("\n\n");
 }
 
@@ -400,6 +399,15 @@ export function parseWerewolfDebriefReply(rawText, { recipients = [], agentId = 
   };
 }
 
+export function parseWerewolfGameReply(rawText) {
+  const forbiddenMemoryBlock = /\s*```(?:xml)?\s*<(self_memory|game_diary)>\s*[\s\S]*?\s*<\/\1>\s*```|\s*<(self_memory|game_diary)>\s*[\s\S]*?\s*<\/\2>/gi;
+  let visibleText = String(rawText || "").replace(forbiddenMemoryBlock, "").trim();
+  const unclosedMarker = /<(?:self_memory|game_diary)>/i.exec(visibleText);
+  if (unclosedMarker) visibleText = visibleText.slice(0, unclosedMarker.index).trim();
+  visibleText = visibleText.replace(/<\/(?:self_memory|game_diary)>/gi, "").trim();
+  return stripWerewolfControls(visibleText).trim();
+}
+
 async function chatRequest(agent, game, player, task, userContent, signal, maxTokens = 260) {
   const response = await fetch("/api/chat", {
     method: "POST",
@@ -408,7 +416,7 @@ async function chatRequest(agent, game, player, task, userContent, signal, maxTo
       agent,
       requestMode: "werewolf-game",
       temperature: 0.9,
-      maxTokens: maxTokens + (agent.memoryEnabled ? PRIVATE_MEMORY_TOKEN_ALLOWANCE : 0),
+      maxTokens,
       messages: [
         { role: "system", content: gameSystemPrompt(agent, game, player, task) },
         { role: "user", content: userContent },
@@ -419,9 +427,9 @@ async function chatRequest(agent, game, player, task, userContent, signal, maxTo
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `${agent.name} 没有接通`);
   if (!String(payload.text || "").trim()) throw new Error(`${agent.name} 没有留下有效发言`);
-  const parsed = parseAgentReply(String(payload.text));
-  rememberAgent(agent, parsed.memoryItems);
-  return parsed.visibleText;
+  const visibleText = parseWerewolfGameReply(String(payload.text));
+  if (!visibleText) throw new Error(`${agent.name} 只输出了局中禁用的私人记忆，已拦截；请重试这一位`);
+  return visibleText;
 }
 
 function completeGameHistory(game, viewerId) {
@@ -699,6 +707,13 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
         toast("浏览器拦住了自动复制，已为你选中原文");
       }
     });
+    const editButton = createElement("button", "edit-message", "改");
+    editButton.type = "button";
+    editButton.setAttribute("aria-label", `修改 ${entry.author} 的这条狼人杀消息`);
+    editButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void editWerewolfLogEntry(current.id, entry.id, { archived });
+    });
     const deleteButton = createElement("button", "delete-message", "删除");
     deleteButton.type = "button";
     deleteButton.setAttribute("aria-label", `删除 ${entry.author} 的这条狼人杀消息`);
@@ -706,7 +721,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
       event.stopPropagation();
       void deleteWerewolfLogEntry(current.id, entry.id, { archived });
     });
-    actions.append(copyButton, deleteButton);
+    actions.append(copyButton, editButton, deleteButton);
     body.append(actions);
     content.append(header, body);
     item.append(playerAvatar(current, entry.author, entry.authorId), content);
@@ -769,6 +784,54 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
       if (archived) renderArchives({ openGameId: gameId });
       else renderGame();
       toast(payload.deleted ? "这一条已经从狼人杀卷宗中删除" : "这条消息此前已经删除");
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function editWerewolfLogEntry(gameId, eventId, { archived = false } = {}) {
+    if (running) {
+      toast("先停下当前狼人杀发言，再修改消息");
+      return;
+    }
+    const room = getRoom();
+    if (!room?.id || !gameId || !eventId) return;
+    const sources = [
+      room.werewolf,
+      ...(room.werewolfArchives || []),
+      ...loadedArchives.map((record) => record.game),
+    ].filter((entry) => entry?.id === gameId);
+    const existing = sources.flatMap((entry) => entry.log || []).find((entry) => entry.id === eventId);
+    if (!existing) {
+      toast("没有找到这条狼人杀消息");
+      return;
+    }
+    const nextText = globalThis.prompt(
+      "修改这条狼人杀消息：\n\n只修改卷宗里的显示文字，不会改写身份、刀口、验人、用药、票型或胜负。",
+      existing.text,
+    );
+    if (nextText === null) return;
+    const cleanText = String(nextText).trim();
+    if (!cleanText) {
+      toast("内容不能为空；要移除这条请用删除");
+      return;
+    }
+    if (cleanText === existing.text) return;
+    try {
+      const response = await fetch(`/api/werewolf/games/${encodeURIComponent(gameId)}/events/${encodeURIComponent(eventId)}?roomId=${encodeURIComponent(room.id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: cleanText }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "狼人杀消息没有修改成功");
+      for (const source of sources) {
+        const item = source.log?.find((entry) => entry.id === eventId);
+        if (item) item.text = payload.text || cleanText;
+      }
+      if (archived) renderArchives({ openGameId: gameId });
+      else renderGame();
+      toast(payload.updated ? "这一条已经改好并同步到狼人杀卷宗" : "这条消息此前已经是这个内容");
     } catch (error) {
       toast(error.message);
     }

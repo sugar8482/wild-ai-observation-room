@@ -118,6 +118,16 @@ test("SQLite 零配置存储以数据库为主，并保留跨房间嘉宾、全�
   database.close();
 
   assert.deepEqual(
+    await archive.editWerewolfEvent("werewolf-room", restored.game.id, privateEvent.id, "这句赛后私聊已经改好。"),
+    { gameFound: true, eventFound: true, updated: true, text: "这句赛后私聊已经改好。" },
+  );
+  assert.equal(
+    (await archive.werewolfGame(restored.game.id, { roomId: "werewolf-room" })).game.log
+      .find((entry) => entry.id === privateEvent.id).text,
+    "这句赛后私聊已经改好。",
+  );
+
+  assert.deepEqual(
     await archive.deleteWerewolfEvent("werewolf-room", restored.game.id, privateEvent.id),
     { gameFound: true, deleted: true },
   );

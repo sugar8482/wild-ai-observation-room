@@ -1009,6 +1009,57 @@ export function createAppServer(options = {}) {
     }
 
     const werewolfEventMatch = url.pathname.match(/^\/api\/werewolf\/games\/([a-zA-Z0-9_-]+)\/events\/([a-zA-Z0-9_-]+)$/);
+    if (werewolfEventMatch && request.method === "PATCH") {
+      if (!isAuthorized(request)) {
+        sendJson(response, 401, { error: "需要先输入访问码" });
+        return;
+      }
+      const roomId = String(url.searchParams.get("roomId") || "");
+      if (!/^[a-zA-Z0-9_-]+$/.test(roomId)) {
+        sendJson(response, 400, { error: "狼人杀房间编号无效" });
+        return;
+      }
+      if (!stateStore || typeof stateStore.editWerewolfEvent !== "function") {
+        sendJson(response, 503, { error: "狼人杀主状态尚未启用修改能力" });
+        return;
+      }
+      if (!archive?.status?.().enabled || typeof archive.editWerewolfEvent !== "function") {
+        sendJson(response, 503, { error: "狼人杀数据库尚未启用修改能力" });
+        return;
+      }
+      try {
+        const payload = await readJson(request);
+        const text = String(payload?.text || "").trim().slice(0, 50_000);
+        if (!text) {
+          sendJson(response, 400, { error: "狼人杀消息内容不能为空" });
+          return;
+        }
+        const [gameId, eventId] = werewolfEventMatch.slice(1);
+        const stateResult = await stateStore.editWerewolfEvent(roomId, gameId, eventId, text);
+        if (!stateResult.gameFound) {
+          sendJson(response, 404, { error: "没有找到这份狼人杀卷宗" });
+          return;
+        }
+        if (!stateResult.eventFound) {
+          sendJson(response, 404, { error: "没有找到这条狼人杀消息" });
+          return;
+        }
+        if (typeof archive.syncWerewolfSnapshot === "function") {
+          await archive.syncWerewolfSnapshot(stateResult.snapshot);
+        }
+        if (typeof archive.flush === "function") await archive.flush({ timeoutMs: 10_000 });
+        const databaseResult = await archive.editWerewolfEvent(roomId, gameId, eventId, stateResult.text);
+        sendJson(response, 200, {
+          ok: true,
+          updated: stateResult.updated || databaseResult.updated,
+          text: databaseResult.text || stateResult.text,
+        });
+      } catch {
+        sendJson(response, 500, { error: "修改狼人杀消息时没有完整同步，请重试" });
+      }
+      return;
+    }
+
     if (werewolfEventMatch && request.method === "DELETE") {
       if (!isAuthorized(request)) {
         sendJson(response, 401, { error: "需要先输入访问码" });

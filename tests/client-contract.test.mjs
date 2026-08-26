@@ -252,7 +252,7 @@ test("狼人杀赛后复盘把本局日记和可跨房间私人记忆分成两�
   assert.match(script, /privateMemoryOutputInstruction\(agent\)/);
 });
 
-test("狼人杀消息复用普通消息的触摸操作层，并通过鉴权接口持久删除", async () => {
+test("狼人杀消息复用普通消息的触摸操作层，并通过鉴权接口持久修改或删除", async () => {
   const [app, script, styles] = await Promise.all([
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
     readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8"),
@@ -260,6 +260,8 @@ test("狼人杀消息复用普通消息的触摸操作层，并通过鉴权接�
   ]);
   assert.match(script, /createElement\("div", "message-actions"\)/);
   assert.match(script, /copy-message/);
+  assert.match(script, /edit-message/);
+  assert.match(script, /method: "PATCH"/);
   assert.match(script, /delete-message/);
   assert.match(script, /method: "DELETE"/);
   assert.match(script, /werewolf-log-entry\.is-actions-visible/);

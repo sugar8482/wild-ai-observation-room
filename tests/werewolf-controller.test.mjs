@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   gameSystemPrompt,
   parseWerewolfDebriefReply,
+  parseWerewolfGameReply,
   requestWerewolfDebrief,
   roleKnowledge,
   stripPseudoDebriefArchive,
@@ -289,8 +290,26 @@ test("新局隔离旧局卷宗，但允许嘉宾带着自己挑选的长期私�
   assert.match(prompt, /我答应晨曦，不会故意让她失望/);
   assert.match(prompt, /看不到任何旧局原文、旧复盘或旧局私人日记/);
   assert.match(prompt, /不要把旧局身份当成本局身份/);
-  assert.match(prompt, /<self_memory>/);
+  assert.match(prompt, /局中没有私人记忆、局内日记或长期记忆写入功能/);
+  assert.match(prompt, /不得输出 <self_memory>、<game_diary>/);
+  assert.doesNotMatch(prompt, /你可以自行选择写进长期私人记忆/);
   assert.match(prompt, /现在进行白天发言/);
+});
+
+test("局中回复会拦截完整或未闭合的私人记忆标签，不保存也不上公屏", () => {
+  assert.equal(parseWerewolfGameReply([
+    "我今天先听票型，不急着站边。",
+    "<self_memory>",
+    "- 我发现晨曦今天很容易被带票。",
+    "</self_memory>",
+    "最后补一句：我会盯着改口的人。",
+  ].join("\n")), "我今天先听票型，不急着站边。\n最后补一句：我会盯着改口的人。");
+  assert.equal(parseWerewolfGameReply([
+    "我投玩家二。",
+    "<game_diary>",
+    "- 我想把这票记下来。",
+  ].join("\n")), "我投玩家二。");
+  assert.equal(parseWerewolfGameReply("<self_memory>\n- 只有记忆，没有发言。\n</self_memory>"), "");
 });
 
 test("赛后本局日记与可跨房间长期记忆使用两个独立出口", () => {

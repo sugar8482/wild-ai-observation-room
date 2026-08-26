@@ -786,7 +786,7 @@ test("中途刷新与滞后重复保存不会回退狼人杀当前进度", async
   assert.equal((await store.clientState()).rooms[0].werewolf.revision, 8);
 });
 
-test("删除当前局和历史局消息只改显示日志，不改结构化游戏事实也不会被滞后保存复活", async (context) => {
+test("修改或删除当前局和历史局消息只改显示日志，不改结构化游戏事实也不会被滞后保存回退", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-werewolf-delete-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const filePath = join(directory, "state.json");
@@ -826,10 +826,26 @@ test("删除当前局和历史局消息只改显示日志，不改结构化游�
     winner: original.rooms[0].werewolfArchives[0].winner,
   };
 
+  const editedCurrent = await store.editWerewolfEvent("werewolf-delete-room", current.id, currentMessage.id, "当前局已经改好。");
+  const editedHistory = await store.editWerewolfEvent("werewolf-delete-room", archived.id, historyMessage.id, "历史局已经改好。");
+  assert.equal(editedCurrent.updated, true);
+  assert.equal(editedCurrent.text, "当前局已经改好。");
+  assert.equal(editedHistory.updated, true);
+  assert.equal((await store.editWerewolfEvent("werewolf-delete-room", archived.id, historyMessage.id, "历史局已经改好。")).updated, false);
+  let after = await store.clientState();
+  assert.equal(after.rooms[0].werewolf.log.find((entry) => entry.id === currentMessage.id).text, "当前局已经改好。");
+  assert.equal(after.rooms[0].werewolfArchives[0].log.find((entry) => entry.id === historyMessage.id).text, "历史局已经改好。");
+  assert.deepEqual({
+    currentNights: after.rooms[0].werewolf.nights,
+    currentDays: after.rooms[0].werewolf.days,
+    archivedNights: after.rooms[0].werewolfArchives[0].nights,
+    winner: after.rooms[0].werewolfArchives[0].winner,
+  }, factsBefore);
+
   assert.equal((await store.deleteWerewolfEvent("werewolf-delete-room", current.id, currentMessage.id)).deleted, true);
   assert.equal((await store.deleteWerewolfEvent("werewolf-delete-room", archived.id, historyMessage.id)).deleted, true);
   assert.equal((await store.deleteWerewolfEvent("werewolf-delete-room", archived.id, historyMessage.id)).deleted, false);
-  let after = await store.clientState();
+  after = await store.clientState();
   assert.ok(!after.rooms[0].werewolf.log.some((entry) => entry.id === currentMessage.id));
   assert.ok(!after.rooms[0].werewolfArchives[0].log.some((entry) => entry.id === historyMessage.id));
   assert.deepEqual({

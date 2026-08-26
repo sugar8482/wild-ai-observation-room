@@ -165,6 +165,52 @@ test("当前局与历史局狼人杀消息删除会同步主状态和数据库�
   assert.equal(wrongRoom.status, 404);
 });
 
+test("狼人杀消息修改会同步主状态与数据库并拒绝空正文", async (context) => {
+  const calls = [];
+  const stateStore = {
+    async editWerewolfEvent(roomId, gameId, eventId, text) {
+      calls.push({ kind: "state", roomId, gameId, eventId, text });
+      return {
+        gameFound: gameId === "current-game",
+        eventFound: eventId === "event-one",
+        updated: true,
+        text,
+        snapshot: { rooms: [{ id: roomId, roomType: "werewolf" }] },
+      };
+    },
+  };
+  const archive = {
+    status: () => ({ enabled: true, state: "ready" }),
+    async syncWerewolfSnapshot(snapshot) { calls.push({ kind: "sync", snapshot }); },
+    async flush() { calls.push({ kind: "flush" }); return true; },
+    async editWerewolfEvent(roomId, gameId, eventId, text) {
+      calls.push({ kind: "database", roomId, gameId, eventId, text });
+      return { gameFound: true, eventFound: true, updated: true, text };
+    },
+  };
+  const server = createAppServer({ stateStore, archive });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${server.address().port}`;
+
+  const response = await fetch(`${origin}/api/werewolf/games/current-game/events/event-one?roomId=werewolf-room`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text: "改好的卷宗正文。" }),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, updated: true, text: "改好的卷宗正文。" });
+  assert.ok(calls.some((call) => call.kind === "database" && call.text === "改好的卷宗正文。"));
+
+  const blank = await fetch(`${origin}/api/werewolf/games/current-game/events/event-one?roomId=werewolf-room`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text: "   " }),
+  });
+  assert.equal(blank.status, 400);
+});
+
 test("后台总结任务接口可以提交、查询和取消任务", async (context) => {
   const job = {
     id: "summary-test",
