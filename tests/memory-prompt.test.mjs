@@ -4,7 +4,7 @@ import {
   buildAppendSummaryMessages,
   buildRebuildSectionMessages,
   completeAutomaticSummaryBatch,
-  formatMemorySegment,
+  isLegacyTruncatedRoomSummary,
 } from "../public/memory-prompt.js";
 
 const room = {
@@ -17,32 +17,26 @@ const messages = [
   { kind: "agent", author: "谢知衡", text: "记得。", timestamp: Date.UTC(2026, 7, 7, 1, 1) },
 ];
 
-test("追加整理只读取本批原文，不要求重写旧总结", () => {
-  const prompt = buildAppendSummaryMessages(room, messages);
-  assert.match(prompt[0].content, /独立的时间记录片段/);
-  assert.match(prompt[0].content, /不要重写、压缩或评价此前的长期记忆/);
+test("追加整理把旧摘要和新原文合成一份客观事实索引", () => {
+  const prompt = buildAppendSummaryMessages(room, messages, "晨曦已经决定周末见面。");
+  assert.match(prompt[0].content, /输出合并、去重、更新后的完整工作摘要/);
+  assert.match(prompt[0].content, /直接替换旧摘要，不要只输出新增片段/);
   assert.match(prompt[0].content, /保留共同经历和仍未回答的问题/);
-  assert.match(prompt[0].content, /用户原话较短时尽量完整引用/);
+  assert.match(prompt[0].content, /不要逐个点名复述每位嘉宾的比喻、吐槽、附和和文风/);
+  assert.match(prompt[0].content, /不要模仿原聊天或旧总结的修辞口吻/);
+  assert.match(prompt[1].content, /已有工作摘要：\n晨曦已经决定周末见面/);
   assert.match(prompt[1].content, /本批新增聊天原文/);
   assert.match(prompt[1].content, /【用户原话｜晨曦】：你们还记得那件事吗？/);
   assert.match(prompt[1].content, /谢知衡：记得。/);
-  assert.doesNotMatch(prompt[1].content, /现有长期总结/);
 });
 
-test("全篇重建按时间分段且明确禁止重复归类", () => {
-  const sectionPrompt = buildRebuildSectionMessages(room, messages);
-  assert.match(sectionPrompt[0].content, /全篇重建中的分段阅读/);
-  assert.match(sectionPrompt[1].content, /本段现存聊天原文/);
-  assert.match(sectionPrompt[0].content, /不会再生成另一份总概括/);
-  assert.match(sectionPrompt[0].content, /同一事实只能出现一次/);
-  assert.match(sectionPrompt[0].content, /不要另设重要事实、总概括、关系、性格、梗或待办栏目/);
-  assert.match(sectionPrompt[0].content, /整间房不设固定总字数/);
-});
-
-test("记忆片段带消息范围且保留模型正文", () => {
-  const segment = formatMemorySegment(messages, "这一段发生了两件事。", 21, 22);
-  assert.match(segment, /^## 记忆片段 · 第 21–22 条/);
-  assert.match(segment, /这一段发生了两件事。$/);
+test("全篇重建逐批更新同一份摘要而不是拼接时间片段", () => {
+  const sectionPrompt = buildRebuildSectionMessages(room, messages, "上一批已经确认一项事实。");
+  assert.match(sectionPrompt[1].content, /本批现存聊天原文/);
+  assert.match(sectionPrompt[1].content, /上一批已经确认一项事实/);
+  assert.match(sectionPrompt[0].content, /同一事实只保留一处/);
+  assert.match(sectionPrompt[0].content, /稳定事实、近期进展、未决事项/);
+  assert.match(sectionPrompt[0].content, /约 1800～3200 个简体中文字/);
 });
 
 test("自动整理只取完整批次并把零头留到下一批", () => {
@@ -57,5 +51,20 @@ test("整理提示不会把条件和猜测升级成事实", () => {
   const prompt = buildAppendSummaryMessages(room, messages.slice(0, 1));
   assert.match(prompt[0].content, /条件或推测意味的内容/);
   assert.match(prompt[0].content, /绝不能升级成已经确认的事实/);
-  assert.match(prompt[0].content, /如果本批少于 5 条，只写一段简短自然的时间记录/);
+  assert.match(prompt[0].content, /上限而非写作目标，不要凑字数/);
+});
+
+test("能识别旧版五万字截断状态而不误伤普通长摘要", () => {
+  assert.equal(isLegacyTruncatedRoomSummary({
+    summary: "旧".repeat(49_993),
+    summarizedMessageCount: 500,
+  }), true);
+  assert.equal(isLegacyTruncatedRoomSummary({
+    summary: "新".repeat(49_993),
+    summarizedMessageCount: 499,
+  }), false);
+  assert.equal(isLegacyTruncatedRoomSummary({
+    summary: "新".repeat(60_000),
+    summarizedMessageCount: 700,
+  }), false);
 });

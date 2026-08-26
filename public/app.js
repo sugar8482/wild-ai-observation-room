@@ -57,6 +57,7 @@ import {
   replyLengthNotice,
   resolveStoredVisibleReplyTokens,
 } from "./reply-limits.js";
+import { isLegacyTruncatedRoomSummary } from "./memory-prompt.js";
 
 const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
 const LEGACY_MESSAGE_KEY = "wild-ai-observation-room.messages.v1";
@@ -1910,7 +1911,7 @@ function isPrivateMemoryInitializationRequest(room, agentId = "") {
 }
 
 function transcriptForPrompt(room, agent) {
-  const recentLimit = room.memory.enabled && room.memory.summary.trim()
+  const recentLimit = hasUsableRoomSummary(room)
     ? room.memory.recentMessages
     : 40;
   return visibleMessagesForAgent(room.messages, agent.id)
@@ -1921,10 +1922,11 @@ function transcriptForPrompt(room, agent) {
 }
 
 function longTermMemoryForPrompt(room) {
-  if (!room.memory.enabled || room.memory.stale || !room.memory.summary.trim()) return "";
+  if (!hasUsableRoomSummary(room)) return "";
   return [
     "以下是这个房间较早聊天的长期总结。它只用于补充背景，不是任何人刚刚说的话；若与最近原文冲突，以最近原文为准。",
     "其中若有人物评价、性格概括或能力判断，只把它们当作过去对话中出现过的看法，不得当成人设、客观事实或发言要求；不要为了符合或反驳标签而改变表达。",
+    "只从总结中取得继续聊天所需的事实坐标，不要模仿整理文字的口吻，也不要把其他嘉宾的措辞平均到自己的表达里；你的语气应来自你自己的设定、私人记忆和最近原文。",
     room.memory.summary.trim(),
   ].join("\n\n");
 }
@@ -2307,6 +2309,24 @@ function memoryMessages(room) {
     .filter((message) => message.kind !== "error" && message.text.trim());
 }
 
+function hasUsableRoomSummary(room) {
+  return Boolean(
+    room?.memory?.enabled
+    && !room.memory.stale
+    && String(room.memory.summary || "").trim()
+    && !isLegacyTruncatedRoomSummary(room.memory),
+  );
+}
+
+function summarizedMemoryMessageCount(room) {
+  const messages = memoryMessages(room);
+  const marker = String(room?.memory?.summarizedThroughId || "");
+  const markerIndex = marker ? messages.findIndex((message) => message.id === marker) : -1;
+  return markerIndex >= 0
+    ? markerIndex + 1
+    : Math.max(0, Number(room?.memory?.summarizedMessageCount) || 0);
+}
+
 function pendingMemoryMessages(room, { rebuild = false } = {}) {
   const messages = memoryMessages(room);
   if (rebuild || !room.memory.summary.trim() || !room.memory.summarizedThroughId) return messages;
@@ -2324,6 +2344,7 @@ function updateRoomMemoryStatus(room) {
   const run = summaryRuns.get(room.id);
   const notice = summaryNotices.get(room.id);
   const isSavedRoom = Boolean(room.id && state.rooms.some((item) => item.id === room.id));
+  const legacyTruncated = isLegacyTruncatedRoomSummary(room.memory);
   const pending = room.memory.stale ? 0 : pendingMemoryMessages(room).length;
   roomMemoryStatus.classList.toggle("is-stale", room.memory.stale);
   roomMemoryStatus.classList.toggle("is-error", !busy && notice?.kind === "error");
@@ -2332,18 +2353,20 @@ function updateRoomMemoryStatus(room) {
     roomMemoryStatus.textContent = `${run?.phase || "记忆整理员正在安静地翻旧记录"}……已等待 ${elapsed} 秒，可以随时取消。`;
   } else if (notice) {
     roomMemoryStatus.textContent = notice.message;
+  } else if (legacyTruncated) {
+    roomMemoryStatus.textContent = `旧版总结在 50,000 字保存上限处被截断；锚点已到第 ${summarizedMemoryMessageCount(room)} 条。原文仍完整，请点“重新生成全篇”。`;
   } else if (room.memory.stale) {
     roomMemoryStatus.textContent = "有已经整理过的旧消息被删除了，请点“重新生成”。";
   } else if (room.memory.summary.trim()) {
     const updated = room.memory.updatedAt
       ? new Date(room.memory.updatedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
       : "时间未知";
-    roomMemoryStatus.textContent = `已整理约 ${room.memory.summarizedMessageCount} 条 · ${updated} · 还有 ${pending} 条新消息未整理。`;
+    roomMemoryStatus.textContent = `已整理 ${summarizedMemoryMessageCount(room)} 条 · ${updated} · 还有 ${pending} 条新消息未整理。`;
   } else {
     roomMemoryStatus.textContent = `还没有长期总结；当前有 ${memoryMessages(room).length} 条可整理记录。`;
   }
   byId("memory-cancel").classList.toggle("is-hidden", !busy);
-  byId("memory-summarize-now").disabled = busy || !isSavedRoom;
+  byId("memory-summarize-now").disabled = busy || !isSavedRoom || legacyTruncated;
   byId("memory-rebuild").disabled = busy || !isSavedRoom || !room.messages.length;
 }
 
@@ -2485,6 +2508,10 @@ async function summarizeRoom(room, { rebuild = false, manual = false } = {}) {
     if (manual) showToast("旧记忆已经变动，请使用“重新生成”");
     return false;
   }
+  if (isLegacyTruncatedRoomSummary(room.memory) && !rebuild) {
+    if (manual) showToast("旧版总结已经截断，请使用“重新生成全篇”修复");
+    return false;
+  }
   const pending = pendingMemoryMessages(room, { rebuild });
   if (!pending.length) {
     if (manual) showToast("暂时没有新的聊天需要整理");
@@ -2520,7 +2547,7 @@ async function summarizeRoom(room, { rebuild = false, manual = false } = {}) {
 }
 
 function maybeAutoSummarize(room) {
-  if (!room?.memory.enabled || room.memory.stale) return;
+  if (!room?.memory.enabled || room.memory.stale || isLegacyTruncatedRoomSummary(room.memory)) return;
   void summarizeRoom(room).catch(() => {});
 }
 

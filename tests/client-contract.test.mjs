@@ -196,6 +196,8 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.match(html, /其他嘉宾看不到/);
+  assert.match(html, /选择写 0～3 条/);
+  assert.match(html, /不同嘉宾也不必记成同一份答案/);
   assert.match(script, /parseAgentReply\(reply\.text\)/);
   assert.match(script, /privateMemoryOutputInstruction\(agent\)/);
   assert.match(script, /privateMemoryImmediateReminder\(agent, options\)/);
@@ -222,7 +224,7 @@ test("每位嘉宾可选择启用同次回复写入的第一人称私人记忆",
   assert.match(html, /30,000 字只是建议整理线/);
   assert.match(html, /每条最多合并两条旧记忆/);
   assert.match(html, /目标是校订而不是缩短/);
-  assert.match(html, /日常每轮可认真选择写 0～2 条/);
+  assert.match(html, /日常每轮可按自己的在意程度选择写 0～3 条/);
   assert.match(html, /首次初始化可写 1～3 条/);
   assert.doesNotMatch(script, /agent: state\.summarizer,[\s\S]{0,240}requestMode: "private-memory-summary"/);
   assert.match(memoryModule, /如果遗忘它会让未来的反应少一层依据/);
@@ -353,21 +355,27 @@ test("房间长期记忆独立于聊天消息并注入最近原文之前", async
   assert.match(script, /summaryNotices\.set/);
   assert.match(script, /method: "DELETE"/);
   assert.match(html, /留空使用默认的“记事、不定性”规则/);
-  assert.match(memoryPrompt, /不是人物评委或角色编剧/);
-  assert.match(memoryPrompt, /属于关系事实。只按原文含义记录/);
+  assert.match(memoryPrompt, /不是人物评委、角色编剧或逐句复述员/);
+  assert.match(memoryPrompt, /不要逐个点名复述每位嘉宾的比喻、吐槽、附和和文风/);
+  assert.match(memoryPrompt, /它将直接替换旧摘要，不要只输出新增片段/);
+  assert.match(memoryPrompt, /成员亲口表达的感受、立场或关系变化/);
   assert.match(memoryPrompt, /【本房间的额外记忆重点】/);
   assert.match(script, /focus: String\(memory\?\.focus \|\| ""\)/);
-  assert.match(memoryPrompt, /不要重写、压缩或评价此前的长期记忆/);
+  assert.match(memoryPrompt, /已有工作摘要也是待校订材料，不是权威事实/);
   assert.match(memoryPrompt, /无论房间是日常聊天、朋友群、角色扮演、工作讨论或其他用途/);
-  assert.match(memoryPrompt, /不会再生成另一份总概括/);
+  assert.match(memoryPrompt, /不要附加消息编号、整理说明或第二份总概括/);
   assert.match(memoryPrompt, /原文中标为“【用户原话｜名字】”的消息具有最高保留优先级/);
-  assert.match(memoryPrompt, /不得只写成“用户询问了某事”/);
+  assert.match(memoryPrompt, /不能只写成“用户询问了某事”/);
   assert.match(memoryPrompt, /completeAutomaticSummaryBatch/);
   assert.match(memoryPrompt, /绝不能升级成已经确认的事实/);
+  assert.match(script, /旧版总结在 50,000 字保存上限处被截断/);
+  assert.match(script, /summarizedMemoryMessageCount\(room\)/);
+  assert.match(script, /不要模仿整理文字的口吻/);
   assert.match(summaryJobs, /processedMessages: job\.processedMessages \+ chunk\.length/);
   assert.match(script, /这会清空并覆盖当前总结；聊天原文不会删除/);
   assert.doesNotMatch(script, /# 全篇概览/);
-  assert.match(html, /立即或自动整理只会在末尾追加时间片段/);
+  assert.match(html, /立即或自动整理会把新增原文并入同一份客观事实索引/);
+  assert.match(html, /原始消息不会删除/);
   assert.doesNotMatch(memoryPrompt, /人物自我介绍与稳定偏好/);
 });
 

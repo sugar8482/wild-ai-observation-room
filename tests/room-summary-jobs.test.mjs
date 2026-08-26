@@ -7,6 +7,7 @@ import { createRoomSummaryJobs } from "../lib/room-summary-jobs.mjs";
 function fixture({ chat } = {}) {
   let clock = 1000;
   const checkpoints = [];
+  const requests = [];
   const state = {
     summarizer: {
       id: "memory-summarizer",
@@ -58,11 +59,14 @@ function fixture({ chat } = {}) {
   };
   const jobs = createRoomSummaryJobs({
     stateStore,
-    chat: chat || (async () => ({ text: `批次摘要 ${checkpoints.length + 1}` })),
+    chat: async (...args) => {
+      requests.push(structuredClone(args[0]));
+      return chat ? chat(...args) : { text: `批次摘要 ${requests.length}` };
+    },
     now: () => ++clock,
     createId: () => "test-job",
   });
-  return { jobs, state, checkpoints };
+  return { jobs, state, checkpoints, requests };
 }
 
 async function waitForTerminal(jobs, id) {
@@ -74,8 +78,8 @@ async function waitForTerminal(jobs, id) {
   throw new Error("后台总结任务没有结束");
 }
 
-test("后台总结会逐批存档，页面请求返回后仍继续运行", async () => {
-  const { jobs, state, checkpoints } = fixture();
+test("后台总结会逐批存档，并让后一批重写同一份客观摘要", async () => {
+  const { jobs, state, checkpoints, requests } = fixture();
   const accepted = await jobs.start({ roomId: "room-one" });
 
   assert.equal(accepted.id, "summary-test-job");
@@ -87,8 +91,21 @@ test("后台总结会逐批存档，页面请求返回后仍继续运行", async
   assert.equal(checkpoints.length, 2);
   assert.equal(checkpoints[0].summarizedThroughId, "message-5");
   assert.equal(checkpoints[1].summarizedThroughId, "message-7");
-  assert.match(state.rooms[0].memory.summary, /批次摘要 1/);
-  assert.match(state.rooms[0].memory.summary, /批次摘要 2/);
+  assert.equal(state.rooms[0].memory.summary, "批次摘要 2");
+  assert.match(requests[1].messages[1].content, /已有工作摘要：\n批次摘要 1/);
+  assert.equal(requests[0].maxTokens, 4096);
+});
+
+test("旧版五万字截断总结拒绝继续推进锚点并要求全篇重建", async () => {
+  const { jobs, state, checkpoints } = fixture();
+  state.rooms[0].memory.summary = "旧".repeat(49_993);
+  state.rooms[0].memory.summarizedMessageCount = 500;
+
+  await assert.rejects(
+    jobs.start({ roomId: "room-one" }),
+    /旧版长期总结已在保存上限处截断，请使用重新生成/,
+  );
+  assert.equal(checkpoints.length, 0);
 });
 
 test("后台总结接收任务时不会等待慢模型返回", async () => {

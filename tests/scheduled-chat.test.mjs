@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isQuietTime, nextQuietEnd, runScheduledRoom } from "../lib/scheduled-chat.mjs";
+import {
+  isQuietTime,
+  maybeSummarizeRoom,
+  nextQuietEnd,
+  runScheduledRoom,
+} from "../lib/scheduled-chat.mjs";
 
 function roomFixture(maxTurns = 3) {
   return {
@@ -25,6 +30,92 @@ const agents = [
   { id: "guest-a", name: "A", format: "openai", baseUrl: "https://a.example/v1", model: "a", authType: "none", persona: "" },
   { id: "guest-b", name: "B", format: "openai", baseUrl: "https://b.example/v1", model: "b", authType: "none", persona: "" },
 ];
+
+test("自动整理逐批重写同一份摘要并保存真实消息计数", async () => {
+  const room = roomFixture(1);
+  room.messages = Array.from({ length: 10 }, (_, index) => ({
+    id: `message-${index + 1}`,
+    kind: "user",
+    author: "晨曦",
+    text: `第 ${index + 1} 条`,
+    timestamp: index + 1,
+  }));
+  room.memory = {
+    enabled: true,
+    interval: 5,
+    recentMessages: 30,
+    summary: "旧摘要",
+    summarizedThroughId: "",
+    summarizedMessageCount: 0,
+    updatedAt: null,
+    stale: false,
+  };
+  const state = {
+    rooms: [room],
+    summarizer: {
+      id: "memory-summarizer",
+      baseUrl: "https://summary.example/v1",
+      model: "summary-model",
+      authType: "none",
+    },
+  };
+  const saves = [];
+  const requests = [];
+  const stateStore = {
+    async clientState() { return structuredClone(state); },
+    async completeRoomSummary(roomId, update) {
+      const current = state.rooms.find((item) => item.id === roomId);
+      Object.assign(current.memory, {
+        summary: update.summary,
+        summarizedThroughId: update.summarizedThroughId,
+        summarizedMessageCount: update.summarizedMessageCount,
+        updatedAt: update.at,
+      });
+      saves.push(structuredClone(update));
+      return true;
+    },
+  };
+
+  const completed = await maybeSummarizeRoom(stateStore, async (payload) => {
+    requests.push(structuredClone(payload));
+    return { text: `滚动摘要 ${requests.length}` };
+  }, room.id);
+
+  assert.equal(completed, true);
+  assert.equal(saves.length, 2);
+  assert.equal(saves[0].summarizedMessageCount, 5);
+  assert.equal(saves[1].summarizedMessageCount, 10);
+  assert.equal(state.rooms[0].memory.summary, "滚动摘要 2");
+  assert.match(requests[1].messages[1].content, /已有工作摘要：\n滚动摘要 1/);
+  assert.equal(requests[0].maxTokens, 4096);
+});
+
+test("自动整理不会继续推进旧版截断总结", async () => {
+  const room = roomFixture(1);
+  room.memory = {
+    enabled: true,
+    interval: 5,
+    summary: "旧".repeat(49_993),
+    summarizedThroughId: "",
+    summarizedMessageCount: 500,
+    stale: false,
+  };
+  let calls = 0;
+  const completed = await maybeSummarizeRoom({
+    async clientState() {
+      return {
+        rooms: [room],
+        summarizer: { baseUrl: "https://summary.example/v1", model: "summary", authType: "none" },
+      };
+    },
+  }, async () => {
+    calls += 1;
+    return { text: "不应调用" };
+  }, room.id);
+
+  assert.equal(completed, false);
+  assert.equal(calls, 0);
+});
 
 test("跨零点的免打扰时段可以正确延后", () => {
   const schedule = { quietEnabled: true, quietStart: "23:00", quietEnd: "08:00" };

@@ -520,6 +520,106 @@ test("记忆整理员 Key 加密保存且房间长期记忆可迁移", async (co
   assert.doesNotMatch(await readFile(filePath, "utf8"), /summary-secret-key/);
 });
 
+test("房间总结不再截在五万字或把真实整理计数封成五百", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-summary-limit-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({
+    filePath: join(directory, "state.json"),
+    secret: "summary-limit-secret",
+  });
+  const longSummary = "客观事实。".repeat(12_000);
+  await store.save({
+    agents: [],
+    activeRoomId: "room-summary-limit",
+    rooms: [{
+      id: "room-summary-limit",
+      name: "长总结房间",
+      participantIds: [],
+      messages: [{ id: "message-marker", kind: "user", author: "晨曦", text: "原文仍在" }],
+      memory: {
+        summary: longSummary,
+        summarizedThroughId: "message-marker",
+        summarizedMessageCount: 717,
+        updatedAt: 100,
+      },
+    }],
+  });
+
+  const saved = await store.clientState();
+  assert.equal(saved.rooms[0].memory.summary, longSummary);
+  assert.equal(saved.rooms[0].memory.summarizedMessageCount, 717);
+});
+
+test("总结超过安全保存上限时拒绝推进锚点而不是静默截断", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-summary-atomic-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({
+    filePath: join(directory, "state.json"),
+    secret: "summary-atomic-secret",
+  });
+  await store.save({
+    agents: [],
+    activeRoomId: "room-summary-atomic",
+    rooms: [{
+      id: "room-summary-atomic",
+      name: "原子保存房间",
+      participantIds: [],
+      messages: [
+        { id: "message-one", kind: "user", author: "晨曦", text: "第一条" },
+        { id: "message-two", kind: "user", author: "晨曦", text: "第二条" },
+      ],
+      memory: {
+        summary: "旧摘要",
+        summarizedThroughId: "message-one",
+        summarizedMessageCount: 1,
+        updatedAt: 100,
+      },
+    }],
+  });
+
+  await assert.rejects(store.completeRoomSummary("room-summary-atomic", {
+    summary: "超".repeat(200_001),
+    summarizedThroughId: "message-two",
+    summarizedMessageCount: 2,
+    expectedPreviousMarker: "message-one",
+    expectedPreviousUpdatedAt: 100,
+    at: 200,
+  }), /超过安全保存上限 200000 字，整理锚点未推进/);
+
+  const saved = await store.clientState();
+  assert.equal(saved.rooms[0].memory.summary, "旧摘要");
+  assert.equal(saved.rooms[0].memory.summarizedThroughId, "message-one");
+  assert.equal(saved.rooms[0].memory.summarizedMessageCount, 1);
+});
+
+test("MCP 访客不会读取已知被旧上限截断的共同总结", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-summary-mcp-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({
+    filePath: join(directory, "state.json"),
+    secret: "summary-mcp-secret",
+  });
+  await store.save({
+    agents: [],
+    activeRoomId: "room-summary-mcp",
+    rooms: [{
+      id: "room-summary-mcp",
+      name: "截断总结房间",
+      participantIds: [],
+      messages: [],
+      memory: {
+        summary: "旧".repeat(49_993),
+        summarizedMessageCount: 500,
+        updatedAt: 100,
+      },
+    }],
+  });
+
+  const snapshot = await store.publicRoomSnapshot("room-summary-mcp", { includeContext: true });
+  assert.equal(snapshot.longTermSummary, "");
+  assert.equal(snapshot.summaryStale, true);
+});
+
 test("后台定时发言不会被滞后的浏览器保存覆盖", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
