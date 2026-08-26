@@ -23,11 +23,30 @@ test("默认嘉宾库包含五家公司模型入口", async () => {
   }
 });
 
-test("每条消息提供持久化删除入口", async () => {
-  const script = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+test("每条普通消息都提供共用线框图标的复制修改删除并持久保存", async () => {
+  const [script, actions, html, styles] = await Promise.all([
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/message-actions.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(script, /createMessageActionButton\("copy"/);
+  assert.match(script, /createMessageActionButton\("edit"/);
+  assert.match(script, /function editMessage\(messageId\)/);
   assert.match(script, /function deleteMessage\(messageId\)/);
-  assert.match(script, /"delete-message", "删除"/);
+  assert.match(script, /createMessageActionButton\("delete"/);
   assert.match(script, /queuePersist\(\)/);
+  const actionBlock = script.match(/const actions = createElement\("div", "message-actions"\)[\s\S]*?body\.append\(actions\)/)?.[0] || "";
+  assert.doesNotMatch(actionBlock, /message\.kind !== "error"/);
+  assert.match(actions, /copy:[\s\S]*rect/);
+  assert.match(actions, /edit:[\s\S]*path/);
+  assert.match(actions, /delete:[\s\S]*path/);
+  assert.match(actions, /setAttribute\("fill", "none"\)/);
+  assert.match(actions, /setAttribute\("stroke", "currentColor"\)/);
+  assert.match(html, /id="message-edit-dialog"/);
+  assert.match(html, /id="message-edit-text"/);
+  assert.match(styles, /\.message-edit-dialog textarea[\s\S]*min-height: 260px/);
+  assert.match(styles, /\.delete-message,[\s\S]*color: var\(--error\)/);
 });
 
 test("消息操作在点选当前消息后才展开", async () => {
@@ -254,17 +273,21 @@ test("狼人杀赛后复盘把本局日记和可跨房间私人记忆分成两�
 });
 
 test("狼人杀消息复用普通消息的触摸操作层，并通过鉴权接口持久修改或删除", async () => {
-  const [app, script, styles] = await Promise.all([
+  const [app, script, styles, actions] = await Promise.all([
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
     readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8"),
     readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../public/message-actions.js", import.meta.url), "utf8"),
   ]);
   assert.match(script, /createElement\("div", "message-actions"\)/);
-  assert.match(script, /copy-message/);
-  assert.match(script, /edit-message/);
+  assert.match(script, /createMessageActionButton\("copy"/);
+  assert.match(script, /createMessageActionButton\("edit"/);
   assert.match(script, /method: "PATCH"/);
-  assert.match(script, /delete-message/);
+  assert.match(script, /createMessageActionButton\("delete"/);
   assert.match(script, /method: "DELETE"/);
+  assert.match(script, /openMessageEditor/);
+  assert.doesNotMatch(script, /globalThis\.prompt/);
+  assert.match(actions, /message-action-button \$\{kind\}-message/);
   assert.match(script, /werewolf-log-entry\.is-actions-visible/);
   assert.match(styles, /\.werewolf-log-entry\.is-actions-visible \.message-actions/);
   assert.match(app, /recipientId = messageRecipient\.value/);
@@ -321,7 +344,7 @@ test("群聊时间线支持真正隔离的私聊与房主遮罩查看", async ()
   assert.match(script, /补发私聊/);
   assert.match(styles, /\.message\.is-private/);
   assert.match(styles, /\.private-message-mask/);
-  assert.match(styles, /\.repair-private-message/);
+  assert.match(script, /createMessageActionButton\("repair"/);
   assert.match(privateModule, /recipientIds/);
   assert.match(privateModule, /其他嘉宾连这次私聊发生过都不会知道/);
 });

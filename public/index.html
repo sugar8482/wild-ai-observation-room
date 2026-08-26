@@ -963,6 +963,20 @@
       </form>
     </dialog>
 
+    <dialog class="message-edit-dialog" id="message-edit-dialog">
+      <form id="message-edit-form">
+        <p class="section-kicker">EDIT MESSAGE</p>
+        <h2 id="message-edit-title">修改消息</h2>
+        <p id="message-edit-description">只修改这条消息的显示文字。</p>
+        <label class="sr-only" for="message-edit-text">消息正文</label>
+        <textarea id="message-edit-text" maxlength="50000" required></textarea>
+        <div class="message-edit-actions">
+          <button class="button button-quiet" id="message-edit-cancel" type="button">取消</button>
+          <button class="button button-primary" type="submit">保存修改</button>
+        </div>
+      </form>
+    </dialog>
+
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </body>
 </html>

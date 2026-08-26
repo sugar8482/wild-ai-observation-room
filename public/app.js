@@ -49,6 +49,7 @@ import {
   nextHistoryWindowLimit,
 } from "./history-window.js";
 import { appendBoldText } from "./rich-text.js";
+import { createMessageActionButton, openMessageEditor } from "./message-actions.js";
 import { chatScrollThumbMetrics } from "./chat-scroll-indicator.js";
 import {
   DEFAULT_VISIBLE_REPLY_TOKENS,
@@ -1382,31 +1383,24 @@ function renderMessages({ scroll = false, preservePrepend = false } = {}) {
     if (message.privateRepairEligible) body.classList.add("has-private-repair");
     const actions = createElement("div", "message-actions");
     if (message.privateRepairEligible && message.kind === "agent" && !privateMessage) {
-      const repairButton = createElement("button", "repair-private-message", "补发私聊");
-      repairButton.type = "button";
-      repairButton.setAttribute("aria-label", `请 ${message.author} 补发漏掉的私聊`);
+      const repairButton = createMessageActionButton("repair", `请 ${message.author} 补发漏掉的私聊`);
       repairButton.addEventListener("click", () => void repairPrivateMessage(message.id));
       actions.append(repairButton);
     }
-    if (message.kind !== "error") {
-      const copyButton = createElement("button", "copy-message", "复制");
-      copyButton.type = "button";
-      copyButton.setAttribute("aria-label", `复制 ${message.author} 的${segments.length > 1 ? "这组" : "这条"}消息`);
-      copyButton.addEventListener("click", async () => {
-        if (await copyText(message.text)) {
-          showToast("已复制");
-        } else {
-          openCopyFallback(message.text);
-          showToast("浏览器拦住了自动复制，已为你选中原文");
-        }
-      });
-      actions.append(copyButton);
-    }
-    const deleteButton = createElement("button", "delete-message", "删除");
-    deleteButton.type = "button";
-    deleteButton.setAttribute("aria-label", `删除 ${message.author} 的${segments.length > 1 ? "整组" : "这条"}消息`);
+    const copyButton = createMessageActionButton("copy", `复制 ${message.author} 的${segments.length > 1 ? "这组" : "这条"}消息`);
+    copyButton.addEventListener("click", async () => {
+      if (await copyText(message.text)) {
+        showToast("已复制");
+      } else {
+        openCopyFallback(message.text);
+        showToast("浏览器拦住了自动复制，已为你选中原文");
+      }
+    });
+    const editButton = createMessageActionButton("edit", `修改 ${message.author} 的${segments.length > 1 ? "这组" : "这条"}消息`);
+    editButton.addEventListener("click", () => void editMessage(message.id));
+    const deleteButton = createMessageActionButton("delete", `删除 ${message.author} 的${segments.length > 1 ? "整组" : "这条"}消息`);
     deleteButton.addEventListener("click", () => deleteMessage(message.id));
-    actions.append(deleteButton);
+    actions.append(copyButton, editButton, deleteButton);
     body.append(actions);
     if (maskedForOwner) {
       stack.classList.add("is-concealed");
@@ -1697,6 +1691,56 @@ function addMessage({
   return message;
 }
 
+function markRoomMemoryStaleForChangedMessage(room, messageId) {
+  const rememberedMessages = memoryMessages(room);
+  const changedMemoryIndex = rememberedMessages.findIndex((item) => item.id === messageId);
+  const markerIndex = rememberedMessages.findIndex((item) => item.id === room.memory.summarizedThroughId);
+  if (room.memory.summary.trim() && changedMemoryIndex >= 0 && changedMemoryIndex <= markerIndex) {
+    room.memory.stale = true;
+    room.memory.updatedAt = Date.now();
+  }
+}
+
+async function editMessage(messageId) {
+  if (state.running) {
+    showToast("先暂停当前讨论，再修改消息");
+    return;
+  }
+  const room = activeRoom();
+  const message = room?.messages.find((item) => item.id === messageId);
+  if (!room || !message) return;
+  if (summarizingRoomIds.has(room.id)) {
+    showToast("记忆整理员正在翻这间房，等它收好再修改");
+    return;
+  }
+  let nextText;
+  try {
+    nextText = await openMessageEditor({
+      title: `修改 ${message.author} 的消息`,
+      description: "可以修改整条显示文字；分段气泡会合并成这一条。若原文已进入房间总结，修改后会提示重新整理。",
+      value: message.text,
+    });
+  } catch (error) {
+    showToast(error.message);
+    return;
+  }
+  if (nextText === null) return;
+  const cleanText = String(nextText).trim().slice(0, 50_000);
+  if (!cleanText) {
+    showToast("内容不能为空；要移除这条请用删除");
+    return;
+  }
+  if (cleanText === message.text) return;
+  markRoomMemoryStaleForChangedMessage(room, messageId);
+  message.text = cleanText;
+  delete message.segments;
+  room.updatedAt = Date.now();
+  renderMessages();
+  renderRooms();
+  await queuePersist();
+  showToast("这一条已经改好并保存");
+}
+
 function deleteMessage(messageId) {
   if (state.running) {
     showToast("先暂停当前讨论，再删除消息");
@@ -1710,13 +1754,7 @@ function deleteMessage(messageId) {
     return;
   }
   if (!globalThis.confirm(`删除 ${message.author} 的这条消息？\n\n删除后无法从观察室恢复。`)) return;
-  const rememberedMessages = memoryMessages(room);
-  const deletedMemoryIndex = rememberedMessages.findIndex((item) => item.id === messageId);
-  const markerIndex = rememberedMessages.findIndex((item) => item.id === room.memory.summarizedThroughId);
-  if (room.memory.summary.trim() && deletedMemoryIndex >= 0 && deletedMemoryIndex <= markerIndex) {
-    room.memory.stale = true;
-    room.memory.updatedAt = Date.now();
-  }
+  markRoomMemoryStaleForChangedMessage(room, messageId);
   room.messages = room.messages.filter((item) => item.id !== messageId);
   room.updatedAt = Date.now();
   renderMessages();

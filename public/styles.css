@@ -1159,11 +1159,11 @@ html[data-theme="dark"] .button-werewolf {
 }
 
 .message-body.has-actions {
-  padding-right: 82px;
+  padding-right: 118px;
 }
 
 .message-body.has-private-repair {
-  padding-right: 142px;
+  padding-right: 152px;
 }
 
 .message.is-user .message-body {
@@ -1241,29 +1241,40 @@ html[data-theme="dark"] .button-werewolf {
   right: 8px;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   opacity: 0;
   pointer-events: none;
   transform: translateY(-2px);
   transition: opacity 120ms ease, transform 120ms ease;
 }
 
-.repair-private-message,
-.copy-message,
-.edit-message,
-.delete-message {
+.message-action-button {
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  flex: 0 0 32px;
+  place-items: center;
   border: 0;
-  padding: 5px 6px;
+  padding: 0;
   background: transparent;
   color: var(--quiet);
-  font-size: 10px;
+  touch-action: manipulation;
 }
 
-.repair-private-message {
-  color: #a9364b;
-  white-space: nowrap;
+.message-action-button svg {
+  width: 21px;
+  height: 21px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
 }
 
+.message-action-button:hover,
+.message-action-button:focus-visible {
+  color: var(--ink);
+}
+
+.delete-message,
 .delete-message:hover,
 .delete-message:focus-visible {
   color: var(--error);
@@ -2060,7 +2071,7 @@ html[data-theme="dark"] .werewolf-player-chip.is-known-good {
 }
 
 .werewolf-log-entry p.has-actions {
-  padding-right: 112px;
+  padding-right: 118px;
 }
 
 .werewolf-log-entry p:hover .message-actions,
@@ -2171,7 +2182,8 @@ html[data-theme="dark"] .werewolf-log-entry.is-secret p {
   backdrop-filter: blur(3px);
 }
 
-.copy-fallback-dialog {
+.copy-fallback-dialog,
+.message-edit-dialog {
   width: min(520px, calc(100vw - 28px));
   padding: 0;
   border: 1px solid var(--line);
@@ -2181,23 +2193,27 @@ html[data-theme="dark"] .werewolf-log-entry.is-secret p {
   box-shadow: var(--shadow);
 }
 
-.copy-fallback-dialog::backdrop {
+.copy-fallback-dialog::backdrop,
+.message-edit-dialog::backdrop {
   background: rgba(17, 17, 15, 0.58);
   backdrop-filter: blur(2px);
 }
 
-.copy-fallback-dialog form {
+.copy-fallback-dialog form,
+.message-edit-dialog form {
   padding: 22px;
 }
 
-.copy-fallback-dialog h2 {
+.copy-fallback-dialog h2,
+.message-edit-dialog h2 {
   margin: 8px 0;
   font-family: Georgia, "Songti SC", serif;
   font-size: 23px;
   font-weight: 500;
 }
 
-.copy-fallback-dialog p:not(.section-kicker) {
+.copy-fallback-dialog p:not(.section-kicker),
+.message-edit-dialog p:not(.section-kicker) {
   margin: 0 0 13px;
   color: var(--muted);
   font-size: 12px;
@@ -2211,6 +2227,27 @@ html[data-theme="dark"] .werewolf-log-entry.is-secret p {
   resize: vertical;
   font-size: 13px;
   line-height: 1.65;
+}
+
+.message-edit-dialog {
+  width: min(680px, calc(100vw - 28px));
+}
+
+.message-edit-dialog textarea {
+  width: 100%;
+  min-height: 260px;
+  max-height: 56dvh;
+  padding: 13px 14px;
+  resize: vertical;
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.message-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 16px;
 }
 
 .copy-fallback-actions {

@@ -42,6 +42,7 @@ import {
   privateMessageOutputInstruction,
 } from "./private-messages.js";
 import { appendBoldText } from "./rich-text.js";
+import { createMessageActionButton, openMessageEditor } from "./message-actions.js";
 
 const DEBRIEF_VISIBLE_REPLY_TOKENS = 520;
 const DEBRIEF_FORMAT_TOKEN_ALLOWANCE = 360;
@@ -696,9 +697,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     appendBoldText(body, entry.text);
     body.classList.add("has-actions");
     const actions = createElement("div", "message-actions");
-    const copyButton = createElement("button", "copy-message", "复制");
-    copyButton.type = "button";
-    copyButton.setAttribute("aria-label", `复制 ${entry.author} 的这条狼人杀消息`);
+    const copyButton = createMessageActionButton("copy", `复制 ${entry.author} 的这条狼人杀消息`);
     copyButton.addEventListener("click", async (event) => {
       event.stopPropagation();
       if (await copyText?.(entry.text)) toast("已复制");
@@ -707,16 +706,12 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
         toast("浏览器拦住了自动复制，已为你选中原文");
       }
     });
-    const editButton = createElement("button", "edit-message", "改");
-    editButton.type = "button";
-    editButton.setAttribute("aria-label", `修改 ${entry.author} 的这条狼人杀消息`);
+    const editButton = createMessageActionButton("edit", `修改 ${entry.author} 的这条狼人杀消息`);
     editButton.addEventListener("click", (event) => {
       event.stopPropagation();
       void editWerewolfLogEntry(current.id, entry.id, { archived });
     });
-    const deleteButton = createElement("button", "delete-message", "删除");
-    deleteButton.type = "button";
-    deleteButton.setAttribute("aria-label", `删除 ${entry.author} 的这条狼人杀消息`);
+    const deleteButton = createMessageActionButton("delete", `删除 ${entry.author} 的这条狼人杀消息`);
     deleteButton.addEventListener("click", (event) => {
       event.stopPropagation();
       void deleteWerewolfLogEntry(current.id, entry.id, { archived });
@@ -806,10 +801,17 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
       toast("没有找到这条狼人杀消息");
       return;
     }
-    const nextText = globalThis.prompt(
-      "修改这条狼人杀消息：\n\n只修改卷宗里的显示文字，不会改写身份、刀口、验人、用药、票型或胜负。",
-      existing.text,
-    );
+    let nextText;
+    try {
+      nextText = await openMessageEditor({
+        title: `修改 ${existing.author} 的狼人杀消息`,
+        description: "只修改卷宗里的显示文字，不会改写身份、刀口、验人、用药、票型或胜负。",
+        value: existing.text,
+      });
+    } catch (error) {
+      toast(error.message);
+      return;
+    }
     if (nextText === null) return;
     const cleanText = String(nextText).trim();
     if (!cleanText) {
