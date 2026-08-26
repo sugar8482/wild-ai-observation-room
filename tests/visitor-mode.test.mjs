@@ -109,12 +109,51 @@ test("人类访客和 MCP 访客只能读取公开消息并能公开发言", asy
   assert.equal(mcpLanding.status, 200);
   assert.match(await mcpLanding.text(), /MCP 入口已经准备好了/);
 
+  const mcpEventStream = await fetch(`${mcpEndpoint}/`, {
+    headers: { accept: "text/event-stream" },
+  });
+  assert.equal(mcpEventStream.status, 405);
+
+  const initialize = await fetch(`${mcpEndpoint}/`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 0,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "ChatGPT", version: "test" },
+      },
+    }),
+  });
+  assert.equal(initialize.status, 200);
+  const mcpSessionId = initialize.headers.get("mcp-session-id");
+  assert.match(mcpSessionId, /^mcp-[a-zA-Z0-9_-]+$/);
+  assert.equal((await initialize.json()).result.protocolVersion, "2025-06-18");
+
+  const initialized = await fetch(mcpEndpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "mcp-session-id": mcpSessionId,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+  });
+  assert.equal(initialized.status, 202);
+  assert.equal(initialized.headers.get("mcp-session-id"), mcpSessionId);
+
   const tools = await fetch(mcpEndpoint, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "mcp-session-id": mcpSessionId },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
   });
   assert.equal(tools.status, 200);
+  assert.equal(tools.headers.get("mcp-session-id"), mcpSessionId);
   assert.deepEqual((await tools.json()).result.tools.map((tool) => tool.name), [
     "room_info",
     "read_room",
@@ -123,9 +162,23 @@ test("人类访客和 MCP 访客只能读取公开消息并能公开发言", asy
     "send_private_message",
   ]);
 
+  const roomInfo = await fetch(mcpEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json", "mcp-session-id": mcpSessionId },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 10,
+      method: "tools/call",
+      params: { name: "room_info", arguments: {} },
+    }),
+  });
+  assert.equal(roomInfo.status, 200);
+  assert.equal(roomInfo.headers.get("mcp-session-id"), mcpSessionId);
+  assert.equal((await roomInfo.json()).result.structuredContent.room, "测试群");
+
   const readRoom = await fetch(mcpEndpoint, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "mcp-session-id": mcpSessionId },
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: 11,

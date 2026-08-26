@@ -667,7 +667,7 @@ export function createAppServer(options = {}) {
       return;
     }
 
-    const mcpMatch = url.pathname.match(/^\/mcp\/([a-zA-Z0-9_-]+)$/);
+    const mcpMatch = url.pathname.match(/^\/mcp\/([a-zA-Z0-9_-]+)\/?$/);
     if (mcpMatch) {
       if (!visitorManager || !stateStore) {
         sendMcpError(response, null, -32000, "访客模式尚未启用", 503);
@@ -677,6 +677,11 @@ export function createAppServer(options = {}) {
         const invite = await visitorManager.authorize(mcpMatch[1], "mcp");
         if (!invite) {
           sendJson(response, 401, { error: "这份 AI 访客邀请已经失效" });
+          return;
+        }
+        if (String(request.headers.accept || "").includes("text/event-stream")) {
+          response.writeHead(405, { ...securityHeaders(), allow: "POST" });
+          response.end();
           return;
         }
         const room = await stateStore.publicRoomSnapshot(invite.roomId);
@@ -706,6 +711,11 @@ export function createAppServer(options = {}) {
         sendMcpError(response, payload?.id, -32001, "邀请已经失效", 401);
         return;
       }
+      // ChatGPT uses Mcp-Session-Id to route tool calls after discovery. This
+      // server keeps no transport-side session state, so a stable opaque id per
+      // invitation is enough and also survives process restarts.
+      const mcpSessionId = `mcp-${createHash("sha256").update(`visitor:${invite.id}`).digest("base64url")}`;
+      response.setHeader("Mcp-Session-Id", mcpSessionId);
       void visitorManager.touch(invite.id);
       await stateStore.setRoomMemberPresence(invite.roomId, {
         memberId: invite.id,
