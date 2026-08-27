@@ -303,7 +303,7 @@
           <div class="field memory-interval-field">
             <label for="room-memory-interval">每新增多少条整理一次</label>
             <div class="suffix-input">
-              <input id="room-memory-interval" name="memoryInterval" type="number" min="5" max="100" step="1" value="20" />
+              <input id="room-memory-interval" name="memoryInterval" type="number" min="5" max="100" step="1" value="40" />
               <span>条</span>
             </div>
             <p class="field-help">自动整理只处理完整的一批，不足的条数会留到下一批；AI 仍会直接看到最近 30 条原文。</p>
@@ -320,7 +320,7 @@
             <p class="field-help">留空使用默认的“记事、不定性”规则；只影响这间房，不会直接交给聊天嘉宾当人设。</p>
           </div>
           <div class="field memory-summary-field">
-            <label for="room-memory-summary">当前长期总结 <span>可以手动修正</span></label>
+            <label for="room-memory-summary">当前长期总结 <span id="room-memory-summary-size">0 字 · 可以手动修正</span></label>
             <textarea
               id="room-memory-summary"
               name="memorySummary"

@@ -58,7 +58,10 @@ import {
   replyLengthNotice,
   resolveStoredVisibleReplyTokens,
 } from "./reply-limits.js";
-import { isLegacyTruncatedRoomSummary } from "./memory-prompt.js";
+import {
+  DEFAULT_ROOM_SUMMARY_INTERVAL,
+  isLegacyTruncatedRoomSummary,
+} from "./memory-prompt.js";
 
 const LEGACY_PROFILE_KEY = "wild-ai-observation-room.profiles.v1";
 const LEGACY_MESSAGE_KEY = "wild-ai-observation-room.messages.v1";
@@ -328,7 +331,7 @@ function hydrateSummarizer(profile) {
 function hydrateRoomMemory(memory) {
   return {
     enabled: memory?.enabled !== false,
-    interval: Math.min(100, Math.max(5, Number(memory?.interval) || 20)),
+    interval: Math.min(100, Math.max(5, Number(memory?.interval) || DEFAULT_ROOM_SUMMARY_INTERVAL)),
     recentMessages: Math.min(80, Math.max(10, Number(memory?.recentMessages) || 30)),
     focus: String(memory?.focus || ""),
     summary: String(memory?.summary || ""),
@@ -2547,6 +2550,37 @@ function pendingMemoryMessages(room, { rebuild = false } = {}) {
   return messages.slice(markerIndex + 1);
 }
 
+function roomMemoryProgress(room) {
+  const messages = memoryMessages(room);
+  const summarized = Math.min(messages.length, summarizedMemoryMessageCount(room));
+  const pending = Math.max(0, messages.length - summarized);
+  const interval = Math.min(100, Math.max(5, Number(room?.memory?.interval) || DEFAULT_ROOM_SUMMARY_INTERVAL));
+  return {
+    total: messages.length,
+    summarized,
+    pending,
+    interval,
+    summaryChars: String(room?.memory?.summary || "").length,
+  };
+}
+
+function roomMemoryProgressText(room) {
+  const progress = roomMemoryProgress(room);
+  let automatic;
+  if (!room.memory.enabled) automatic = "自动整理未开启";
+  else if (room.memory.stale) automatic = `重新生成后恢复每 ${progress.interval} 楼自动整理`;
+  else if (progress.pending >= progress.interval) automatic = "已达到自动整理条件";
+  else automatic = `再有 ${progress.interval - progress.pending} 楼自动整理`;
+  return `当前总结 ${progress.summaryChars.toLocaleString("zh-CN")} 字 · 已整理到第 ${progress.summarized} 楼 · 未整理 ${progress.pending} 楼 · ${automatic}`;
+}
+
+function updateRoomMemoryDraftSize() {
+  const input = byId("room-memory-summary");
+  const output = byId("room-memory-summary-size");
+  if (!input || !output) return;
+  output.textContent = `${String(input.value || "").length.toLocaleString("zh-CN")} 字 · 可以手动修正`;
+}
+
 function updateRoomMemoryStatus(room) {
   if (!room) return;
   const busy = summarizingRoomIds.has(room.id);
@@ -2554,25 +2588,25 @@ function updateRoomMemoryStatus(room) {
   const notice = summaryNotices.get(room.id);
   const isSavedRoom = Boolean(room.id && state.rooms.some((item) => item.id === room.id));
   const legacyTruncated = isLegacyTruncatedRoomSummary(room.memory);
-  const pending = room.memory.stale ? 0 : pendingMemoryMessages(room).length;
+  const progressText = roomMemoryProgressText(room);
   roomMemoryStatus.classList.toggle("is-stale", room.memory.stale);
   roomMemoryStatus.classList.toggle("is-error", !busy && notice?.kind === "error");
   if (busy) {
     const elapsed = Math.max(1, Math.floor((Date.now() - (run?.startedAt || Date.now())) / 1000));
-    roomMemoryStatus.textContent = `${run?.phase || "记忆整理员正在安静地翻旧记录"}……已等待 ${elapsed} 秒，可以随时取消。`;
+    roomMemoryStatus.textContent = `${progressText}。${run?.phase || "记忆整理员正在安静地翻旧记录"}……已等待 ${elapsed} 秒，可以随时取消。`;
   } else if (notice) {
-    roomMemoryStatus.textContent = notice.message;
+    roomMemoryStatus.textContent = `${progressText}。${notice.message}`;
   } else if (legacyTruncated) {
-    roomMemoryStatus.textContent = `旧版总结在 50,000 字保存上限处被截断；锚点已到第 ${summarizedMemoryMessageCount(room)} 条。原文仍完整，请点“重新生成全篇”。`;
+    roomMemoryStatus.textContent = `${progressText}。旧版总结在 50,000 字保存上限处被截断；原文仍完整，请点“重新生成全篇”。`;
   } else if (room.memory.stale) {
-    roomMemoryStatus.textContent = "有已经整理过的旧消息被删除了，请点“重新生成”。";
+    roomMemoryStatus.textContent = `${progressText}。有已经整理过的旧消息被修改或删除了，请点“重新生成全篇”。`;
   } else if (room.memory.summary.trim()) {
     const updated = room.memory.updatedAt
       ? new Date(room.memory.updatedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
       : "时间未知";
-    roomMemoryStatus.textContent = `已整理 ${summarizedMemoryMessageCount(room)} 条 · ${updated} · 还有 ${pending} 条新消息未整理。`;
+    roomMemoryStatus.textContent = `${progressText} · 更新于 ${updated}。`;
   } else {
-    roomMemoryStatus.textContent = `还没有长期总结；当前有 ${memoryMessages(room).length} 条可整理记录。`;
+    roomMemoryStatus.textContent = `${progressText}。还没有长期总结。`;
   }
   byId("memory-cancel").classList.toggle("is-hidden", !busy);
   byId("memory-summarize-now").disabled = busy || !isSavedRoom || legacyTruncated;
@@ -2704,7 +2738,7 @@ async function syncSummaryJobs({ notify = true } = {}) {
   return jobs;
 }
 
-async function summarizeRoom(room, { rebuild = false, manual = false } = {}) {
+async function summarizeRoom(room, { rebuild = false, manual = false, automatic = false } = {}) {
   if (!room || summarizingRoomIds.has(room.id)) return false;
   if (!isConfigured(state.summarizer)) {
     if (manual) {
@@ -2726,14 +2760,21 @@ async function summarizeRoom(room, { rebuild = false, manual = false } = {}) {
     if (manual) showToast("暂时没有新的聊天需要整理");
     return false;
   }
-  if (!manual && pending.length < Math.max(5, Number(room.memory.interval) || 20)) return false;
+  if (
+    automatic
+    && pending.length < Math.max(5, Number(room.memory.interval) || DEFAULT_ROOM_SUMMARY_INTERVAL)
+  ) return false;
 
   try {
     await saveChain;
     const response = await fetch("/api/room-summary-jobs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ roomId: room.id, rebuild: rebuild === true }),
+      body: JSON.stringify({
+        roomId: room.id,
+        rebuild: rebuild === true,
+        automatic: automatic === true,
+      }),
     });
     const payload = await response.json().catch(() => ({}));
     if (response.status === 401) {
@@ -2741,11 +2782,14 @@ async function summarizeRoom(room, { rebuild = false, manual = false } = {}) {
       throw new Error("访问码已失效，请重新输入");
     }
     if (!response.ok) throw new Error(payload.error || `后台整理任务没有启动（${response.status}）`);
-    if (!payload.job) throw new Error("服务器没有返回整理任务");
+    if (!payload.job) {
+      if (automatic) return false;
+      throw new Error("服务器没有返回整理任务");
+    }
     applySummaryJobs([payload.job], { notify: false });
     updateRoomMemoryStatus(room);
     renderRooms();
-    showToast(`已交给 VPS 后台整理 ${payload.job.totalMessages} 条；现在可以切走`);
+    if (!automatic) showToast(`已交给 VPS 后台整理 ${payload.job.totalMessages} 条；现在可以切走`);
     return true;
   } catch (error) {
     summaryNotices.set(room.id, { kind: "error", message: `后台整理没有启动：${error.message}` });
@@ -2757,7 +2801,7 @@ async function summarizeRoom(room, { rebuild = false, manual = false } = {}) {
 
 function maybeAutoSummarize(room) {
   if (!room?.memory.enabled || room.memory.stale || isLegacyTruncatedRoomSummary(room.memory)) return;
-  void summarizeRoom(room).catch(() => {});
+  void summarizeRoom(room, { automatic: true }).catch(() => {});
 }
 
 async function startConversation() {
@@ -3206,6 +3250,7 @@ function openRoomDialog(roomId = null) {
   roomForm.elements.namedItem("memoryInterval").value = memory.interval;
   roomForm.elements.namedItem("memoryFocus").value = memory.focus;
   roomForm.elements.namedItem("memorySummary").value = memory.summary;
+  updateRoomMemoryDraftSize();
   roomForm.elements.namedItem("scheduleEnabled").checked = schedule.enabled;
   roomForm.elements.namedItem("scheduleStrategy").value = schedule.strategy;
   roomForm.elements.namedItem("scheduleInterval").value = String(schedule.intervalMinutes);
@@ -3393,7 +3438,10 @@ roomForm.addEventListener("submit", (event) => {
   const roomPrompt = String(data.get("roomPrompt") || "").trim();
   const bubbleSplit = data.get("bubbleSplit") === "on";
   const memoryEnabled = data.get("memoryEnabled") === "on";
-  const memoryInterval = Math.min(100, Math.max(5, Number(data.get("memoryInterval")) || 20));
+  const memoryInterval = Math.min(
+    100,
+    Math.max(5, Number(data.get("memoryInterval")) || DEFAULT_ROOM_SUMMARY_INTERVAL),
+  );
   const memoryFocus = String(data.get("memoryFocus") || "").trim();
   const memorySummary = String(data.get("memorySummary") || "").trim();
   const scheduleConfig = roomScheduleConfigFromForm(data);
@@ -3877,6 +3925,7 @@ roundsInput.addEventListener("input", () => {
 temperatureInput.addEventListener("input", () => {
   temperatureOutput.textContent = Number(temperatureInput.value).toFixed(1);
 });
+byId("room-memory-summary").addEventListener("input", updateRoomMemoryDraftSize);
 tokensInput.addEventListener("input", () => {
   const value = clampVisibleReplyTokens(tokensInput.value);
   updateDirectorPrefs({

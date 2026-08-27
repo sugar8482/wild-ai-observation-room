@@ -84,7 +84,11 @@ test("人类访客和 MCP 访客只能读取公开消息并能公开发言", asy
     }],
   });
   const visitorManager = createVisitorManager({ filePath: join(directory, "visitors.json") });
-  const server = createAppServer({ stateStore, visitorManager });
+  const autoSummaryRooms = [];
+  const summaryJobs = {
+    async maybeStart(roomId) { autoSummaryRooms.push(roomId); return null; },
+  };
+  const server = createAppServer({ stateStore, visitorManager, summaryJobs });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   context.after(() => server.close());
@@ -256,6 +260,7 @@ test("人类访客和 MCP 访客只能读取公开消息并能公开发言", asy
   });
   assert.equal(mcpSend.status, 200);
   assert.equal((await mcpSend.json()).result.structuredContent.message.source, "mcp");
+  assert.deepEqual(autoSummaryRooms, ["room-one", "room-one"]);
 
   const deltaRead = await fetch(mcpEndpoint, {
     method: "POST",
@@ -289,6 +294,7 @@ test("人类访客和 MCP 访客只能读取公开消息并能公开发言", asy
   const privateMessage = (await mcpPrivate.json()).result.structuredContent.message;
   assert.equal(privateMessage.privacy, "private");
   assert.deepEqual(privateMessage.recipientIds, ["gpt"]);
+  assert.deepEqual(autoSummaryRooms, ["room-one", "room-one"]);
 
   const hostState = await stateStore.clientState();
   hostState.rooms[0].messages.push({

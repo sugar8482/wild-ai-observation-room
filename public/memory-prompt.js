@@ -9,6 +9,7 @@ function transcript(messages) {
 
 export const ROOM_SUMMARY_STORAGE_LIMIT = 200_000;
 export const LEGACY_ROOM_SUMMARY_LIMIT = 50_000;
+export const DEFAULT_ROOM_SUMMARY_INTERVAL = 40;
 const LEGACY_TRUNCATION_MARGIN = 100;
 
 export function isLegacyTruncatedRoomSummary(memory) {
@@ -26,8 +27,8 @@ function focusRule(room) {
     : "";
 }
 
-export function completeAutomaticSummaryBatch(messages, interval = 20) {
-  const chunkSize = Math.min(100, Math.max(5, Math.floor(Number(interval) || 20)));
+export function completeAutomaticSummaryBatch(messages, interval = DEFAULT_ROOM_SUMMARY_INTERVAL) {
+  const chunkSize = Math.min(100, Math.max(5, Math.floor(Number(interval) || DEFAULT_ROOM_SUMMARY_INTERVAL)));
   const completeCount = Math.floor(messages.length / chunkSize) * chunkSize;
   return messages.slice(0, completeCount);
 }

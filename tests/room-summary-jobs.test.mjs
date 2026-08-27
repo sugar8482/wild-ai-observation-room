@@ -96,6 +96,30 @@ test("后台总结会逐批存档，并让后一批重写同一份客观摘要",
   assert.equal(requests[0].maxTokens, 4096);
 });
 
+test("自动总结只吃完整批次，立即总结再从锚点接走剩余楼层", async () => {
+  const automatic = fixture();
+  const accepted = await automatic.jobs.start({ roomId: "room-one", automatic: true });
+  assert.equal(accepted.automatic, true);
+  const completed = await waitForTerminal(automatic.jobs, accepted.id);
+  assert.equal(completed.processedMessages, 5);
+  assert.equal(automatic.checkpoints.length, 1);
+  assert.equal(automatic.checkpoints[0].summarizedThroughId, "message-5");
+
+  const immediate = await automatic.jobs.start({ roomId: "room-one" });
+  const immediateCompleted = await waitForTerminal(automatic.jobs, immediate.id);
+  assert.equal(immediateCompleted.processedMessages, 2);
+  assert.equal(automatic.checkpoints.length, 2);
+  assert.equal(automatic.checkpoints[1].summarizedThroughId, "message-7");
+});
+
+test("自动总结不足完整批次时不建立空任务", async () => {
+  const { jobs, state, checkpoints } = fixture();
+  state.rooms[0].messages = state.rooms[0].messages.slice(0, 4);
+  assert.equal(await jobs.maybeStart("room-one"), null);
+  assert.equal(jobs.list({ roomId: "room-one" }).length, 0);
+  assert.equal(checkpoints.length, 0);
+});
+
 test("旧版五万字截断总结拒绝继续推进锚点并要求全篇重建", async () => {
   const { jobs, state, checkpoints } = fixture();
   state.rooms[0].memory.summary = "旧".repeat(49_993);

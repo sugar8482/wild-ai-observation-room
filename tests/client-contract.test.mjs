@@ -426,6 +426,8 @@ test("房间长期记忆独立于聊天消息并注入最近原文之前", async
   assert.match(roomMemorySection, /id="open-summarizer-button"/);
   assert.match(roomMemorySection, /所有房间共用/);
   assert.match(html, /id="room-memory-summary"/);
+  assert.match(html, /id="room-memory-summary-size"/);
+  assert.match(html, /id="room-memory-interval"[^>]+value="40"/);
   assert.match(html, /id="room-memory-focus"/);
   assert.match(html, /id="memory-cancel"/);
   assert.match(script, /function longTermMemoryForPrompt\(room\)/);
@@ -454,8 +456,13 @@ test("房间长期记忆独立于聊天消息并注入最近原文之前", async
   assert.match(memoryPrompt, /绝不能升级成已经确认的事实/);
   assert.match(script, /旧版总结在 50,000 字保存上限处被截断/);
   assert.match(script, /summarizedMemoryMessageCount\(room\)/);
+  assert.match(script, /当前总结.*已整理到第.*未整理/s);
+  assert.match(script, /再有.*楼自动整理/);
+  assert.match(script, /automatic: automatic === true/);
   assert.match(script, /不要模仿整理文字的口吻/);
   assert.match(summaryJobs, /processedMessages: job\.processedMessages \+ chunk\.length/);
+  assert.match(summaryJobs, /completeAutomaticSummaryBatch/);
+  assert.match(summaryJobs, /automatic: true/);
   assert.match(script, /这会清空并覆盖当前总结；聊天原文不会删除/);
   assert.doesNotMatch(script, /# 全篇概览/);
   assert.match(html, /立即或自动整理会把新增原文并入同一份客观事实索引/);

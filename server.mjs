@@ -367,6 +367,11 @@ export function createAppServer(options = {}) {
   const loginFailures = new Map();
   const visitorMessageWindows = new Map();
 
+  function queueAutomaticSummary(roomId) {
+    if (!summaryJobs || typeof summaryJobs.maybeStart !== "function") return;
+    queueMicrotask(() => void summaryJobs.maybeStart(roomId));
+  }
+
   function requiresAccessCode(request) {
     return accessRequired && (forceAccessCode || !isLoopbackAddress(request.socket.remoteAddress));
   }
@@ -704,6 +709,7 @@ export function createAppServer(options = {}) {
           sendJson(response, 400, { error: "消息是空的，或者房间已经不存在" });
           return;
         }
+        queueAutomaticSummary(invite.roomId);
         void visitorManager.touch(invite.id);
         sendJson(response, 201, { message });
       } catch (error) {
@@ -1013,6 +1019,7 @@ export function createAppServer(options = {}) {
             sendMcpError(response, payload.id, -32602, "消息不能为空");
             return;
           }
+          queueAutomaticSummary(invite.roomId);
           sendMcpResult(response, payload.id, {
             content: [{ type: "text", text: `已公开发送到“${room.name}”。` }],
             structuredContent: { message },
@@ -1206,6 +1213,7 @@ export function createAppServer(options = {}) {
               throw new Error("狼人杀主状态已保存，但分表卷宗同步失败；请重试保存");
             }
           }
+          for (const room of saved.rooms) queueAutomaticSummary(room.id);
           sendJson(response, 200, stateForClient(saved));
           return;
         }
@@ -1455,6 +1463,7 @@ if (isMainModule) {
     stateStore,
     chat: serverChat,
     isSummaryRunning: (roomId) => summaryJobs.isActive(roomId),
+    startAutomaticSummary: (roomId) => summaryJobs.maybeStart(roomId),
   });
   server.on("close", () => {
     scheduler.stop();
@@ -1463,6 +1472,7 @@ if (isMainModule) {
   });
   server.listen(port, host, () => {
     scheduler.start();
+    void summaryJobs.scan();
     void stateStore.clientState().then((snapshot) => archive.enqueue(snapshot));
     console.log(`野生 AI 观察室已启动：http://127.0.0.1:${port}`);
     for (const address of lanAddresses()) console.log(`iPad 地址：http://${address}:${port}`);

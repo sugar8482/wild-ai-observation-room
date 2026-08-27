@@ -635,6 +635,7 @@ test("局域网模式要求访问码并签发仅限本站的会话 Cookie", asyn
 
 test("观察室状态可以通过本地接口读取和保存", async (context) => {
   let savedPayload = null;
+  const autoSummaryRooms = [];
   const stateStore = {
     async clientState() {
       return { version: 2, agents: [], rooms: [], activeRoomId: "" };
@@ -647,7 +648,12 @@ test("观察室状态可以通过本地接口读取和保存", async (context) =
       return { apiKey: "", extraHeaders: "" };
     },
   };
-  const server = createAppServer({ stateStore });
+  const server = createAppServer({
+    stateStore,
+    summaryJobs: {
+      async maybeStart(roomId) { autoSummaryRooms.push(roomId); return null; },
+    },
+  });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   context.after(() => server.close());
@@ -676,4 +682,5 @@ test("观察室状态可以通过本地接口读取和保存", async (context) =
   });
   assert.equal(saved.status, 200);
   assert.deepEqual(savedPayload, payload);
+  assert.deepEqual(autoSummaryRooms, ["room-one"]);
 });
