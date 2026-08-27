@@ -338,7 +338,9 @@ function hydrateRoomMemory(memory) {
     summarizedThroughId: String(memory?.summarizedThroughId || ""),
     summarizedMessageCount: Math.max(0, Number(memory?.summarizedMessageCount) || 0),
     updatedAt: Number(memory?.updatedAt) || null,
-    stale: memory?.stale === true,
+    // Old-floor edits do not invalidate the rolling summary. Rebuilding the
+    // whole room remains an explicit user choice.
+    stale: false,
   };
 }
 
@@ -1839,14 +1841,14 @@ function addMessage({
   return message;
 }
 
-function markRoomMemoryStaleForChangedMessage(room, messageId) {
+function moveRoomMemoryMarkerBeforeDeleting(room, messageId) {
+  if (room.memory.summarizedThroughId !== messageId) return;
   const rememberedMessages = memoryMessages(room);
-  const changedMemoryIndex = rememberedMessages.findIndex((item) => item.id === messageId);
-  const markerIndex = rememberedMessages.findIndex((item) => item.id === room.memory.summarizedThroughId);
-  if (room.memory.summary.trim() && changedMemoryIndex >= 0 && changedMemoryIndex <= markerIndex) {
-    room.memory.stale = true;
-    room.memory.updatedAt = Date.now();
-  }
+  const markerIndex = rememberedMessages.findIndex((item) => item.id === messageId);
+  const previousMessage = markerIndex > 0 ? rememberedMessages[markerIndex - 1] : null;
+  room.memory.summarizedThroughId = previousMessage?.id || "";
+  room.memory.summarizedMessageCount = Math.max(0, markerIndex);
+  room.memory.updatedAt = Date.now();
 }
 
 async function editMessage(messageId) {
@@ -1865,7 +1867,7 @@ async function editMessage(messageId) {
   try {
     nextText = await openMessageEditor({
       title: `修改 ${message.author} 的消息`,
-      description: "可以修改整条显示文字；分段气泡会合并成这一条。若原文已进入房间总结，修改后会提示重新整理。",
+      description: "可以修改整条显示文字；分段气泡会合并成这一条。只改原记录，不会强制重建长期总结。",
       value: message.text,
     });
   } catch (error) {
@@ -1879,7 +1881,6 @@ async function editMessage(messageId) {
     return;
   }
   if (cleanText === message.text) return;
-  markRoomMemoryStaleForChangedMessage(room, messageId);
   message.text = cleanText;
   delete message.segments;
   room.updatedAt = Date.now();
@@ -1902,7 +1903,7 @@ function deleteMessage(messageId) {
     return;
   }
   if (!globalThis.confirm(`删除 ${message.author} 的这条消息？\n\n删除后无法从观察室恢复。`)) return;
-  markRoomMemoryStaleForChangedMessage(room, messageId);
+  moveRoomMemoryMarkerBeforeDeleting(room, messageId);
   room.messages = room.messages.filter((item) => item.id !== messageId);
   room.updatedAt = Date.now();
   renderMessages();
@@ -2524,7 +2525,6 @@ function memoryMessages(room) {
 function hasUsableRoomSummary(room) {
   return Boolean(
     room?.memory?.enabled
-    && !room.memory.stale
     && String(room.memory.summary || "").trim()
     && !isLegacyTruncatedRoomSummary(room.memory),
   );
@@ -2544,8 +2544,11 @@ function pendingMemoryMessages(room, { rebuild = false } = {}) {
   if (rebuild || !room.memory.summary.trim() || !room.memory.summarizedThroughId) return messages;
   const markerIndex = messages.findIndex((message) => message.id === room.memory.summarizedThroughId);
   if (markerIndex < 0) {
-    room.memory.stale = true;
-    return [];
+    const fallbackCount = Math.min(
+      messages.length,
+      Math.max(0, Number(room.memory.summarizedMessageCount) || 0),
+    );
+    return messages.slice(fallbackCount);
   }
   return messages.slice(markerIndex + 1);
 }
@@ -2568,7 +2571,6 @@ function roomMemoryProgressText(room) {
   const progress = roomMemoryProgress(room);
   let automatic;
   if (!room.memory.enabled) automatic = "自动整理未开启";
-  else if (room.memory.stale) automatic = `重新生成后恢复每 ${progress.interval} 楼自动整理`;
   else if (progress.pending >= progress.interval) automatic = "已达到自动整理条件";
   else automatic = `再有 ${progress.interval - progress.pending} 楼自动整理`;
   return `当前总结 ${progress.summaryChars.toLocaleString("zh-CN")} 字 · 已整理到第 ${progress.summarized} 楼 · 未整理 ${progress.pending} 楼 · ${automatic}`;
@@ -2589,7 +2591,7 @@ function updateRoomMemoryStatus(room) {
   const isSavedRoom = Boolean(room.id && state.rooms.some((item) => item.id === room.id));
   const legacyTruncated = isLegacyTruncatedRoomSummary(room.memory);
   const progressText = roomMemoryProgressText(room);
-  roomMemoryStatus.classList.toggle("is-stale", room.memory.stale);
+  roomMemoryStatus.classList.toggle("is-stale", legacyTruncated);
   roomMemoryStatus.classList.toggle("is-error", !busy && notice?.kind === "error");
   if (busy) {
     const elapsed = Math.max(1, Math.floor((Date.now() - (run?.startedAt || Date.now())) / 1000));
@@ -2598,8 +2600,6 @@ function updateRoomMemoryStatus(room) {
     roomMemoryStatus.textContent = `${progressText}。${notice.message}`;
   } else if (legacyTruncated) {
     roomMemoryStatus.textContent = `${progressText}。旧版总结在 50,000 字保存上限处被截断；原文仍完整，请点“重新生成全篇”。`;
-  } else if (room.memory.stale) {
-    roomMemoryStatus.textContent = `${progressText}。有已经整理过的旧消息被修改或删除了，请点“重新生成全篇”。`;
   } else if (room.memory.summary.trim()) {
     const updated = room.memory.updatedAt
       ? new Date(room.memory.updatedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
@@ -2747,10 +2747,6 @@ async function summarizeRoom(room, { rebuild = false, manual = false, automatic 
     }
     return false;
   }
-  if (room.memory.stale && !rebuild) {
-    if (manual) showToast("旧记忆已经变动，请使用“重新生成”");
-    return false;
-  }
   if (isLegacyTruncatedRoomSummary(room.memory) && !rebuild) {
     if (manual) showToast("旧版总结已经截断，请使用“重新生成全篇”修复");
     return false;
@@ -2800,7 +2796,7 @@ async function summarizeRoom(room, { rebuild = false, manual = false, automatic 
 }
 
 function maybeAutoSummarize(room) {
-  if (!room?.memory.enabled || room.memory.stale || isLegacyTruncatedRoomSummary(room.memory)) return;
+  if (!room?.memory.enabled || isLegacyTruncatedRoomSummary(room.memory)) return;
   void summarizeRoom(room, { automatic: true }).catch(() => {});
 }
 
@@ -3066,7 +3062,7 @@ function privateMemoryDeepContext(agentId, { maxLength = 24_000 } = {}) {
   for (const room of joinedRooms) {
     if (remaining < 500) break;
     const atmosphere = contextExcerpt(room.roomPrompt, 1_800);
-    const longMemory = room.memory.enabled && !room.memory.stale
+    const longMemory = room.memory.enabled
       ? contextExcerpt(room.memory.summary, 6_000)
       : "";
     const agent = state.agents.find((item) => item.id === agentId);

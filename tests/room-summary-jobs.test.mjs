@@ -120,6 +120,23 @@ test("自动总结不足完整批次时不建立空任务", async () => {
   assert.equal(checkpoints.length, 0);
 });
 
+test("旧楼层被删除后不强制重建，并从保存的计数继续整理", async () => {
+  const { jobs, state, checkpoints } = fixture();
+  state.rooms[0].memory.summary = "已有摘要";
+  state.rooms[0].memory.summarizedThroughId = "message-deleted";
+  state.rooms[0].memory.summarizedMessageCount = 5;
+  state.rooms[0].memory.stale = true;
+
+  const accepted = await jobs.start({ roomId: "room-one" });
+  const completed = await waitForTerminal(jobs, accepted.id);
+
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.processedMessages, 2);
+  assert.equal(checkpoints.length, 1);
+  assert.equal(checkpoints[0].expectedPreviousMarker, "message-deleted");
+  assert.equal(checkpoints[0].summarizedThroughId, "message-7");
+});
+
 test("旧版五万字截断总结拒绝继续推进锚点并要求全篇重建", async () => {
   const { jobs, state, checkpoints } = fixture();
   state.rooms[0].memory.summary = "旧".repeat(49_993);

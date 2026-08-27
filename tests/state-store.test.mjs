@@ -620,6 +620,38 @@ test("MCP 访客不会读取已知被旧上限截断的共同总结", async (con
   assert.equal(snapshot.summaryStale, true);
 });
 
+test("删除或修改旧楼层不会把可用总结锁成必须重建", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-summary-edit-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({
+    filePath: join(directory, "state.json"),
+    secret: "summary-edit-secret",
+  });
+  await store.save({
+    agents: [],
+    activeRoomId: "room-summary-edit",
+    rooms: [{
+      id: "room-summary-edit",
+      name: "可随手修记录的房间",
+      participantIds: [],
+      messages: [{ id: "message-two", kind: "user", author: "晨曦", text: "保留的原文" }],
+      memory: {
+        enabled: true,
+        summary: "仍可继续使用的摘要",
+        summarizedThroughId: "message-two",
+        summarizedMessageCount: 1,
+        stale: true,
+      },
+    }],
+  });
+
+  const saved = await store.clientState();
+  const snapshot = await store.publicRoomSnapshot("room-summary-edit", { includeContext: true });
+  assert.equal(saved.rooms[0].memory.stale, false);
+  assert.equal(snapshot.summaryStale, false);
+  assert.equal(snapshot.longTermSummary, "仍可继续使用的摘要");
+});
+
 test("后台定时发言不会被滞后的浏览器保存覆盖", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-store-"));
   context.after(() => rm(directory, { recursive: true, force: true }));

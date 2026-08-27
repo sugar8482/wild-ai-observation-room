@@ -459,6 +459,9 @@ test("房间长期记忆独立于聊天消息并注入最近原文之前", async
   assert.match(script, /当前总结.*已整理到第.*未整理/s);
   assert.match(script, /再有.*楼自动整理/);
   assert.match(script, /automatic: automatic === true/);
+  assert.match(script, /moveRoomMemoryMarkerBeforeDeleting/);
+  assert.doesNotMatch(script, /markRoomMemoryStaleForChangedMessage/);
+  assert.doesNotMatch(script, /有已经整理过的旧消息被修改或删除了/);
   assert.match(script, /不要模仿整理文字的口吻/);
   assert.match(summaryJobs, /processedMessages: job\.processedMessages \+ chunk\.length/);
   assert.match(summaryJobs, /completeAutomaticSummaryBatch/);
