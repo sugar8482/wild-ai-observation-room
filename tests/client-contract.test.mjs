@@ -326,6 +326,27 @@ test("狼人杀推进按钮在首次异步保存前立即上锁，并防止重�
   assert.match(script, /current\.phase !== "last_words" \|\| current\.pending\?\.eliminatedId !== eliminated\.id/);
 });
 
+test("狼人夜间先进行两轮可恢复密谈，再读取完整记录逐狼投刀", async () => {
+  const script = await readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8");
+  const wolvesStart = script.indexOf("async function runWolves(current, signal)");
+  const wolvesEnd = script.indexOf("async function runSeer(current, signal)", wolvesStart);
+  const wolvesBlock = wolvesStart >= 0 && wolvesEnd > wolvesStart ? script.slice(wolvesStart, wolvesEnd) : "";
+  assert.match(wolvesBlock, /const discussionRounds = 2/);
+  assert.match(wolvesBlock, /const shouldDiscuss = wolves\.length > 1/);
+  assert.match(wolvesBlock, /if \(shouldDiscuss\)/);
+  assert.match(wolvesBlock, /current\.pending\.wolfTalkDone \|\|= \{\}/);
+  assert.match(wolvesBlock, /for \(let round = 1; round <= discussionRounds; round \+= 1\)/);
+  assert.match(wolvesBlock, /此轮只讨论，不投票/);
+  assert.match(wolvesBlock, /两轮狼队密谈已经结束/);
+  assert.match(wolvesBlock, /你是目前唯一存活的狼人，没有可密谈的队友/);
+  assert.match(wolvesBlock, /不要输出分析或自言自语，只输出/);
+  assert.match(wolvesBlock, /wolfNightBriefing\(current\)/);
+  assert.ok(
+    wolvesBlock.indexOf("current.pending.wolfDone ||= []") > wolvesBlock.indexOf("for (let round = 1"),
+    "最终投刀必须发生在两轮密谈之后",
+  );
+});
+
 test("狼人杀历史外层按整局上拉加载，局内才使用一百条渲染窗口", async () => {
   const script = await readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8");
   assert.match(script, /offset=\$\{offset\}&limit=1/);

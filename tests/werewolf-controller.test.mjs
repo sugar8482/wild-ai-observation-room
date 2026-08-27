@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   chatRequest,
   gameSystemPrompt,
+  wolfNightBriefing,
   parseWerewolfDebriefReply,
   parseWerewolfGameReply,
   requestWerewolfDebrief,
@@ -14,6 +15,7 @@ import {
   pickWerewolfDirectorSpeaker,
   werewolfDirectorSnapshot,
   werewolfVoteProgress,
+  werewolfRosterStatus,
 } from "../public/werewolf-controller.js";
 import {
   WEREWOLF_USER_ID,
@@ -216,9 +218,10 @@ test("狼人、预言家和女巫会在后续请求中拿回各自合法的夜�
   );
 
   const wolfInfo = roleKnowledge(game, wolf);
-  assert.match(wolfInfo, /允许自刀或刀狼队友/);
+  assert.match(wolfInfo, /允许自刀或刀仍存活的狼队友/);
   assert.match(wolfInfo, /第1夜狼队最终刀口=玩家4，你的选择=玩家1/);
   assert.match(wolfInfo, /你记得此前的狼队密谈/);
+  assert.match(wolfInfo, /白天也可以继续利用这些信息/);
   assert.match(wolfInfo, /第1夜 玩家1：我先刀玩家5/);
   assert.match(wolfInfo, /第1夜 玩家2：我更想刀玩家4/);
   assert.doesNotMatch(wolfInfo, /这句公屏不属于狼队密谈/);
@@ -361,6 +364,57 @@ test("局中回复会拦截完整或未闭合的私人记忆标签，不保存�
     "来源",
     "- 本轮推理",
   ].join("\n")), "");
+});
+
+test("狼人夜间简报包含完整公屏、本夜密谈和已出局队友状态", () => {
+  const game = manualGame();
+  const wolf = game.players.find((player) => player.id === "guest-1");
+  const deadTeammate = game.players.find((player) => player.id === "guest-2");
+  deadTeammate.alive = false;
+  game.day = 2;
+  game.phase = "night_wolves";
+  game.log.push(
+    {
+      day: 1,
+      phase: "day_speech",
+      visibility: "public",
+      authorId: "guest-3",
+      author: "玩家3",
+      text: "我是预言家，昨天验中了狼人。",
+    },
+    {
+      day: 1,
+      phase: "last_words",
+      visibility: "public",
+      authorId: deadTeammate.id,
+      author: deadTeammate.name,
+      text: "我被放逐了。",
+    },
+    {
+      day: 2,
+      phase: "night_wolves",
+      visibility: "wolves",
+      authorId: wolf.id,
+      author: wolf.name,
+      text: "先讨论要不要刀预言家。",
+    },
+  );
+
+  assert.match(werewolfRosterStatus(game), /玩家2（已出局）/);
+  const briefing = wolfNightBriefing(game);
+  assert.match(briefing, /玩家2（已出局）/);
+  assert.match(briefing, /玩家3：我是预言家，昨天验中了狼人/);
+  assert.match(briefing, /玩家2：我被放逐了/);
+  assert.match(briefing, /本夜狼队密谈记录/);
+  assert.match(briefing, /玩家1：先讨论要不要刀预言家/);
+
+  const knowledge = roleKnowledge(game, wolf);
+  assert.match(knowledge, /玩家2（已出局）/);
+  assert.match(knowledge, /已出局狼队友不能参与今晚行动/);
+
+  const prompt = gameSystemPrompt({ name: "玩家1", persona: "" }, game, wolf, "请行动。");
+  assert.match(prompt, /全体玩家生存状态/);
+  assert.match(prompt, /已出局玩家：玩家2/);
 });
 
 test("局中纯动作标签会保留给阶段解析器，不会被误判成私人记忆", async () => {

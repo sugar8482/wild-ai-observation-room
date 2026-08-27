@@ -247,6 +247,25 @@ function publicHistory(game, limit = 80) {
     .join("\n");
 }
 
+export function werewolfRosterStatus(game) {
+  return game.players
+    .map((player) => `${player.name}（${player.alive ? "存活" : "已出局"}）`)
+    .join("、");
+}
+
+export function wolfNightBriefing(game) {
+  const publicTranscript = publicHistory(game) || "公屏还没有任何记录。";
+  const wolfTranscript = game.log
+    .filter((entry) => entry.day === game.day && entry.visibility === "wolves")
+    .map((entry) => `${entry.author}：${entry.text}`)
+    .join("\n") || "本夜狼队频道还没人说话。";
+  return [
+    `全体玩家当前状态：${werewolfRosterStatus(game)}。`,
+    `截至当前的公屏记录（包括白天发言、投票和遗言）：\n${publicTranscript}`,
+    `本夜狼队密谈记录：\n${wolfTranscript}`,
+  ].join("\n\n");
+}
+
 function completedNights(game) {
   const unresolvedPhases = new Set(["night_wolves", "night_seer", "night_witch", "dawn"]);
   return game.nights.filter((night) => (
@@ -260,6 +279,9 @@ export function roleKnowledge(game, player) {
   const nights = completedNights(game);
   if (player.role === "wolf") {
     const teammates = game.players.filter((item) => item.role === "wolf" && item.id !== player.id);
+    const teammateStatus = teammates
+      .map((item) => `${item.name}（${item.alive ? "存活" : "已出局"}）`)
+      .join("、");
     const history = nights.map((night) => {
       const finalTarget = werewolfPlayer(game, night.killTargetId)?.name || "无人";
       const ownTarget = werewolfPlayer(game, night.wolfVotes?.[player.id])?.name || "未落刀";
@@ -275,9 +297,9 @@ export function roleKnowledge(game, player) {
       .join("\n")
       .slice(-6_000);
     return [
-      `你的狼队友：${teammates.map((item) => item.name).join("、") || "没有"}。狼人允许自刀或刀狼队友。`,
+      `你的狼队友：${teammateStatus || "没有"}。已出局狼队友不能参与今晚行动，也不会再回复密谈；狼人允许自刀或刀仍存活的狼队友。`,
       history ? `你记得的狼队夜间行动：${history}。` : "狼队还没有已结算的夜间行动。",
-      rememberedWolfChat ? `你记得此前的狼队密谈：\n${rememberedWolfChat}` : "此前没有需要回忆的狼队密谈。",
+      rememberedWolfChat ? `你记得此前的狼队密谈，白天也可以继续利用这些信息：\n${rememberedWolfChat}` : "此前没有需要回忆的狼队密谈。",
     ].join("");
   }
   if (player.role === "seer") {
@@ -328,6 +350,7 @@ export function viewerRoleKnowledge(game, player) {
 
 export function gameSystemPrompt(agent, game, player, task, { includePrivateMemory = true } = {}) {
   const living = livingWerewolfPlayers(game).map((item) => item.name).join("、");
+  const eliminated = game.players.filter((item) => !item.alive).map((item) => item.name).join("、");
   const readOnlyMemory = includePrivateMemory ? privateMemoryContext(agent) : "";
   const continuityRule = readOnlyMemory
     ? "这是一份规则与原始卷宗都独立的临时对局。上面属于你自己的长期私人记忆是只读背景：它可以自然影响你对玩家的信任、怀疑、偏向和策略；你仍看不到任何旧局原文、旧复盘或旧局私人日记。不要把旧局身份当成本局身份。"
@@ -341,7 +364,7 @@ export function gameSystemPrompt(agent, game, player, task, { includePrivateMemo
     readOnlyMemory,
     continuityRule,
     outputRule,
-    `还活着的玩家：${living}。${roleKnowledge(game, player)}`,
+    `全体玩家生存状态：${werewolfRosterStatus(game)}。还活着的玩家：${living || "无人"}。已出局玩家：${eliminated || "暂无"}。${roleKnowledge(game, player)}`,
     "你可以撒谎、悍跳、伪装、质疑晨曦，狼人也可以倒钩队友。不要因为晨曦是用户就默认她可信或不投她。",
     "只能使用公屏发言和你的合法身份信息。不得猜 API 速度、报错、模型风格或接口故障，不得读取他人的身份和秘密频道。",
     task,
@@ -1781,31 +1804,64 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
   async function runWolves(current, signal) {
     const night = currentNight(current);
     const wolves = livingWerewolfPlayers(current).filter((player) => player.role === "wolf");
+    const discussionRounds = 2;
+    const shouldDiscuss = wolves.length > 1;
+    if (shouldDiscuss) {
+      current.pending.wolfTalkDone ||= {};
+      for (let round = 1; round <= discussionRounds; round += 1) {
+        const roundKey = String(round);
+        current.pending.wolfTalkDone[roundKey] ||= [];
+        for (const player of wolves) {
+          if (player.type !== "agent" || current.pending.wolfTalkDone[roundKey].includes(player.id)) continue;
+          const agent = agentFor(player.id);
+          if (!agent) continue;
+          const raw = await chatRequest(
+            agent,
+            current,
+            player,
+            `现在是狼人夜间密谈第 ${round}/${discussionRounds} 轮。阅读完整公屏、生存状态和本夜狼聊后，简短说你的判断；要回应队友的分歧。此轮只讨论，不投票，不要写 [TARGET]。这段话不会公开。`,
+            wolfNightBriefing(current),
+            signal,
+            220,
+          );
+          appendWerewolfLog(current, {
+            visibility: "wolves",
+            authorId: player.id,
+            author: player.name,
+            text: stripWerewolfControls(raw) || "这一轮我暂时没有补充。",
+          });
+          current.pending.wolfTalkDone[roundKey].push(player.id);
+          await persistGame();
+        }
+      }
+    }
     current.pending.wolfDone ||= [];
     for (const player of wolves) {
       if (player.type !== "agent" || current.pending.wolfDone.includes(player.id)) continue;
       const agent = agentFor(player.id);
       if (!agent) continue;
       const targets = validTargets(current, player.id, { includeSelf: true });
-      const prior = current.log.filter((entry) => entry.day === current.day && entry.visibility === "wolves")
-        .map((entry) => `${entry.author}：${entry.text}`).join("\n") || "狼队频道还没人说话。";
       const raw = await chatRequest(
         agent,
         current,
         player,
-        "现在是狼人夜间密谈。你可以自刀或刀狼队友。简短说你的判断，并在最后单独写 [TARGET:玩家名字]。这段话不会公开。",
-        `可刀目标：${targets.map((target) => target.name).join("、")}\n\n狼队已有密谈：\n${prior}`,
+        shouldDiscuss
+          ? "两轮狼队密谈已经结束。重新阅读完整公屏、生存状态和本夜全部密谈，独立投出最终刀口；可以用一句话说明理由，最后必须单独写 [TARGET:玩家名字]。只有仍存活的狼可以投票。"
+          : "你是目前唯一存活的狼人，没有可密谈的队友。阅读完整公屏、死亡名单和旧狼队记录后直接秘密决定刀口。不要输出分析或自言自语，只输出 [TARGET:玩家名字]。",
+        `${wolfNightBriefing(current)}\n\n可刀目标：${targets.map((target) => target.name).join("、")}`,
         signal,
-        180,
+        shouldDiscuss ? 140 : 60,
       );
       const targetId = parseWerewolfTarget(raw, "TARGET", current.players, targets.map((target) => target.id)) || fallbackTarget(targets);
       night.wolfVotes[player.id] = targetId;
-      appendWerewolfLog(current, {
-        visibility: "wolves",
-        authorId: player.id,
-        author: player.name,
-        text: stripWerewolfControls(raw) || `我倾向于刀 ${werewolfPlayer(current, targetId)?.name || "这位"}。`,
-      });
+      if (shouldDiscuss) {
+        appendWerewolfLog(current, {
+          visibility: "wolves",
+          authorId: player.id,
+          author: player.name,
+          text: stripWerewolfControls(raw) || `我的最终票是 ${werewolfPlayer(current, targetId)?.name || "这位"}。`,
+        });
+      }
       current.pending.wolfDone.push(player.id);
       await persistGame();
     }
