@@ -418,7 +418,9 @@ export function parseWerewolfGameReply(rawText) {
   if (archiveMarkers.length >= 2 || (archiveMarkers.length && (archiveMarkers[0].index || 0) < 80)) {
     visibleText = visibleText.slice(0, archiveMarkers[0].index || 0).trim();
   }
-  return stripWerewolfControls(visibleText).trim();
+  // Keep legal game controls until the phase-specific parser has consumed them.
+  // Public speeches and logs strip these markers at their display boundary.
+  return visibleText.trim();
 }
 
 export function werewolfRequestAgent(agent) {

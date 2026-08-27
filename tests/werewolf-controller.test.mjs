@@ -334,6 +334,41 @@ test("局中回复会拦截完整或未闭合的私人记忆标签，不保存�
   ].join("\n")), "");
 });
 
+test("局中纯动作标签会保留给阶段解析器，不会被误判成私人记忆", async () => {
+  for (const control of [
+    "[VOTE:玩家2]",
+    "[TARGET:玩家2]",
+    "[CHECK:玩家2]",
+    "[WITCH:save=no,poison=none]",
+  ]) {
+    assert.equal(parseWerewolfGameReply(control), control);
+  }
+
+  const game = manualGame();
+  const player = game.players[0];
+  const agent = {
+    id: player.id,
+    name: player.name,
+    memoryEnabled: true,
+    memory: "这段只读私人记忆应当影响投票判断",
+    model: "test-model",
+  };
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ text: "[VOTE:玩家2]" }) };
+  };
+  try {
+    const result = await chatRequest(agent, game, player, "现在只进行公开投票。", "请投票。", undefined, 50);
+    assert.equal(result, "[VOTE:玩家2]");
+    assert.equal(requests.length, 1);
+    assert.match(requests[0].messages[0].content, /这段只读私人记忆应当影响投票判断/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("局中只输出记忆时会自动纠错一次并返回正常发言", async () => {
   const game = manualGame();
   const player = game.players[0];
