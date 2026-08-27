@@ -314,6 +314,18 @@ test("狼人杀复用普通导演台，并把阶段资格留在狼人杀控制�
   assert.doesNotMatch(styles, /\.composer\.is-werewolf-compose \.composer-route\s*\{\s*display:\s*none/);
 });
 
+test("狼人杀推进按钮在首次异步保存前立即上锁，并防止重复遗言再次推进夜晚", async () => {
+  const script = await readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8");
+  const advance = script.match(/async function advance\(\) \{[\s\S]*?\n  function start\(\) \{/)?.[0] || "";
+  const captureIndex = advance.indexOf("captureUserAction(current)");
+  const lockIndex = advance.indexOf("running = true");
+  const firstAwaitIndex = advance.indexOf("await persistGame()");
+  assert.ok(captureIndex >= 0, "推进前应先读取人类玩家控件");
+  assert.ok(lockIndex > captureIndex, "读取控件后应立即占用推进锁");
+  assert.ok(firstAwaitIndex > lockIndex, "推进锁必须早于第一次异步保存");
+  assert.match(script, /current\.phase !== "last_words" \|\| current\.pending\?\.eliminatedId !== eliminated\.id/);
+});
+
 test("狼人杀历史外层按整局上拉加载，局内才使用一百条渲染窗口", async () => {
   const script = await readFile(new URL("../public/werewolf-controller.js", import.meta.url), "utf8");
   assert.match(script, /offset=\$\{offset\}&limit=1/);

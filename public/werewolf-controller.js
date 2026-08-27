@@ -2168,6 +2168,9 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
         ));
       }
     }
+    // A slow duplicate request must not append a second last word or advance
+    // another night after the first request has already left this phase.
+    if (current.phase !== "last_words" || current.pending?.eliminatedId !== eliminated.id) return;
     appendWerewolfLog(current, { authorId: eliminated.id, author: eliminated.name, text: words || "我没有遗言。", phase: "last_words" });
     const winner = checkWerewolfWinner(current);
     if (winner) finishWerewolfGame(current, winner);
@@ -2188,15 +2191,20 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     try {
       // Read the human player's controls before renderGame rebuilds the action panel.
       captureUserAction(current);
+      // Lock synchronously before the first await. Otherwise a second tap can
+      // enter while the initial save is still pending and advance twice.
+      running = true;
+      abortController = new AbortController();
+      setGameStatus("法官正在收这一阶段的行动……");
+      renderGame();
       await persistGame();
     } catch (error) {
+      running = false;
+      abortController = null;
       setGameStatus(error.message, true);
+      renderGame();
       return;
     }
-    running = true;
-    abortController = new AbortController();
-    setGameStatus("法官正在收这一阶段的行动……");
-    renderGame();
     try {
       if (current.phase === "night_wolves") await runWolves(current, abortController.signal);
       else if (current.phase === "night_seer") await runSeer(current, abortController.signal);
