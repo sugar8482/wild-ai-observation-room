@@ -12,14 +12,19 @@ function safeStatus(value) {
 
 export function roomMembers(room, agents = []) {
   const agentNames = new Map(agents.map((agent) => [String(agent.id), String(agent.name || "未命名嘉宾")]));
+  const hiddenExternalMemberIds = new Set((Array.isArray(room?.hiddenExternalMemberIds) ? room.hiddenExternalMemberIds : [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean));
   const members = new Map();
   for (const rawMember of Array.isArray(room?.members) ? room.members : []) {
     const id = String(rawMember?.id || "").trim();
     if (!id) continue;
+    const type = ["agent", "mcp", "human"].includes(rawMember.type) ? rawMember.type : "agent";
+    if (type !== "agent" && hiddenExternalMemberIds.has(id)) continue;
     members.set(id, {
       id,
       name: String(rawMember.name || agentNames.get(id) || "未命名嘉宾"),
-      type: ["agent", "mcp", "human"].includes(rawMember.type) ? rawMember.type : "agent",
+      type,
       status: safeStatus(rawMember.status),
       note: String(rawMember.note || ""),
       joinedAt: Number(rawMember.joinedAt) || Number(room?.createdAt) || Date.now(),
@@ -50,6 +55,7 @@ export function roomMembers(room, agents = []) {
     const external = message?.source === "mcp" || message?.source === "visitor";
     const id = String(external ? (message?.externalId || message?.agentId || "") : (message?.agentId || "")).trim();
     if (!id || message?.kind !== "agent") continue;
+    if (external && hiddenExternalMemberIds.has(id)) continue;
     const timestamp = Number(message?.timestamp) || Number(room?.createdAt) || Date.now();
     const existing = members.get(id);
     if (existing) {

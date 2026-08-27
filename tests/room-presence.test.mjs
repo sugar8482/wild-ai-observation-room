@@ -52,3 +52,17 @@ test("旧记录里的 MCP 与已移除嘉宾会自动补进成员簿", () => {
   assert.equal(members.find((member) => member.id === "removed")?.status, "left");
   assert.equal(members.find((member) => member.id === "gpt")?.lastSeenAt, 10);
 });
+
+test("主动从嘉宾席移除的外部访客不会被旧聊天重新补回", () => {
+  const room = {
+    createdAt: 1,
+    participantIds: [],
+    hiddenExternalMemberIds: ["visitor-old"],
+    members: [{ id: "visitor-old", name: "阿砚", type: "mcp", status: "left" }],
+    messages: [
+      { kind: "agent", agentId: "visitor-old", externalId: "visitor-old", source: "mcp", author: "阿砚", timestamp: 20 },
+    ],
+  };
+  assert.equal(roomMembers(room, agents).some((member) => member.id === "visitor-old"), false);
+  assert.equal(room.messages[0].author, "阿砚");
+});

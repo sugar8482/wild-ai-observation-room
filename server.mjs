@@ -583,6 +583,38 @@ export function createAppServer(options = {}) {
       return;
     }
 
+    const externalMemberDeleteMatch = url.pathname.match(/^\/api\/rooms\/([a-zA-Z0-9_-]+)\/members\/([a-zA-Z0-9_-]+)$/);
+    if (externalMemberDeleteMatch && request.method === "DELETE") {
+      if (!hasAdminSession(request)) {
+        sendJson(response, 401, { error: "只有房主可以整理嘉宾席" });
+        return;
+      }
+      if (!stateStore || typeof stateStore.removeExternalRoomMember !== "function") {
+        sendJson(response, 503, { error: "嘉宾席整理功能尚未启用" });
+        return;
+      }
+      const [roomId, memberId] = externalMemberDeleteMatch.slice(1);
+      try {
+        const result = await stateStore.removeExternalRoomMember(roomId, memberId);
+        if (!result.roomFound) {
+          sendJson(response, 404, { error: "没有找到这个聊天室" });
+          return;
+        }
+        if (!result.memberFound) {
+          sendJson(response, 404, { error: "这个访客已经不在嘉宾席了" });
+          return;
+        }
+        if (!result.removed) {
+          sendJson(response, 409, { error: "只有已离开的朋友访客或 MCP 访客可以移除" });
+          return;
+        }
+        sendJson(response, 200, result);
+      } catch {
+        sendJson(response, 500, { error: "整理嘉宾席时没有保存成功，请重试" });
+      }
+      return;
+    }
+
     if (url.pathname === "/api/visit/sync" && request.method === "POST") {
       if (!visitorManager || !stateStore) {
         sendJson(response, 503, { error: "访客模式尚未启用" });

@@ -29,6 +29,29 @@ test("访客邀请只保存令牌摘要，并可撤销", async (context) => {
   assert.equal(await manager.authorize(created.token, "human"), null);
 });
 
+test("客户端自带恢复钥匙时重复创建同一份邀请不会产生重复访客", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-visitor-resume-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = join(directory, "visitors.json");
+  const manager = createVisitorManager({ filePath });
+  const request = {
+    roomId: "room-one",
+    type: "mcp",
+    name: "可恢复 AI",
+    requestId: "invite-request-0123456789abcdef",
+    token: "abcdefghijklmnopqrstuvwxyzABCDEFG_0123456789-",
+  };
+
+  const first = await manager.create(request);
+  const resumed = await manager.create(request);
+  assert.equal(resumed.invite.id, first.invite.id);
+  assert.equal(resumed.token, request.token);
+  assert.equal((await manager.list()).length, 1);
+  assert.equal((await manager.list())[0].requestId, request.requestId);
+  assert.equal((await manager.authorize(request.token, "mcp"))?.name, "可恢复 AI");
+  assert.doesNotMatch(await readFile(filePath, "utf8"), new RegExp(request.token));
+});
+
 test("人类访客和 MCP 访客只能读取公开消息并能公开发言", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "observation-visitor-server-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
@@ -294,4 +317,16 @@ test("人类访客和 MCP 访客只能读取公开消息并能公开发言", asy
   assert.equal(mcpRoom.messages.at(-2).privacy, "private");
   assert.equal(mcpRoom.messages.at(-1).text, "只回给外援 AI");
   assert.equal(mcpRoom.messages.at(-1).privacy, "private");
+
+  const revokeMcp = await fetch(`${origin}/api/visitors/${mcpPayload.invite.id}`, { method: "DELETE" });
+  assert.equal(revokeMcp.status, 200);
+  assert.equal((await stateStore.clientState()).rooms[0].members.find((member) => member.id === mcpPayload.invite.id)?.status, "left");
+  const removeMcp = await fetch(
+    `${origin}/api/rooms/room-one/members/${mcpPayload.invite.id}`,
+    { method: "DELETE" },
+  );
+  assert.equal(removeMcp.status, 200);
+  const afterRemoval = await stateStore.clientState();
+  assert.equal(afterRemoval.rooms[0].members.some((member) => member.id === mcpPayload.invite.id), false);
+  assert.equal(afterRemoval.rooms[0].messages.some((message) => message.externalId === mcpPayload.invite.id), true);
 });

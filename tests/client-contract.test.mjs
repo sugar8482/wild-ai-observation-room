@@ -112,6 +112,35 @@ test("访客链接在局域网 iPad 上不会假装复制成功", async () => {
   assert.match(script, /链接已全选，请长按复制/);
 });
 
+test("邀请列表会预取缓存，未显示完的 MCP 地址可在同一标签页恢复", async () => {
+  const script = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.match(script, /VISITOR_INVITES_CACHE_KEY/);
+  assert.match(script, /VISITOR_PENDING_KEY/);
+  assert.match(script, /VISITOR_ENDPOINT_KEY/);
+  assert.match(script, /requestId: newVisitorRequestId\(\)/);
+  assert.match(script, /token: randomVisitorSecret\(\)/);
+  assert.match(script, /async function resumePendingVisitorInvite/);
+  assert.match(script, /visitorInvites\.find\(\(invite\) => invite\.requestId === pending\.requestId\)/);
+  assert.match(script, /void loadVisitorInvites\(\)\.catch/);
+  assert.doesNotMatch(script, /async function openVisitorDialog\([\s\S]*?visitorEndpointCard\.classList\.add\("is-hidden"\)/);
+});
+
+test("已离开的外部访客可从嘉宾席移除但不会删除旧聊天", async () => {
+  const [script, presence, server, styles] = await Promise.all([
+    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/room-presence.js", import.meta.url), "utf8"),
+    readFile(new URL("../server.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(script, /member\.status === "left"/);
+  assert.match(script, /member-remove-button/);
+  assert.match(script, /过去的聊天记录仍保留/);
+  assert.match(script, /\/api\/rooms\/\$\{encodeURIComponent\(room\.id\)\}\/members/);
+  assert.match(presence, /hiddenExternalMemberIds/);
+  assert.match(server, /removeExternalRoomMember/);
+  assert.match(styles, /\.member-remove-button/);
+});
+
 test("嘉宾席可只看本房成员并按聊天室或未分房筛选", async () => {
   const [html, script, styles] = await Promise.all([
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),

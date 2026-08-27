@@ -65,6 +65,9 @@ const LEGACY_MESSAGE_KEY = "wild-ai-observation-room.messages.v1";
 const GUEST_CATALOG_KEY = "wild-ai-observation-room.guest-catalog.v2";
 const DIRECTOR_PREFS_KEY = "wild-ai-observation-room.director-prefs.v1";
 const THEME_KEY = "wild-ai-observation-room.theme.v1";
+const VISITOR_INVITES_CACHE_KEY = "wild-ai-observation-room.visitor-invites.v1";
+const VISITOR_PENDING_KEY = "wild-ai-observation-room.visitor-pending.v1";
+const VISITOR_ENDPOINT_KEY = "wild-ai-observation-room.visitor-endpoint.v1";
 const SUMMARY_AGENT_ID = "memory-summarizer";
 const MAX_AVATAR_DATA_LENGTH = 60_000;
 const AVATAR_DATA_URL_PATTERN = /^data:image\/(?:png|jpe?g|webp);base64,[a-z0-9+/=]+$/i;
@@ -206,7 +209,9 @@ let guestCopyNameSuggestion = "";
 let accessProtectionEnabled = true;
 let agentMemoryDraftDirty = false;
 let agentAvatarDraft = "";
-let visitorInvites = [];
+let visitorInvites = safeRead(VISITOR_INVITES_CACHE_KEY, []);
+let visitorInvitesLoading = false;
+let visitorRequestInFlight = null;
 let werewolfController = null;
 let messageHistoryObserver = null;
 let loadingOlderMessages = false;
@@ -398,6 +403,9 @@ function hydrateRoom(room, fallbackParticipants = [], agents = []) {
       Array.isArray(room?.werewolfArchives) ? room.werewolfArchives.length : 0,
     ),
     externalRevision: Math.max(0, Number(room?.externalRevision) || 0),
+    hiddenExternalMemberIds: Array.isArray(room?.hiddenExternalMemberIds)
+      ? [...new Set(room.hiddenExternalMemberIds.map(String).filter(Boolean))]
+      : [],
     participantIds: Array.isArray(room?.participantIds) ? [...new Set(room.participantIds)] : fallbackParticipants,
     messages: Array.isArray(room?.messages) ? room.messages : [],
     createdAt: Number(room?.createdAt || Date.now()),
@@ -619,6 +627,116 @@ function selectVisitorEndpoint() {
   visitorEndpoint.setSelectionRange(0, visitorEndpoint.value.length);
 }
 
+function sessionRead(key, fallback = null) {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function sessionWrite(key, value) {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // The current page can still show the result even when private storage is disabled.
+  }
+}
+
+function sessionRemove(key) {
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // Nothing else to clean up.
+  }
+}
+
+function randomVisitorSecret() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function newVisitorRequestId() {
+  return `invite-request-${crypto.randomUUID?.() || randomVisitorSecret()}`;
+}
+
+function visitorEndpointCopy(type, name, endpoint) {
+  visitorEndpoint.value = endpoint;
+  byId("visitor-endpoint-label").textContent = type === "mcp" ? "专属 MCP 地址" : "朋友邀请链接";
+  byId("visitor-endpoint-name").textContent = name;
+  byId("visitor-endpoint-note").textContent = type === "mcp"
+    ? "把这个地址添加到支持 Streamable HTTP MCP 的 AI 客户端；用浏览器打开会显示连接说明。AI 会读到房间背景与最近 40 条可见聊天，并可公开发言或私聊。若不在同一网络，仍需私有 HTTPS 隧道。"
+    : "把链接发给朋友即可。链接本身就是临时钥匙，请只发给你信任的人；地址只显示在当前标签页。";
+  visitorEndpointCard.classList.remove("is-hidden");
+  sessionWrite(VISITOR_ENDPOINT_KEY, { type, name, endpoint, savedAt: Date.now() });
+}
+
+function restoreVisitorEndpoint() {
+  const saved = sessionRead(VISITOR_ENDPOINT_KEY, null);
+  if (!saved?.endpoint || !saved?.name || !["human", "mcp"].includes(saved.type)) {
+    visitorEndpointCard.classList.add("is-hidden");
+    return false;
+  }
+  visitorEndpointCopy(saved.type, saved.name, saved.endpoint);
+  return true;
+}
+
+function visitorEndpointFromPending(pending) {
+  return pending.type === "mcp"
+    ? `${location.origin}/mcp/${pending.token}`
+    : `${location.origin}/visitor.html#${pending.token}`;
+}
+
+function upsertVisitorInvite(invite) {
+  visitorInvites = [invite, ...visitorInvites.filter((item) => item.id !== invite.id)]
+    .sort((left, right) => Number(right.createdAt) - Number(left.createdAt))
+    .slice(0, 200);
+  safeWrite(VISITOR_INVITES_CACHE_KEY, visitorInvites);
+  renderVisitorInvites();
+}
+
+async function submitPendingVisitorInvite(pending) {
+  if (visitorRequestInFlight?.requestId === pending.requestId) return visitorRequestInFlight.promise;
+  const task = (async () => {
+    const response = await fetch("/api/visitors", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(pending),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "邀请没有生成成功");
+    visitorEndpointCopy(pending.type, pending.name, payload.endpoint || visitorEndpointFromPending(pending));
+    upsertVisitorInvite(payload.invite);
+    sessionRemove(VISITOR_PENDING_KEY);
+    return payload;
+  })();
+  visitorRequestInFlight = { requestId: pending.requestId, promise: task };
+  try {
+    return await task;
+  } finally {
+    if (visitorRequestInFlight?.promise === task) visitorRequestInFlight = null;
+  }
+}
+
+async function resumePendingVisitorInvite({ announce = false } = {}) {
+  const pending = sessionRead(VISITOR_PENDING_KEY, null);
+  if (!pending?.requestId || !pending?.token || !pending?.roomId || !pending?.name) return null;
+  const existing = visitorInvites.find((invite) => invite.requestId === pending.requestId);
+  if (existing?.active) {
+    visitorEndpointCopy(pending.type, pending.name, visitorEndpointFromPending(pending));
+    sessionRemove(VISITOR_PENDING_KEY);
+    if (announce) showToast(pending.type === "mcp" ? "AI 访客入口已恢复" : "朋友邀请链接已恢复");
+    return { invite: existing, endpoint: visitorEndpoint.value };
+  }
+  visitorFormStatus.textContent = "正在恢复上次没有显示完的邀请……";
+  const payload = await submitPendingVisitorInvite(pending);
+  visitorFormStatus.textContent = "";
+  if (announce) showToast(pending.type === "mcp" ? "AI 访客入口已生成" : "朋友邀请链接已生成");
+  return payload;
+}
+
 function formatInviteExpiry(timestamp) {
   return new Intl.DateTimeFormat("zh-CN", {
     month: "numeric",
@@ -632,9 +750,15 @@ function formatInviteExpiry(timestamp) {
 function renderVisitorInvites() {
   visitorInviteList.replaceChildren();
   const roomNames = new Map(state.rooms.map((room) => [room.id, room.name]));
-  const activeInvites = visitorInvites.filter((invite) => invite.active).slice(0, 20);
+  const activeInvites = visitorInvites
+    .filter((invite) => invite.active && Number(invite.expiresAt) > Date.now() && !invite.revokedAt)
+    .slice(0, 20);
   if (!activeInvites.length) {
-    visitorInviteList.append(createElement("p", "visitor-invite-empty", "还没有生效中的邀请。"));
+    visitorInviteList.append(createElement(
+      "p",
+      "visitor-invite-empty",
+      visitorInvitesLoading ? "正在同步现有邀请……" : "还没有生效中的邀请。",
+    ));
     return;
   }
   for (const invite of activeInvites) {
@@ -669,16 +793,24 @@ function renderVisitorInvites() {
 }
 
 async function loadVisitorInvites() {
-  const response = await fetch("/api/visitors", { cache: "no-store" });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || "读取访客邀请失败");
-  visitorInvites = Array.isArray(payload.invites) ? payload.invites : [];
+  visitorInvitesLoading = true;
   renderVisitorInvites();
+  try {
+    const response = await fetch("/api/visitors", { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "读取访客邀请失败");
+    visitorInvites = Array.isArray(payload.invites) ? payload.invites : [];
+    safeWrite(VISITOR_INVITES_CACHE_KEY, visitorInvites);
+    return visitorInvites;
+  } finally {
+    visitorInvitesLoading = false;
+    renderVisitorInvites();
+  }
 }
 
 async function openVisitorDialog() {
   visitorFormStatus.textContent = "";
-  visitorEndpointCard.classList.add("is-hidden");
+  restoreVisitorEndpoint();
   const roomSelect = byId("visitor-room");
   roomSelect.replaceChildren();
   for (const room of state.rooms) {
@@ -689,11 +821,13 @@ async function openVisitorDialog() {
   }
   roomSelect.value = activeRoom()?.id || state.rooms[0]?.id || "";
   syncVisitorTypeCopy();
+  renderVisitorInvites();
   if (!visitorDialog.open) visitorDialog.showModal();
   try {
     await loadVisitorInvites();
+    await resumePendingVisitorInvite({ announce: true });
   } catch (error) {
-    visitorFormStatus.textContent = error.message;
+    visitorFormStatus.textContent = `${error.message}；这份邀请已经记住，重新打开会继续恢复。`;
   }
 }
 
@@ -765,6 +899,7 @@ function mergeServerRoomUpdates(serverRooms = []) {
     if (Number(remote.externalRevision) > Number(room.externalRevision)) {
       room.members = roomMembers(remote, state.agents);
       room.participantIds = [...new Set((remote.participantIds || []).map(String))];
+      room.hiddenExternalMemberIds = [...new Set((remote.hiddenExternalMemberIds || []).map(String))];
     }
     if (Number(remote.memory?.updatedAt) > Number(room.memory?.updatedAt)) {
       room.memory = hydrateRoomMemory(remote.memory);
@@ -1117,7 +1252,17 @@ function renderAgents() {
       }
       presenceSelect.value = member.status;
       presenceSelect.addEventListener("change", () => changeRoomMemberPresence(member.id, presenceSelect.value));
-      top.append(presenceSelect);
+      const memberActions = createElement("div", "external-member-actions");
+      memberActions.append(presenceSelect);
+      if (["mcp", "human"].includes(member.type) && member.status === "left") {
+        const remove = createElement("button", "member-remove-button", "移除");
+        remove.type = "button";
+        remove.title = "从嘉宾席移除，过去的聊天记录仍会保留";
+        remove.setAttribute("aria-label", `从嘉宾席移除 ${member.name}`);
+        remove.addEventListener("click", () => void removeExternalRoomMember(member, remove));
+        memberActions.append(remove);
+      }
+      top.append(memberActions);
       card.append(top);
       if (member.note) card.append(createElement("p", "member-note", `门牌：${member.note}`));
       agentList.append(card);
@@ -1885,6 +2030,32 @@ function changeRoomMemberPresence(memberId, nextStatus) {
   renderAll();
   queuePersist();
   showToast(`${current?.name || agent?.name || "嘉宾"} · ${ROOM_MEMBER_STATUS_LABELS[nextStatus]}`);
+}
+
+async function removeExternalRoomMember(member, button) {
+  const room = activeRoom();
+  if (!room || !member?.id || !["mcp", "human"].includes(member.type) || member.status !== "left") return;
+  button.disabled = true;
+  try {
+    await saveChain;
+    const response = await fetch(
+      `/api/rooms/${encodeURIComponent(room.id)}/members/${encodeURIComponent(member.id)}`,
+      { method: "DELETE" },
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "没有从嘉宾席移除成功");
+    room.members = (room.members || []).filter((item) => item.id !== member.id);
+    room.hiddenExternalMemberIds = [...new Set([...(room.hiddenExternalMemberIds || []), member.id])];
+    room.externalRevision = Math.max(Number(room.externalRevision) || 0, Number(payload.externalRevision) || 0);
+    room.updatedAt = Date.now();
+    renderAgents();
+    renderPrivateRecipientOptions();
+    renderRooms();
+    showToast(`${member.name} 已从嘉宾席移除；过去的聊天记录仍保留`);
+  } catch (error) {
+    button.disabled = false;
+    showToast(error.message);
+  }
 }
 
 function setRunning(running, speaker = "", phase = "reply") {
@@ -3495,6 +3666,7 @@ byId("refresh-visitors").addEventListener("click", async () => {
   visitorFormStatus.textContent = "";
   try {
     await loadVisitorInvites();
+    await resumePendingVisitorInvite({ announce: true });
   } catch (error) {
     visitorFormStatus.textContent = error.message;
   }
@@ -3526,31 +3698,22 @@ visitorForm.addEventListener("submit", async (event) => {
   if (!name || !roomId) return;
   visitorCreateButton.disabled = true;
   visitorFormStatus.textContent = "正在生成一把临时钥匙……";
+  const pending = {
+    requestId: newVisitorRequestId(),
+    token: randomVisitorSecret(),
+    type,
+    name,
+    roomId,
+    expiresInHours: Number(data.get("expiresInHours")) || 24,
+    startedAt: Date.now(),
+  };
+  sessionWrite(VISITOR_PENDING_KEY, pending);
   try {
-    const response = await fetch("/api/visitors", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        type,
-        name,
-        roomId,
-        expiresInHours: Number(data.get("expiresInHours")) || 24,
-      }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || "邀请没有生成成功");
-    visitorEndpoint.value = payload.endpoint;
-    byId("visitor-endpoint-label").textContent = type === "mcp" ? "专属 MCP 地址" : "朋友邀请链接";
-    byId("visitor-endpoint-name").textContent = name;
-    byId("visitor-endpoint-note").textContent = type === "mcp"
-      ? "把这个地址添加到支持 Streamable HTTP MCP 的 AI 客户端；用浏览器打开会显示连接说明。AI 会读到房间背景与最近 40 条可见聊天，并可公开发言或私聊。若不在同一网络，仍需私有 HTTPS 隧道。"
-      : "把链接发给朋友即可。链接本身就是临时钥匙，请只发给你信任的人；地址只显示这一次。";
-    visitorEndpointCard.classList.remove("is-hidden");
+    await submitPendingVisitorInvite(pending);
     visitorFormStatus.textContent = "";
-    await loadVisitorInvites();
     showToast(type === "mcp" ? "AI 访客入口已生成" : "朋友邀请链接已生成");
   } catch (error) {
-    visitorFormStatus.textContent = error.message;
+    visitorFormStatus.textContent = `${error.message}；可以先关掉，重新打开会自动继续恢复。`;
   } finally {
     visitorCreateButton.disabled = false;
   }
@@ -3873,6 +4036,7 @@ async function loadServerState() {
     }
     state.ready = true;
     renderAll({ scroll: true });
+    void loadVisitorInvites().catch(() => {});
     await syncSummaryJobs({ notify: false });
   })().catch((error) => {
     state.ready = true;
@@ -3891,12 +4055,19 @@ async function syncBackgroundUpdates() {
     const payload = await response.json();
     const wasViewingLatest = isViewingLatest();
     const beforeActiveCount = activeRoom()?.messages.length || 0;
+    const localExternalRevisions = new Map(state.rooms.map((room) => [room.id, Number(room.externalRevision) || 0]));
+    const externalMembersChanged = (payload.rooms || []).some((room) => (
+      Number(room.externalRevision) > Number(localExternalRevisions.get(room.id) || 0)
+    ));
     const agentMemoriesChanged = mergeServerAgentMemories(payload.agents || []);
     const addedMessages = mergeServerRoomUpdates(payload.rooms || []);
     await syncSummaryJobs();
     const activeAddedMessages = Math.max(0, (activeRoom()?.messages.length || 0) - beforeActiveCount);
     renderRooms();
-    if (agentMemoriesChanged) renderAgents();
+    if (agentMemoriesChanged || externalMembersChanged) {
+      renderAgents();
+      renderPrivateRecipientOptions();
+    }
     if (addedMessages) {
       if (activeAddedMessages && wasViewingLatest) renderMessages({ scroll: true });
       else if (activeAddedMessages) {

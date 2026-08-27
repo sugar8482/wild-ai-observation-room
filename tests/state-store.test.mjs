@@ -1014,3 +1014,59 @@ test("封存后旧局不会被滞后请求复活，新局也不会继承旧复�
   assert.equal(afterStaleRetry.rooms[0].werewolf.id, newGame.id);
   assert.equal(afterStaleRetry.rooms[0].werewolfArchives.length, 1);
 });
+
+test("已离开的外部访客可从嘉宾席移除且旧聊天保留，滞后保存不会把它复活", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "observation-remove-visitor-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = createStateStore({ filePath: join(directory, "state.json"), secret: "remove-visitor-secret" });
+  const initial = await store.save({
+    agents: [],
+    activeRoomId: "visitor-room",
+    rooms: [{
+      id: "visitor-room",
+      name: "访客房",
+      participantIds: [],
+      members: [{
+        id: "invite-0123456789abcdef",
+        name: "旧 MCP",
+        type: "mcp",
+        status: "left",
+        note: "邀请已结束",
+        joinedAt: 1,
+        statusChangedAt: 2,
+      }],
+      messages: [{
+        id: "visitor-old-message",
+        kind: "agent",
+        author: "旧 MCP",
+        text: "这条过去的聊天要保留",
+        source: "mcp",
+        externalId: "invite-0123456789abcdef",
+        agentId: "invite-0123456789abcdef",
+        timestamp: 1,
+      }],
+    }],
+  });
+
+  const removed = await store.removeExternalRoomMember("visitor-room", "invite-0123456789abcdef");
+  assert.equal(removed.removed, true);
+  let current = await store.clientState();
+  assert.equal(current.rooms[0].members.some((member) => member.id === "invite-0123456789abcdef"), false);
+  assert.equal(current.rooms[0].messages[0].text, "这条过去的聊天要保留");
+  assert.deepEqual(current.rooms[0].hiddenExternalMemberIds, ["invite-0123456789abcdef"]);
+
+  current = await store.save(initial);
+  assert.equal(current.rooms[0].members.some((member) => member.id === "invite-0123456789abcdef"), false);
+  assert.equal(current.rooms[0].messages[0].text, "这条过去的聊天要保留");
+
+  await store.setRoomMemberPresence("visitor-room", {
+    memberId: "invite-0123456789abcdef",
+    name: "旧 MCP",
+    type: "mcp",
+    status: "active",
+    touch: true,
+  });
+  current = await store.clientState();
+  assert.equal(current.rooms[0].members.find((member) => member.id === "invite-0123456789abcdef")?.status, "active");
+  assert.deepEqual(current.rooms[0].hiddenExternalMemberIds, []);
+});

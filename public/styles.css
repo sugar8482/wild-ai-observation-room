@@ -878,6 +878,29 @@ html[data-theme="dark"] .button-werewolf {
   cursor: pointer;
 }
 
+.external-member-actions {
+  display: grid;
+  justify-items: stretch;
+  gap: 5px;
+}
+
+.member-remove-button {
+  min-height: 25px;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--error) 48%, var(--soft-line));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--error);
+  font: inherit;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.member-remove-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .member-note {
   margin: 9px 0 0;
   padding: 7px 8px;
