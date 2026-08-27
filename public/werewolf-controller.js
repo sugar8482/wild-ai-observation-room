@@ -133,6 +133,25 @@ function currentDay(game) {
   return day;
 }
 
+export function werewolfVoteProgress(game, {
+  tiedOnly = game?.phase === "tie_vote",
+  currentPlayerId = "",
+} = {}) {
+  const day = game?.days?.find((entry) => entry.day === game.day);
+  const votes = tiedOnly ? day?.tieVotes : day?.votes;
+  const completed = (game?.players || []).flatMap((voter) => {
+    const targetId = votes?.[voter.id];
+    if (!targetId) return [];
+    const target = werewolfPlayer(game, targetId);
+    return [`${voter.name}→${target?.name || targetId}`];
+  });
+  const currentPlayer = werewolfPlayer(game, currentPlayerId);
+  return [
+    `已投：${completed.length ? completed.join("、") : "暂无"}`,
+    currentPlayer ? `卡在：${currentPlayer.name}` : "",
+  ].filter(Boolean).join("｜");
+}
+
 function werewolfSpeechSeatIds(game, tiedOnly = game?.phase === "tie_speech") {
   if (!game) return [];
   const candidateIds = tiedOnly
@@ -2067,6 +2086,9 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
       const agent = agentFor(player.id);
       if (!agent) continue;
       const targets = validTargets(current, player.id, { candidateIds });
+      speakingPlayerId = player.id;
+      setGameStatus(`${player.name}正在投票……`);
+      renderGame();
       const raw = await chatRequest(
         agent,
         current,
@@ -2078,6 +2100,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
       );
       votes[player.id] = parseWerewolfTarget(raw, "VOTE", current.players, targets.map((target) => target.id)) || fallbackTarget(targets);
       current.pending[doneKey].push(player.id);
+      speakingPlayerId = "";
       await persistGame();
     }
     resolveDayVotes(current, votes, tiedOnly);
@@ -2187,14 +2210,27 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
       setGameStatus(current.status === "ended" ? "卷宗已解锁，可以往回翻所有密谈。" : "这一阶段完成了。先看戏，再继续。🐺");
       await persistGame();
     } catch (error) {
-      if (error.name === "AbortError") setGameStatus("停在这里了，已经完成的发言会保留。");
+      const votePhase = ["day_vote", "tie_vote"].includes(current.phase);
+      const voteProgress = votePhase
+        ? werewolfVoteProgress(current, {
+          tiedOnly: current.phase === "tie_vote",
+          currentPlayerId: speakingPlayerId,
+        })
+        : "";
+      if (error.name === "AbortError") {
+        setGameStatus(voteProgress
+          ? `停在这里了，已经完成的投票会保留。｜${voteProgress}`
+          : "停在这里了，已经完成的发言会保留。");
+      }
       else {
-        recordWerewolfIncident(current, `${WEREWOLF_PHASE_META[current.phase] || current.phase}：${error.message}`);
-        setGameStatus(error.message, true);
+        const diagnosticMessage = voteProgress ? `${error.message}｜${voteProgress}` : error.message;
+        recordWerewolfIncident(current, `${WEREWOLF_PHASE_META[current.phase] || current.phase}：${diagnosticMessage}`);
+        setGameStatus(diagnosticMessage, true);
         await persistGame();
       }
     } finally {
       running = false;
+      speakingPlayerId = "";
       abortController = null;
       renderGame();
     }

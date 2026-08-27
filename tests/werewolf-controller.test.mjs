@@ -13,6 +13,7 @@ import {
   werewolfRequestAgent,
   pickWerewolfDirectorSpeaker,
   werewolfDirectorSnapshot,
+  werewolfVoteProgress,
 } from "../public/werewolf-controller.js";
 import {
   WEREWOLF_USER_ID,
@@ -110,6 +111,34 @@ test("平票导演台只列候选人，夜晚投票遗言阶段会锁住", () =>
     assert.equal(locked.locked, true, `${phase} 应锁住导演台`);
     assert.deepEqual(locked.eligibleSpeakerIds, []);
   }
+});
+
+test("投票失败诊断列出已完成票型和当前卡住的嘉宾", () => {
+  const game = manualGame();
+  game.phase = "day_vote";
+  game.days = [{
+    day: 1,
+    speechOrder: game.players.map((player) => player.id),
+    speeches: {},
+    provisionalVotes: {},
+    votes: {
+      "guest-1": "guest-3",
+      "guest-2": "guest-1",
+    },
+    tieVotes: {},
+    voteCounts: {},
+    tiedIds: [],
+    eliminatedId: null,
+  }];
+
+  assert.equal(
+    werewolfVoteProgress(game, { currentPlayerId: "guest-4" }),
+    "已投：玩家1→玩家3、玩家2→玩家1｜卡在：玩家4",
+  );
+  assert.equal(
+    werewolfVoteProgress(game, { tiedOnly: true, currentPlayerId: "guest-1" }),
+    "已投：暂无｜卡在：玩家1",
+  );
 });
 
 test("赛后点名随机和全体圆桌不受首轮复盘标记限制", () => {
