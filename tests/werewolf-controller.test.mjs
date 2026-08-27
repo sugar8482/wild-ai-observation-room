@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  chatRequest,
   gameSystemPrompt,
   parseWerewolfDebriefReply,
   parseWerewolfGameReply,
@@ -9,6 +10,7 @@ import {
   stripPseudoDebriefArchive,
   validTargets,
   viewerRoleKnowledge,
+  werewolfRequestAgent,
   pickWerewolfDirectorSpeaker,
   werewolfDirectorSnapshot,
 } from "../public/werewolf-controller.js";
@@ -276,7 +278,7 @@ test("晨曦拿狼人时只看见自己和狼队友的身份", () => {
   assert.deepEqual(viewerRoleKnowledge(game, game.players.find((player) => player.id === "wolf-view-2")), { kind: "hidden" });
 });
 
-test("新局隔离旧局卷宗，但允许嘉宾带着自己挑选的长期私人记忆入场", () => {
+test("嘉宾带着只读长期私人记忆入场，但对局中不能写入", () => {
   const game = manualGame();
   const player = game.players[0];
   const prompt = gameSystemPrompt({
@@ -288,12 +290,25 @@ test("新局隔离旧局卷宗，但允许嘉宾带着自己挑选的长期私�
   }, game, player, "现在进行白天发言。");
 
   assert.match(prompt, /我答应晨曦，不会故意让她失望/);
-  assert.match(prompt, /看不到任何旧局原文、旧复盘或旧局私人日记/);
+  assert.match(prompt, /长期私人记忆是只读背景/);
+  assert.match(prompt, /仍看不到任何旧局原文、旧复盘或旧局私人日记/);
   assert.match(prompt, /不要把旧局身份当成本局身份/);
-  assert.match(prompt, /局中没有私人记忆、局内日记或长期记忆写入功能/);
+  assert.match(prompt, /没有新增、修改或归档私人记忆及局内日记的功能/);
   assert.match(prompt, /不得输出 <self_memory>、<game_diary>/);
   assert.doesNotMatch(prompt, /你可以自行选择写进长期私人记忆/);
   assert.match(prompt, /现在进行白天发言/);
+  assert.deepEqual(werewolfRequestAgent({
+    id: player.id,
+    name: player.name,
+    memoryEnabled: true,
+    memoryRevision: 123,
+    memory: "绝不能发送给局中请求",
+    model: "test-model",
+  }), {
+    id: player.id,
+    name: player.name,
+    model: "test-model",
+  });
 });
 
 test("局中回复会拦截完整或未闭合的私人记忆标签，不保存也不上公屏", () => {
@@ -310,6 +325,45 @@ test("局中回复会拦截完整或未闭合的私人记忆标签，不保存�
     "- 我想把这票记下来。",
   ].join("\n")), "我投玩家二。");
   assert.equal(parseWerewolfGameReply("<self_memory>\n- 只有记忆，没有发言。\n</self_memory>"), "");
+  assert.equal(parseWerewolfGameReply([
+    "私人记忆档案",
+    "正文区",
+    "- 我其实知道谁是狼。",
+    "来源",
+    "- 本轮推理",
+  ].join("\n")), "");
+});
+
+test("局中只输出记忆时会自动纠错一次并返回正常发言", async () => {
+  const game = manualGame();
+  const player = game.players[0];
+  const agent = {
+    id: player.id,
+    name: player.name,
+    memoryEnabled: true,
+    memory: "不应进入请求体",
+    model: "test-model",
+  };
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    const text = requests.length === 1
+      ? "<self_memory>\n- 只有记忆，没有投票。\n</self_memory>"
+      : "我投给玩家二，他两轮发言的站边变化最大。";
+    return { ok: true, json: async () => ({ text }) };
+  };
+  try {
+    const result = await chatRequest(agent, game, player, "现在进行公开投票。", "请投票。", undefined, 180);
+    assert.equal(result, "我投给玩家二，他两轮发言的站边变化最大。");
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].agent.memory, undefined);
+    assert.equal(requests[0].agent.memoryEnabled, undefined);
+    assert.equal(requests[1].temperature, 0.25);
+    assert.match(requests[1].messages[0].content, /上一轮格式纠错/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });
 
 test("赛后本局日记与可跨房间长期记忆使用两个独立出口", () => {

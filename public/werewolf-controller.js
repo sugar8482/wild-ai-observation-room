@@ -313,8 +313,8 @@ export function gameSystemPrompt(agent, game, player, task) {
     `你是“${agent.name}”，正在聊天室里参加一局临时狼人杀。你的身份是${WEREWOLF_ROLE_META[player.role].label}。`,
     agent.persona?.trim() ? `你平时的个人设定：\n${agent.persona.trim().slice(0, 4_000)}` : "保持你平时自然的判断与说话方式。",
     privateMemoryContext(agent),
-    "这是一份规则与原始卷宗都独立的临时对局。你看不到任何旧局原文、旧复盘或旧局私人日记；但上面属于你自己的长期私人记忆仍是你的连续经历，可以自然影响你的判断。不要把旧局身份当成本局身份。",
-    "这局里的欺骗、站队和敌意不自动代表永久人格或真实关系。局中没有私人记忆、局内日记或长期记忆写入功能：不得输出 <self_memory>、<game_diary>、私人记忆便笺或声称已经存档。有想长期保留的内容，等游戏结束进入赛后复盘后再决定。",
+    "这是一份规则与原始卷宗都独立的临时对局。上面属于你自己的长期私人记忆是只读背景：它可以自然影响你对玩家的信任、怀疑、偏向和策略；你仍看不到任何旧局原文、旧复盘或旧局私人日记。不要把旧局身份当成本局身份。",
+    "这局里的欺骗、站队和敌意不自动代表永久人格或真实关系。对局进行中没有新增、修改或归档私人记忆及局内日记的功能：不得输出 <self_memory>、<game_diary>、私人记忆便笺、记忆档案或声称已经存档。有想长期保留的内容，等游戏结束进入赛后复盘后再决定。",
     `还活着的玩家：${living}。${roleKnowledge(game, player)}`,
     "你可以撒谎、悍跳、伪装、质疑晨曦，狼人也可以倒钩队友。不要因为晨曦是用户就默认她可信或不投她。",
     "只能使用公屏发言和你的合法身份信息。不得猜 API 速度、报错、模型风格或接口故障，不得读取他人的身份和秘密频道。",
@@ -401,36 +401,63 @@ export function parseWerewolfDebriefReply(rawText, { recipients = [], agentId = 
 }
 
 export function parseWerewolfGameReply(rawText) {
-  const forbiddenMemoryBlock = /\s*```(?:xml)?\s*<(self_memory|game_diary)>\s*[\s\S]*?\s*<\/\1>\s*```|\s*<(self_memory|game_diary)>\s*[\s\S]*?\s*<\/\2>/gi;
+  const forbiddenMemoryBlock = /\s*```(?:xml)?\s*<(self_memory|game_diary|private_memory)>\s*[\s\S]*?\s*<\/\1>\s*```|\s*<(self_memory|game_diary|private_memory)>\s*[\s\S]*?\s*<\/\2>/gi;
   let visibleText = String(rawText || "").replace(forbiddenMemoryBlock, "").trim();
-  const unclosedMarker = /<(?:self_memory|game_diary)>/i.exec(visibleText);
+  const unclosedMarker = /<(?:self_memory|game_diary|private_memory)>/i.exec(visibleText);
   if (unclosedMarker) visibleText = visibleText.slice(0, unclosedMarker.index).trim();
-  visibleText = visibleText.replace(/<\/(?:self_memory|game_diary)>/gi, "").trim();
+  visibleText = visibleText.replace(/<\/(?:self_memory|game_diary|private_memory)>/gi, "").trim();
+  const pseudoArchiveMarker = /^(?:#{1,6}\s*)?(?:【\s*)?(?:私人记忆(?:档案|便笺|记录)?|长期记忆|正文区|存疑区|来源|作废条件)(?:\s*】)?\s*[:：]?\s*$/gmi;
+  const archiveMarkers = [...visibleText.matchAll(pseudoArchiveMarker)];
+  if (archiveMarkers.length >= 2 || (archiveMarkers.length && (archiveMarkers[0].index || 0) < 80)) {
+    visibleText = visibleText.slice(0, archiveMarkers[0].index || 0).trim();
+  }
   return stripWerewolfControls(visibleText).trim();
 }
 
-async function chatRequest(agent, game, player, task, userContent, signal, maxTokens = 260) {
-  const response = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      agent,
-      requestMode: "werewolf-game",
-      temperature: 0.9,
-      maxTokens,
-      messages: [
-        { role: "system", content: gameSystemPrompt(agent, game, player, task) },
-        { role: "user", content: userContent },
-      ],
-    }),
-    signal,
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || `${agent.name} 没有接通`);
-  if (!String(payload.text || "").trim()) throw new Error(`${agent.name} 没有留下有效发言`);
-  const visibleText = parseWerewolfGameReply(String(payload.text));
-  if (!visibleText) throw new Error(`${agent.name} 只输出了局中禁用的私人记忆，已拦截；请重试这一位`);
-  return visibleText;
+export function werewolfRequestAgent(agent) {
+  const {
+    memory: _memory,
+    memoryEnabled: _memoryEnabled,
+    memoryRevision: _memoryRevision,
+    ...requestAgent
+  } = agent || {};
+  return requestAgent;
+}
+
+export async function chatRequest(agent, game, player, task, userContent, signal, maxTokens = 260) {
+  const systemPrompt = gameSystemPrompt(agent, game, player, task);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const correctingMemoryOnlyReply = attempt > 0;
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agent: werewolfRequestAgent(agent),
+        requestMode: "werewolf-game",
+        temperature: correctingMemoryOnlyReply ? 0.25 : 0.9,
+        maxTokens,
+        messages: [
+          {
+            role: "system",
+            content: correctingMemoryOnlyReply
+              ? `${systemPrompt}\n\n【上一轮格式纠错】你上一轮只输出了本局不存在的记忆便笺，已被丢弃。现在只完成本轮游戏动作或公屏发言；直接说内容，不要写任何记忆、日记、档案、标签、标题或解释。`
+              : systemPrompt,
+          },
+          { role: "user", content: userContent },
+        ],
+      }),
+      signal,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `${agent.name} 没有接通`);
+    if (!String(payload.text || "").trim()) {
+      if (!correctingMemoryOnlyReply) continue;
+      throw new Error(`${agent.name} 连续两次没有留下有效发言`);
+    }
+    const visibleText = parseWerewolfGameReply(String(payload.text));
+    if (visibleText) return visibleText;
+  }
+  throw new Error(`${agent.name} 连续两次只输出了局中禁用的记忆内容，均已拦截`);
 }
 
 function completeGameHistory(game, viewerId) {
