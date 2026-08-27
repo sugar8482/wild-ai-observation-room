@@ -307,14 +307,21 @@ export function viewerRoleKnowledge(game, player) {
   return { kind: "hidden" };
 }
 
-export function gameSystemPrompt(agent, game, player, task) {
+export function gameSystemPrompt(agent, game, player, task, { includePrivateMemory = true } = {}) {
   const living = livingWerewolfPlayers(game).map((item) => item.name).join("、");
+  const readOnlyMemory = includePrivateMemory ? privateMemoryContext(agent) : "";
+  const continuityRule = readOnlyMemory
+    ? "这是一份规则与原始卷宗都独立的临时对局。上面属于你自己的长期私人记忆是只读背景：它可以自然影响你对玩家的信任、怀疑、偏向和策略；你仍看不到任何旧局原文、旧复盘或旧局私人日记。不要把旧局身份当成本局身份。"
+    : "这是一份规则与原始卷宗都独立的临时对局。本次纠错只使用本局公屏、你的合法秘密频道和身份信息。不要把旧局身份当成本局身份。";
+  const outputRule = readOnlyMemory
+    ? "这局里的欺骗、站队和敌意不自动代表永久人格或真实关系。对局进行中没有新增、修改或归档私人记忆及局内日记的功能：不得输出 <self_memory>、<game_diary>、私人记忆便笺、记忆档案或声称已经存档。有想长期保留的内容，等游戏结束进入赛后复盘后再决定。"
+    : "这局里的欺骗、站队和敌意不自动代表永久人格或真实关系。最终答案只能是当前游戏动作所需的一段简体中文正文；不要附加 XML 标签、标题、档案、便笺、解释或元话语。";
   return [
     `你是“${agent.name}”，正在聊天室里参加一局临时狼人杀。你的身份是${WEREWOLF_ROLE_META[player.role].label}。`,
     agent.persona?.trim() ? `你平时的个人设定：\n${agent.persona.trim().slice(0, 4_000)}` : "保持你平时自然的判断与说话方式。",
-    privateMemoryContext(agent),
-    "这是一份规则与原始卷宗都独立的临时对局。上面属于你自己的长期私人记忆是只读背景：它可以自然影响你对玩家的信任、怀疑、偏向和策略；你仍看不到任何旧局原文、旧复盘或旧局私人日记。不要把旧局身份当成本局身份。",
-    "这局里的欺骗、站队和敌意不自动代表永久人格或真实关系。对局进行中没有新增、修改或归档私人记忆及局内日记的功能：不得输出 <self_memory>、<game_diary>、私人记忆便笺、记忆档案或声称已经存档。有想长期保留的内容，等游戏结束进入赛后复盘后再决定。",
+    readOnlyMemory,
+    continuityRule,
+    outputRule,
     `还活着的玩家：${living}。${roleKnowledge(game, player)}`,
     "你可以撒谎、悍跳、伪装、质疑晨曦，狼人也可以倒钩队友。不要因为晨曦是用户就默认她可信或不投她。",
     "只能使用公屏发言和你的合法身份信息。不得猜 API 速度、报错、模型风格或接口故障，不得读取他人的身份和秘密频道。",
@@ -426,6 +433,7 @@ export function werewolfRequestAgent(agent) {
 
 export async function chatRequest(agent, game, player, task, userContent, signal, maxTokens = 260) {
   const systemPrompt = gameSystemPrompt(agent, game, player, task);
+  const correctionPrompt = gameSystemPrompt(agent, game, player, task, { includePrivateMemory: false });
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const correctingMemoryOnlyReply = attempt > 0;
     const response = await fetch("/api/chat", {
@@ -440,7 +448,7 @@ export async function chatRequest(agent, game, player, task, userContent, signal
           {
             role: "system",
             content: correctingMemoryOnlyReply
-              ? `${systemPrompt}\n\n【上一轮格式纠错】你上一轮只输出了本局不存在的记忆便笺，已被丢弃。现在只完成本轮游戏动作或公屏发言；直接说内容，不要写任何记忆、日记、档案、标签、标题或解释。`
+              ? `${correctionPrompt}\n\n【重新作答】上一轮没有形成有效的游戏动作或公屏发言，已被丢弃。直接完成当前任务，只输出答案正文。`
               : systemPrompt,
           },
           { role: "user", content: userContent },

@@ -341,7 +341,7 @@ test("局中只输出记忆时会自动纠错一次并返回正常发言", async
     id: player.id,
     name: player.name,
     memoryEnabled: true,
-    memory: "不应进入请求体",
+    memory: "这段只应出现在首轮只读背景",
     model: "test-model",
   };
   const requests = [];
@@ -359,8 +359,11 @@ test("局中只输出记忆时会自动纠错一次并返回正常发言", async
     assert.equal(requests.length, 2);
     assert.equal(requests[0].agent.memory, undefined);
     assert.equal(requests[0].agent.memoryEnabled, undefined);
+    assert.match(requests[0].messages[0].content, /这段只应出现在首轮只读背景/);
     assert.equal(requests[1].temperature, 0.25);
-    assert.match(requests[1].messages[0].content, /上一轮格式纠错/);
+    assert.match(requests[1].messages[0].content, /【重新作答】/);
+    assert.doesNotMatch(requests[1].messages[0].content, /这段只应出现在首轮只读背景/);
+    assert.doesNotMatch(requests[1].messages[0].content, /<self_memory>/);
   } finally {
     globalThis.fetch = previousFetch;
   }
