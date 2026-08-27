@@ -12,6 +12,7 @@ import {
   validTargets,
   viewerRoleKnowledge,
   werewolfRequestAgent,
+  werewolfNightPublicBriefing,
   pickWerewolfDirectorSpeaker,
   werewolfDirectorSnapshot,
   werewolfVoteProgress,
@@ -364,6 +365,29 @@ test("局中回复会拦截完整或未闭合的私人记忆标签，不保存�
     "来源",
     "- 本轮推理",
   ].join("\n")), "");
+});
+
+test("预言家与女巫的夜间行动会收到此前公屏，但不会看到狼队秘密", () => {
+  const game = manualGame();
+  appendWerewolfLog(game, {
+    visibility: "public",
+    authorId: "guest-5",
+    author: "玩家5",
+    text: "白天我公开怀疑玩家2。",
+    phase: "day_speech",
+  });
+  appendWerewolfLog(game, {
+    visibility: "wolves",
+    authorId: "guest-1",
+    author: "玩家1",
+    text: "狼队今晚准备刀玩家3。",
+    phase: "night_wolves",
+  });
+
+  const briefing = werewolfNightPublicBriefing(game);
+  assert.match(briefing, /此前白天发言、投票、遗言与天亮结果/);
+  assert.match(briefing, /玩家5：白天我公开怀疑玩家2/);
+  assert.doesNotMatch(briefing, /狼队今晚准备刀玩家3/);
 });
 
 test("狼人夜间简报包含完整公屏、本夜密谈和已出局队友状态", () => {

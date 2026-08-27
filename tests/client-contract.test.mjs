@@ -352,6 +352,8 @@ test("狼人杀推进按钮在首次异步保存前立即上锁，并防止重�
   assert.ok(captureIndex >= 0, "推进前应先读取人类玩家控件");
   assert.ok(lockIndex > captureIndex, "读取控件后应立即占用推进锁");
   assert.ok(firstAwaitIndex > lockIndex, "推进锁必须早于第一次异步保存");
+  assert.match(script, /fetch\("\/api\/werewolf\/current"/);
+  assert.match(advance, /if \(capturedUserAction\) await persistGame\(\)/);
   assert.match(script, /current\.phase !== "last_words" \|\| current\.pending\?\.eliminatedId !== eliminated\.id/);
 });
 

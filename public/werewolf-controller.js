@@ -247,6 +247,10 @@ function publicHistory(game, limit = 80) {
     .join("\n");
 }
 
+export function werewolfNightPublicBriefing(game, limit = 80) {
+  return `截至今晚的公屏记录（包括此前白天发言、投票、遗言与天亮结果）：\n${publicHistory(game, limit) || "公屏还没有任何记录。"}`;
+}
+
 export function werewolfRosterStatus(game) {
   return game.players
     .map((player) => `${player.name}（${player.alive ? "存活" : "已出局"}）`)
@@ -677,6 +681,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
   let running = false;
   let abortController = null;
   let speakingPlayerId = "";
+  let gameSaveChain = Promise.resolve();
   let directorMode = "point";
   let renderedGameId = "";
   let logRenderLimit = HISTORY_WINDOW_BATCH;
@@ -819,11 +824,35 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
   }
 
   function persistGame() {
+    const room = getRoom();
     const current = game();
-    if (current) {
-      current.updatedAt = Date.now();
-      current.revision = Math.max(1, Number(current.revision) || 1) + 1;
-    }
+    if (!room?.id || !current) return persist();
+    current.updatedAt = Date.now();
+    current.revision = Math.max(1, Number(current.revision) || 1) + 1;
+    const gameSnapshot = JSON.parse(JSON.stringify(current));
+    const save = async () => {
+      const response = await fetch("/api/werewolf/current", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ roomId: room.id, game: gameSnapshot }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "狼人杀进度没有保存成功");
+      const localGame = room.werewolf;
+      if (
+        payload.game?.id === localGame?.id
+        && Number(payload.game.revision) > Number(localGame.revision)
+      ) {
+        room.werewolf = payload.game;
+      }
+      return payload.game;
+    };
+    gameSaveChain = gameSaveChain.then(save, save);
+    return gameSaveChain;
+  }
+
+  async function persistAll() {
+    await gameSaveChain.catch(() => undefined);
     return persist();
   }
 
@@ -1742,9 +1771,10 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
   }
 
   function captureUserAction(current) {
-    if (current.viewMode !== "player") return;
+    if (current.viewMode !== "player") return false;
     const user = werewolfPlayer(current, WEREWOLF_USER_ID);
-    if (!user?.alive && current.phase !== "last_words") return;
+    if (!user?.alive && current.phase !== "last_words") return false;
+    let changed = false;
     if (current.phase === "night_wolves" && user.role === "wolf" && !current.pending.userWolfReady) {
       const target = byId("werewolf-user-target")?.value;
       if (!target) throw new Error("先替狼队选一个落刀目标");
@@ -1752,37 +1782,45 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
       const secret = byId("werewolf-user-secret")?.value.trim();
       if (secret) appendWerewolfLog(current, { visibility: "wolves", authorId: user.id, author: user.name, text: secret });
       current.pending.userWolfReady = true;
+      changed = true;
     } else if (current.phase === "night_seer" && user.role === "seer" && !current.pending.userSeerReady) {
       const target = byId("werewolf-user-check")?.value;
       if (!target) throw new Error("先选今晚要验的人");
       recordSeerCheck(current, target, user);
       current.pending.userSeerReady = true;
+      changed = true;
     } else if (current.phase === "night_witch" && user.role === "witch" && !current.pending.userWitchReady) {
       const night = currentNight(current);
       night.witchSave = Boolean(byId("werewolf-user-save")?.checked && current.witch.healAvailable && night.killTargetId);
       night.poisonTargetId = byId("werewolf-user-poison")?.value || null;
       current.pending.userWitchReady = true;
+      changed = true;
     } else if (current.phase === "day_speech") {
       const day = currentDay(current);
       if (current.costMode === "economy" && day.speeches[user.id] && !day.provisionalVotes[user.id]) {
         const vote = byId("werewolf-user-vote")?.value;
         if (!vote) throw new Error("省钱局还差曦曦这一票，请在身份与行动里选好");
         day.provisionalVotes[user.id] = vote;
+        changed = true;
       }
     } else if (current.phase === "day_vote" && !current.pending.userVoteReady) {
       const vote = byId("werewolf-user-vote")?.value;
       if (!vote) throw new Error("先投出曦曦这一票");
       currentDay(current).votes[user.id] = vote;
       current.pending.userVoteReady = true;
+      changed = true;
     } else if (current.phase === "tie_vote" && !current.pending.userTieVoteReady) {
       const vote = byId("werewolf-user-tie-vote")?.value;
       if (!vote) throw new Error("先投出平票重投这一票");
       currentDay(current).tieVotes[user.id] = vote;
       current.pending.userTieVoteReady = true;
+      changed = true;
     } else if (current.phase === "last_words" && current.pending?.eliminatedId === user.id && !current.pending.userLastWordsReady) {
       current.pending.userLastWords = byId("werewolf-user-last-words")?.value.trim() || "晨曦没有留下遗言。";
       current.pending.userLastWordsReady = true;
+      changed = true;
     }
+    return changed;
   }
 
   function recordSeerCheck(current, targetId, seer) {
@@ -1883,7 +1921,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
         current,
         seer,
         "现在是预言家验人。只在候选人里选一位，最后写 [CHECK:玩家名字]。不要发表公开发言。",
-        `可查验：${targets.map((target) => target.name).join("、")}`,
+        `${werewolfNightPublicBriefing(current)}\n\n可查验：${targets.map((target) => target.name).join("、")}`,
         signal,
         80,
       );
@@ -1905,7 +1943,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
         current,
         witch,
         "现在是女巫行动。只能按你拥有的药作决定。最后严格写 [WITCH:save=yes/no,poison=玩家名字/none]。不要公开发言。",
-        `今晚被刀：${werewolfPlayer(current, night.killTargetId)?.name || "无人"}\n解药：${current.witch.healAvailable ? "可用" : "已用"}\n毒药：${current.witch.poisonAvailable ? "可用" : "已用"}\n可毒目标：${poisonTargets.map((player) => player.name).join("、")}`,
+        `${werewolfNightPublicBriefing(current)}\n\n今晚被刀：${werewolfPlayer(current, night.killTargetId)?.name || "无人"}\n解药：${current.witch.healAvailable ? "可用" : "已用"}\n毒药：${current.witch.poisonAvailable ? "可用" : "已用"}\n可毒目标：${poisonTargets.map((player) => player.name).join("、")}`,
         signal,
         100,
       );
@@ -1986,7 +2024,6 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     try {
       await generateSpeech(current, playerId, abortController.signal, { tiedOnly });
       setGameStatus("这一位说完了。可以继续点名，晨曦也可以最后压轴。");
-      await persistGame();
     } catch (error) {
       if (error.name === "AbortError") setGameStatus("停在这里了；前面已经说完的发言都还在。", true);
       else {
@@ -2074,7 +2111,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
       setGameStatus(defaultPrivateToUser
         ? `${player.name}私下回复了你。`
         : `${player.name}复盘完了。可以继续追问同一个人。`);
-      await persistGame();
+      await persistAll();
     } catch (error) {
       if (error.name === "AbortError") setGameStatus("复盘暂停了，前面的内容都还在。", true);
       else {
@@ -2111,7 +2148,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
         current.debrief.roundDone ||= [];
         if (!current.debrief.roundDone.includes(player.id)) current.debrief.roundDone.push(player.id);
         speakingPlayerId = "";
-        await persistGame();
+        await persistAll();
         renderGame();
       }
       setGameStatus("这一轮全体复盘说完了。可以继续点名、随机抽人或再开一轮。" );
@@ -2246,14 +2283,14 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     if (!current || running || current.status === "ended") return;
     try {
       // Read the human player's controls before renderGame rebuilds the action panel.
-      captureUserAction(current);
+      const capturedUserAction = captureUserAction(current);
       // Lock synchronously before the first await. Otherwise a second tap can
       // enter while the initial save is still pending and advance twice.
       running = true;
       abortController = new AbortController();
       setGameStatus("法官正在收这一阶段的行动……");
       renderGame();
-      await persistGame();
+      if (capturedUserAction) await persistGame();
     } catch (error) {
       running = false;
       abortController = null;
@@ -2387,7 +2424,7 @@ export function createWerewolfController({ getRoom, getRoomAgents, getAllAgents,
     }
     room.werewolf = null;
     archiveRoomId = "";
-    void persist();
+    void persistAll();
     setGameStatus("");
     renderGame();
     if (!dialog.open) dialog.showModal();

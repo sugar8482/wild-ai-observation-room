@@ -150,6 +150,7 @@ export function chatRequestPolicy(agent, payload = {}) {
   const usesDeepSeekThinking = officialDeepSeek && !isWillingnessScore;
   const usesKimiThinking = isKimiK3(agent) && !isWillingnessScore;
   const requiresKimiTemperatureOne = isOfficialKimiK3(agent);
+  const isOfficialKimiWerewolf = requiresKimiTemperatureOne && isWerewolfGame;
   const usesGlmThinking = isGlmThinkingAgent(agent) && !isWillingnessScore;
   const usesClaude = isClaudeAgent(agent) && !isWillingnessScore;
   const needsHiddenThinkingBudget = usesDeepSeekThinking || usesKimiThinking || usesGlmThinking;
@@ -160,9 +161,11 @@ export function chatRequestPolicy(agent, payload = {}) {
     visibleTokenTarget,
     upstreamMaxTokens: needsHiddenThinkingBudget ? Math.max(hiddenThinkingBudget, visibleTokenTarget) : visibleTokenTarget,
     thinkingMode: officialDeepSeek ? (usesDeepSeekThinking ? "enabled" : "disabled") : undefined,
+    reasoningEffort: isOfficialKimiWerewolf ? "low" : undefined,
     requiredTemperature: requiresKimiTemperatureOne ? 1 : undefined,
-    retryEmptyLength: usesGlmThinking,
-    timeoutMs: isWillingnessScore ? 30_000 : isMemorySummary ? 900_000 : usesKimiThinking && isWerewolfGame ? 300_000 : usesKimiThinking ? 600_000 : usesGlmThinking ? 300_000 : usesClaude ? 300_000 : needsHiddenThinkingBudget ? 180_000 : 120_000,
+    retryEmptyLength: usesGlmThinking || isOfficialKimiWerewolf,
+    emptyLengthRecoveryMaxTokens: isOfficialKimiWerewolf ? 8_192 : undefined,
+    timeoutMs: isWillingnessScore ? 30_000 : isMemorySummary ? 900_000 : isOfficialKimiWerewolf ? 150_000 : usesKimiThinking && isWerewolfGame ? 300_000 : usesKimiThinking ? 600_000 : usesGlmThinking ? 300_000 : usesClaude ? 300_000 : needsHiddenThinkingBudget ? 180_000 : 120_000,
   };
 }
 
@@ -217,6 +220,7 @@ async function handleChat(request, response, stateStore) {
         // target and give the upstream a separate ceiling for its reasoning.
         maxTokens: attemptMaxTokens,
         thinkingMode: policy.thinkingMode,
+        reasoningEffort: policy.reasoningEffort,
         compactOutput: policy.isWillingnessScore,
       });
       const controller = new AbortController();
@@ -268,10 +272,11 @@ async function handleChat(request, response, stateStore) {
           ...messages,
           {
             role: "user",
-            content: `刚才内部思考用完了输出额度，但公开正文还是空的。不要重复展开分析，直接给出本轮最终公开发言；保持原本立场，正文控制在约 ${policy.visibleTokenTarget} tokens 以内。`,
+            content: `刚才内部思考用完了输出额度，但有效答案还是空的。不要重复展开分析，直接给出本轮最终发言或游戏动作；保持原本立场，答案控制在约 ${policy.visibleTokenTarget} tokens 以内。`,
           },
         ];
-        const recoveryMaxTokens = Math.min(32_768, Math.max(12_288, policy.upstreamMaxTokens * 2));
+        const recoveryMaxTokens = policy.emptyLengthRecoveryMaxTokens
+          || Math.min(32_768, Math.max(12_288, policy.upstreamMaxTokens * 2));
         const recovery = await fetchAttempt(recoveryMessages, recoveryMaxTokens, Math.min(0.7, Number(temperature) || 0.7));
         upstreamResponse = recovery.upstreamResponse;
         upstreamPayload = recovery.upstreamPayload;
@@ -1030,6 +1035,29 @@ export function createAppServer(options = {}) {
         return;
       }
       sendMcpError(response, payload?.id, -32601, `不支持的方法：${payload?.method || ""}`);
+      return;
+    }
+
+    if (url.pathname === "/api/werewolf/current" && request.method === "PUT") {
+      if (!isAuthorized(request)) {
+        sendJson(response, 401, { error: "需要先输入访问码" });
+        return;
+      }
+      if (!stateStore || typeof stateStore.saveWerewolfGame !== "function") {
+        sendJson(response, 503, { error: "狼人杀主状态尚未启用快速保存" });
+        return;
+      }
+      try {
+        const payload = await readJson(request, MAX_STATE_BODY_BYTES);
+        const game = await stateStore.saveWerewolfGame(payload?.roomId, payload?.game);
+        if (!game) {
+          sendJson(response, 404, { error: "没有找到这间狼人杀房或本局进度无效" });
+          return;
+        }
+        sendJson(response, 200, { game });
+      } catch {
+        sendJson(response, 500, { error: "保存狼人杀当前进度时出错" });
+      }
       return;
     }
 

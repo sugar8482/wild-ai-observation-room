@@ -107,6 +107,22 @@ test("短评分请求可以显式关闭思考", () => {
   assert.deepEqual(request.body.thinking, { type: "disabled" });
 });
 
+test("Kimi K3 可以通过 OpenAI 兼容字段降低思考强度", () => {
+  const request = buildUpstreamRequest(
+    {
+      format: "openai",
+      baseUrl: "https://api.moonshot.cn/v1",
+      model: "kimi-k3",
+      authType: "bearer",
+      apiKey: "secret-value",
+    },
+    [{ role: "user", content: "只完成当前游戏动作" }],
+    { maxTokens: 4096, reasoningEffort: "low" },
+  );
+  assert.equal(request.body.reasoning_effort, "low");
+  assert.equal(request.body.max_tokens, 4096);
+});
+
 test("统一读取三类接口的截断原因", () => {
   assert.equal(providerFinishReason("openai", { choices: [{ finish_reason: "length" }] }), "length");
   assert.equal(providerFinishReason("anthropic", { stop_reason: "max_tokens" }), "length");

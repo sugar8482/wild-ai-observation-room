@@ -915,7 +915,20 @@ test("中途刷新与滞后重复保存不会回退狼人杀当前进度", async
   const afterStaleRetry = await store.save(first);
   assert.equal(afterStaleRetry.rooms[0].werewolf.revision, 8);
   assert.ok(afterStaleRetry.rooms[0].werewolf.log.some((entry) => entry.text === "第二次增量已经落库。"));
-  assert.equal((await store.clientState()).rooms[0].werewolf.revision, 8);
+
+  const fastProgress = structuredClone(afterStaleRetry.rooms[0].werewolf);
+  fastProgress.phase = "night_witch";
+  fastProgress.revision = 12;
+  fastProgress.updatedAt += 1_000;
+  const fastSaved = await store.saveWerewolfGame("werewolf-refresh-room", fastProgress);
+  assert.equal(fastSaved.phase, "night_witch");
+  assert.equal(fastSaved.revision, 12);
+
+  const staleFastRetry = structuredClone(fastProgress);
+  staleFastRetry.phase = "night_seer";
+  staleFastRetry.revision = 10;
+  assert.equal((await store.saveWerewolfGame("werewolf-refresh-room", staleFastRetry)).phase, "night_witch");
+  assert.equal((await store.clientState()).rooms[0].werewolf.revision, 12);
 });
 
 test("修改或删除当前局和历史局消息只改显示日志，不改结构化游戏事实也不会被滞后保存回退", async (context) => {

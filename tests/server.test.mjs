@@ -83,6 +83,38 @@ test("刷新时优先恢复数据库中较新的狼人杀进度并同步每次�
   assert.equal(synced.rooms[0].werewolf.id, stale.id);
 });
 
+test("狼人杀当前局可走独立小接口保存，不必上传整间观察室", async (context) => {
+  const game = createWerewolfGame({
+    participants: Array.from({ length: 6 }, (_, index) => ({
+      id: `fast-save-${index + 1}`,
+      name: `玩家${index + 1}`,
+      type: "agent",
+    })),
+    random: () => 0.2,
+  });
+  const calls = [];
+  const stateStore = {
+    async saveWerewolfGame(roomId, incomingGame) {
+      calls.push({ roomId, gameId: incomingGame.id, revision: incomingGame.revision });
+      return structuredClone(incomingGame);
+    },
+  };
+  const server = createAppServer({ stateStore });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => server.close());
+  const origin = `http://127.0.0.1:${server.address().port}`;
+
+  const response = await fetch(`${origin}/api/werewolf/current`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ roomId: "werewolf-room", game }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).game.id, game.id);
+  assert.deepEqual(calls, [{ roomId: "werewolf-room", gameId: game.id, revision: game.revision }]);
+});
+
 test("狼人杀历史 API 按整局列目录，并在单局内部单独分页事件", async (context) => {
   const calls = [];
   const archive = {
@@ -322,6 +354,8 @@ test("Kimi K3 正式发言有隐藏思考余量但抢麦评分仍保持短输出
   });
   assert.equal(gamePolicy.upstreamMaxTokens, 4096);
   assert.equal(gamePolicy.timeoutMs, 300_000);
+  assert.equal(gamePolicy.reasoningEffort, undefined);
+  assert.equal(gamePolicy.retryEmptyLength, false);
 
   const scorePolicy = chatRequestPolicy(agent, {
     requestMode: "willingness-score",
@@ -351,6 +385,15 @@ test("Moonshot 官方 Kimi K3 固定使用模型唯一允许的 temperature 1", 
     chatRequestPolicy({ ...officialAgent, model: "moonshot-v1-128k" }, {}).requiredTemperature,
     undefined,
   );
+
+  const gamePolicy = chatRequestPolicy(officialAgent, {
+    requestMode: "werewolf-game",
+    maxTokens: 360,
+  });
+  assert.equal(gamePolicy.reasoningEffort, "low");
+  assert.equal(gamePolicy.retryEmptyLength, true);
+  assert.equal(gamePolicy.emptyLengthRecoveryMaxTokens, 8192);
+  assert.equal(gamePolicy.timeoutMs, 150_000);
 });
 
 test("GLM 5.3 正式发言预留隐藏思考额度并允许空正文补救", () => {
@@ -429,7 +472,7 @@ test("GLM 思考用完整次额度而正文为空时只自动补救一次", asyn
   assert.equal(requestBodies.length, 2);
   assert.equal(requestBodies[0].max_tokens, 8192);
   assert.equal(requestBodies[1].max_tokens, 16384);
-  assert.match(requestBodies[1].messages.at(-1).content, /直接给出本轮最终公开发言/);
+  assert.match(requestBodies[1].messages.at(-1).content, /直接给出本轮最终发言或游戏动作/);
 });
 
 test("Claude 正式发言允许更长思考但抢麦评分仍保持短超时", () => {
