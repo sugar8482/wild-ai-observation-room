@@ -115,6 +115,17 @@ function isKimiK3(agent) {
   return /(?:^|[^a-z0-9])kimi[-_\s]?k3(?:[^a-z0-9]|$)/i.test(String(agent?.model || ""));
 }
 
+function isOfficialKimiK3(agent) {
+  if (!isKimiK3(agent)) return false;
+  try {
+    return new Set(["api.moonshot.cn", "api.moonshot.ai"]).has(
+      new URL(String(agent?.baseUrl || "")).hostname.toLowerCase(),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isGlmThinkingAgent(agent) {
   if (String(agent?.format || "") !== "openai") return false;
   return /(?:^|[^a-z0-9])glm(?:[-_\s.]?[a-z0-9][a-z0-9._-]*)?(?:[^a-z0-9]|$)|zhipu/i.test(
@@ -138,6 +149,7 @@ export function chatRequestPolicy(agent, payload = {}) {
   const officialDeepSeek = isOfficialDeepSeekV4(agent);
   const usesDeepSeekThinking = officialDeepSeek && !isWillingnessScore;
   const usesKimiThinking = isKimiK3(agent) && !isWillingnessScore;
+  const requiresKimiTemperatureOne = isOfficialKimiK3(agent);
   const usesGlmThinking = isGlmThinkingAgent(agent) && !isWillingnessScore;
   const usesClaude = isClaudeAgent(agent) && !isWillingnessScore;
   const needsHiddenThinkingBudget = usesDeepSeekThinking || usesKimiThinking || usesGlmThinking;
@@ -148,6 +160,7 @@ export function chatRequestPolicy(agent, payload = {}) {
     visibleTokenTarget,
     upstreamMaxTokens: needsHiddenThinkingBudget ? Math.max(hiddenThinkingBudget, visibleTokenTarget) : visibleTokenTarget,
     thinkingMode: officialDeepSeek ? (usesDeepSeekThinking ? "enabled" : "disabled") : undefined,
+    requiredTemperature: requiresKimiTemperatureOne ? 1 : undefined,
     retryEmptyLength: usesGlmThinking,
     timeoutMs: isWillingnessScore ? 30_000 : isMemorySummary ? 900_000 : usesKimiThinking && isWerewolfGame ? 300_000 : usesKimiThinking ? 600_000 : usesGlmThinking ? 300_000 : usesClaude ? 300_000 : needsHiddenThinkingBudget ? 180_000 : 120_000,
   };
@@ -198,7 +211,7 @@ async function handleChat(request, response, stateStore) {
     const policy = chatRequestPolicy(agent, payload);
     const fetchAttempt = async (attemptMessages, attemptMaxTokens, attemptTemperature = temperature) => {
       const upstream = buildUpstreamRequest(agent, attemptMessages, {
-        temperature: attemptTemperature,
+        temperature: policy.requiredTemperature ?? attemptTemperature,
         // Reasoning models count hidden reasoning and visible content against
         // one output budget. Keep the director's number as a visible-answer
         // target and give the upstream a separate ceiling for its reasoning.

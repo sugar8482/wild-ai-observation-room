@@ -313,6 +313,7 @@ test("Kimi K3 正式发言有隐藏思考余量但抢麦评分仍保持短输出
   const replyPolicy = chatRequestPolicy(agent, { maxTokens: 480 });
   assert.equal(replyPolicy.upstreamMaxTokens, 8192);
   assert.equal(replyPolicy.thinkingMode, undefined);
+  assert.equal(replyPolicy.requiredTemperature, undefined);
   assert.equal(replyPolicy.timeoutMs, 600_000);
 
   const gamePolicy = chatRequestPolicy(agent, {
@@ -329,6 +330,27 @@ test("Kimi K3 正式发言有隐藏思考余量但抢麦评分仍保持短输出
   assert.equal(scorePolicy.upstreamMaxTokens, 8);
   assert.equal(scorePolicy.thinkingMode, undefined);
   assert.equal(scorePolicy.timeoutMs, 30_000);
+});
+
+test("Moonshot 官方 Kimi K3 固定使用模型唯一允许的 temperature 1", () => {
+  const officialAgent = {
+    format: "openai",
+    baseUrl: "https://api.moonshot.cn/v1",
+    model: "kimi-k3",
+  };
+  assert.equal(chatRequestPolicy(officialAgent, {}).requiredTemperature, 1);
+  assert.equal(
+    chatRequestPolicy({ ...officialAgent, baseUrl: "https://api.moonshot.ai/v1" }, {}).requiredTemperature,
+    1,
+  );
+  assert.equal(
+    chatRequestPolicy({ ...officialAgent, baseUrl: "https://third-party.example/v1" }, {}).requiredTemperature,
+    undefined,
+  );
+  assert.equal(
+    chatRequestPolicy({ ...officialAgent, model: "moonshot-v1-128k" }, {}).requiredTemperature,
+    undefined,
+  );
 });
 
 test("GLM 5.3 正式发言预留隐藏思考额度并允许空正文补救", () => {
